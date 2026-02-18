@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -453,7 +454,8 @@ func isUnauthenticatedDashboardRoute(method, requestPath string) bool {
 	if requestPath == "/dashboard" || requestPath == "/dashboard-legacy" {
 		return true
 	}
-	if strings.HasPrefix(requestPath, "/dashboard/static/") && strings.TrimPrefix(requestPath, "/dashboard/static/") != "" {
+	cleaned := path.Clean(requestPath)
+	if strings.HasPrefix(cleaned, "/dashboard/static/") && strings.TrimPrefix(cleaned, "/dashboard/static/") != "" {
 		return true
 	}
 	return false
