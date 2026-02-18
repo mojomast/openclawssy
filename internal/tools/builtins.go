@@ -686,12 +686,6 @@ func isProcessExitStatusError(err error) bool {
 	return strings.HasPrefix(text, "exit status ")
 }
 
-func normalizeInt(v any) int {
-	s := fmt.Sprintf("%v", v)
-	n, _ := strconv.Atoi(s)
-	return n
-}
-
 func listFiles(root string, maxFiles int) ([]string, error) {
 	if maxFiles <= 0 {
 		maxFiles = defaultSearchMaxFiles
