@@ -74,36 +74,9 @@ func runList(runsPath string) Handler {
 
 		runs = filtered
 
-		limit := getIntArg(req.Args, "limit", defaultRunListLimit)
-		if limit <= 0 {
-			limit = defaultRunListLimit
-		}
-		if limit > maxRunListLimit {
-			limit = maxRunListLimit
-		}
-
-		offset := getIntArg(req.Args, "offset", 0)
-		if offset < 0 {
-			offset = 0
-		}
-		if offset > len(runs) {
-			offset = len(runs)
-		}
-
-		total := len(runs)
-		end := offset + limit
-		if end > len(runs) {
-			end = len(runs)
-		}
-		runs = runs[offset:end]
-
-		return map[string]any{
-			"runs":   runs,
-			"total":  total,
-			"limit":  limit,
-			"offset": offset,
-			"count":  len(runs),
-		}, nil
+		sliced, meta := paginate(runs, req.Args, defaultRunListLimit, maxRunListLimit)
+		meta["runs"] = sliced
+		return meta, nil
 	}
 }
 

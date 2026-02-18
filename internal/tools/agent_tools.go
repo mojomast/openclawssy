@@ -64,7 +64,9 @@ func agentList(configuredPath string) Handler {
 		entries, err := os.ReadDir(agentsRoot)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
-				return map[string]any{"total": 0, "count": 0, "limit": getBoundedLimit(req.Args), "offset": 0, "items": []string{}}, nil
+				sliced, meta := paginate([]string{}, req.Args, defaultAgentListLimit, maxAgentListLimit)
+				meta["items"] = sliced
+				return meta, nil
 			}
 			return nil, err
 		}
@@ -78,27 +80,9 @@ func agentList(configuredPath string) Handler {
 		}
 		sort.Strings(items)
 
-		total := len(items)
-		limit := getBoundedLimit(req.Args)
-		offset := getIntArg(req.Args, "offset", 0)
-		if offset < 0 {
-			offset = 0
-		}
-		if offset > total {
-			offset = total
-		}
-		end := offset + limit
-		if end > total {
-			end = total
-		}
-
-		return map[string]any{
-			"total":  total,
-			"count":  end - offset,
-			"limit":  limit,
-			"offset": offset,
-			"items":  items[offset:end],
-		}, nil
+		sliced, meta := paginate(items, req.Args, defaultAgentListLimit, maxAgentListLimit)
+		meta["items"] = sliced
+		return meta, nil
 	}
 }
 
@@ -258,15 +242,4 @@ func validatedAgentID(raw string) (string, error) {
 		return "", errors.New("invalid agent_id")
 	}
 	return agentID, nil
-}
-
-func getBoundedLimit(args map[string]any) int {
-	limit := getIntArg(args, "limit", defaultAgentListLimit)
-	if limit <= 0 {
-		limit = defaultAgentListLimit
-	}
-	if limit > maxAgentListLimit {
-		limit = maxAgentListLimit
-	}
-	return limit
 }
