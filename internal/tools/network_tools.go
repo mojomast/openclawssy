@@ -43,100 +43,127 @@ func registerNetworkTools(reg *Registry, configuredPath string) error {
 	return nil
 }
 
+type preparedHTTPRequest struct {
+	Client   *http.Client
+	Request  *http.Request
+	MaxBytes int
+}
+
 func httpRequest(configuredPath string) Handler {
 	return func(ctx context.Context, req Request) (map[string]any, error) {
-		cfgPath, err := resolveConfigPath(req.Workspace, configuredPath)
-		if err != nil {
-			return nil, err
-		}
-		cfg, err := config.LoadOrDefault(cfgPath)
-		if err != nil {
-			return nil, err
-		}
-		if !cfg.Network.Enabled {
-			return nil, errors.New("network is disabled (set network.enabled=true)")
-		}
-
-		urlText, err := getString(req.Args, "url")
-		if err != nil {
-			return nil, err
-		}
-		parsedURL, err := parseAndValidateNetworkURL(urlText, cfg.Network)
+		prep, err := prepareRequest(ctx, req, configuredPath)
 		if err != nil {
 			return nil, err
 		}
 
-		method := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", req.Args["method"])))
-		if method == "" || method == "<NIL>" {
-			method = http.MethodGet
-		}
-
-		bodyBytes, err := httpRequestBody(req.Args)
-		if err != nil {
-			return nil, err
-		}
-
-		timeout := durationFromMS(req.Args["timeout_ms"], defaultHTTPRequestTimeout)
-		if timeout <= 0 {
-			timeout = defaultHTTPRequestTimeout
-		}
-
-		maxBytes := intFromAny(req.Args["max_response_bytes"], defaultHTTPResponseBytes)
-		if maxBytes <= 0 {
-			maxBytes = defaultHTTPResponseBytes
-		}
-		if maxBytes > maxHTTPResponseBytes {
-			maxBytes = maxHTTPResponseBytes
-		}
-
-		httpClient := &http.Client{
-			Timeout: timeout,
-			CheckRedirect: func(redirectReq *http.Request, via []*http.Request) error {
-				if len(via) >= maxHTTPRedirects {
-					return errors.New("stopped after too many redirects")
-				}
-				if _, err := parseAndValidateNetworkURL(redirectReq.URL.String(), cfg.Network); err != nil {
-					return err
-				}
-				return nil
-			},
-		}
-
-		httpReq, err := http.NewRequestWithContext(ctx, method, parsedURL.String(), bytes.NewReader(bodyBytes))
-		if err != nil {
-			return nil, err
-		}
-		for key, value := range parseRequestHeaders(req.Args["headers"]) {
-			httpReq.Header.Set(key, value)
-		}
-
-		resp, err := httpClient.Do(httpReq)
+		resp, err := executeRequest(prep.Client, prep.Request)
 		if err != nil {
 			return nil, err
 		}
 		defer resp.Body.Close()
 
-		limited := io.LimitReader(resp.Body, int64(maxBytes+1))
-		readBody, err := io.ReadAll(limited)
-		if err != nil {
-			return nil, err
-		}
-		truncated := false
-		if len(readBody) > maxBytes {
-			truncated = true
-			readBody = readBody[:maxBytes]
-		}
-
-		return map[string]any{
-			"status":             resp.StatusCode,
-			"headers":            flattenHeaders(resp.Header),
-			"body":               string(readBody),
-			"bytes_read":         len(readBody),
-			"truncated":          truncated,
-			"url":                resp.Request.URL.String(),
-			"max_response_bytes": maxBytes,
-		}, nil
+		return processResponse(resp, prep.MaxBytes)
 	}
+}
+
+func prepareRequest(ctx context.Context, req Request, configuredPath string) (*preparedHTTPRequest, error) {
+	cfgPath, err := resolveConfigPath(req.Workspace, configuredPath)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := config.LoadOrDefault(cfgPath)
+	if err != nil {
+		return nil, err
+	}
+	if !cfg.Network.Enabled {
+		return nil, errors.New("network is disabled (set network.enabled=true)")
+	}
+
+	urlText, err := getString(req.Args, "url")
+	if err != nil {
+		return nil, err
+	}
+	parsedURL, err := parseAndValidateNetworkURL(urlText, cfg.Network)
+	if err != nil {
+		return nil, err
+	}
+
+	method := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", req.Args["method"])))
+	if method == "" || method == "<NIL>" {
+		method = http.MethodGet
+	}
+
+	bodyBytes, err := httpRequestBody(req.Args)
+	if err != nil {
+		return nil, err
+	}
+
+	timeout := durationFromMS(req.Args["timeout_ms"], defaultHTTPRequestTimeout)
+	if timeout <= 0 {
+		timeout = defaultHTTPRequestTimeout
+	}
+
+	maxBytes := intFromAny(req.Args["max_response_bytes"], defaultHTTPResponseBytes)
+	if maxBytes <= 0 {
+		maxBytes = defaultHTTPResponseBytes
+	}
+	if maxBytes > maxHTTPResponseBytes {
+		maxBytes = maxHTTPResponseBytes
+	}
+
+	httpClient := &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(redirectReq *http.Request, via []*http.Request) error {
+			if len(via) >= maxHTTPRedirects {
+				return errors.New("stopped after too many redirects")
+			}
+			if _, err := parseAndValidateNetworkURL(redirectReq.URL.String(), cfg.Network); err != nil {
+				return err
+			}
+			return nil
+		},
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, method, parsedURL.String(), bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range parseRequestHeaders(req.Args["headers"]) {
+		httpReq.Header.Set(key, value)
+	}
+
+	return &preparedHTTPRequest{
+		Client:   httpClient,
+		Request:  httpReq,
+		MaxBytes: maxBytes,
+	}, nil
+}
+
+func executeRequest(client *http.Client, req *http.Request) (*http.Response, error) {
+	return client.Do(req)
+}
+
+func processResponse(resp *http.Response, maxBytes int) (map[string]any, error) {
+	limited := io.LimitReader(resp.Body, int64(maxBytes+1))
+	readBody, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	truncated := false
+	if len(readBody) > maxBytes {
+		truncated = true
+		readBody = readBody[:maxBytes]
+	}
+
+	return map[string]any{
+		"status":             resp.StatusCode,
+		"headers":            flattenHeaders(resp.Header),
+		"body":               string(readBody),
+		"bytes_read":         len(readBody),
+		"truncated":          truncated,
+		"url":                resp.Request.URL.String(),
+		"max_response_bytes": maxBytes,
+	}, nil
 }
 
 func parseAndValidateNetworkURL(rawURL string, netCfg config.NetworkConfig) (*url.URL, error) {
