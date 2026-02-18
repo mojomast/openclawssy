@@ -1,7 +1,6 @@
 package chatstore
 
 import (
-	"bufio"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -269,7 +268,8 @@ func (s *Store) ReadRecentMessages(sessionID string, limit int) ([]Message, erro
 
 	path := filepath.Join(dir, "messages.jsonl")
 	lockPath := filepath.Join(dir, ".chatstore.lock")
-	all := make([]Message, 0)
+	messages := make([]Message, 0, limit)
+
 	if err := withCrossProcessLock(lockPath, lockAcquireTimeout, func() error {
 		f, err := os.Open(path)
 		if err != nil {
@@ -280,9 +280,17 @@ func (s *Store) ReadRecentMessages(sessionID string, limit int) ([]Message, erro
 		}
 		defer f.Close()
 
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, messageScanBufferInit), messageScanBufferMax)
+		scanner, err := NewReverseScanner(f, int64(messageScanBufferInit))
+		if err != nil {
+			return fmt.Errorf("chatstore: init scanner: %w", err)
+		}
+
 		for scanner.Scan() {
+			// Check for max buffer size for safety, matching original behavior
+			if len(scanner.Bytes()) > messageScanBufferMax {
+				return fmt.Errorf("chatstore: scan messages: message exceeds %d bytes", messageScanBufferMax)
+			}
+
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" {
 				continue
@@ -291,12 +299,12 @@ func (s *Store) ReadRecentMessages(sessionID string, limit int) ([]Message, erro
 			if err := json.Unmarshal([]byte(line), &m); err != nil {
 				continue
 			}
-			all = append(all, m)
+			messages = append(messages, m)
+			if len(messages) >= limit {
+				break
+			}
 		}
 		if err := scanner.Err(); err != nil {
-			if errors.Is(err, bufio.ErrTooLong) {
-				return fmt.Errorf("chatstore: scan messages: message exceeds %d bytes", messageScanBufferMax)
-			}
 			return fmt.Errorf("chatstore: scan messages: %w", err)
 		}
 		return nil
@@ -304,10 +312,12 @@ func (s *Store) ReadRecentMessages(sessionID string, limit int) ([]Message, erro
 		return nil, err
 	}
 
-	if len(all) <= limit {
-		return all, nil
+	// messages are collected newest-first, so reverse them to return oldest-first
+	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+		messages[i], messages[j] = messages[j], messages[i]
 	}
-	return append([]Message(nil), all[len(all)-limit:]...), nil
+
+	return messages, nil
 }
 
 func (s *Store) GetSession(sessionID string) (Session, error) {
