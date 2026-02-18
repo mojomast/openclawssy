@@ -427,7 +427,7 @@ func extractBalancedJSONCandidates(content string) []string {
 
 	candidates := make([]string, 0, 4)
 	start := -1
-	depth := 0
+	stack := make([]rune, 0, 16)
 	inString := false
 	escaped := false
 
@@ -453,17 +453,29 @@ func extractBalancedJSONCandidates(content string) []string {
 		}
 
 		if r == '{' || r == '[' {
-			if depth == 0 {
+			if len(stack) == 0 {
 				start = i
 			}
-			depth++
+			stack = append(stack, r)
 			continue
 		}
 
-		if depth > 0 && (r == '}' || r == ']') {
-			depth--
-			if depth == 0 && start >= 0 {
-				candidates = append(candidates, strings.TrimSpace(content[start:i+1]))
+		if r == '}' || r == ']' {
+			if len(stack) == 0 {
+				continue
+			}
+
+			last := stack[len(stack)-1]
+			if (r == '}' && last == '{') || (r == ']' && last == '[') {
+				stack = stack[:len(stack)-1]
+				if len(stack) == 0 && start >= 0 {
+					candidates = append(candidates, strings.TrimSpace(content[start:i+1]))
+					start = -1
+				}
+			} else {
+				// Mismatch found (e.g. found '}' but expected ']')
+				// Abort current candidate
+				stack = stack[:0]
 				start = -1
 			}
 		}
