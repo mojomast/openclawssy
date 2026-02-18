@@ -1,12 +1,13 @@
 package chatstore
 
 import (
-	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -269,7 +270,7 @@ func (s *Store) ReadRecentMessages(sessionID string, limit int) ([]Message, erro
 
 	path := filepath.Join(dir, "messages.jsonl")
 	lockPath := filepath.Join(dir, ".chatstore.lock")
-	all := make([]Message, 0)
+	var msgs []Message
 	if err := withCrossProcessLock(lockPath, lockAcquireTimeout, func() error {
 		f, err := os.Open(path)
 		if err != nil {
@@ -280,34 +281,105 @@ func (s *Store) ReadRecentMessages(sessionID string, limit int) ([]Message, erro
 		}
 		defer f.Close()
 
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, messageScanBufferInit), messageScanBufferMax)
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" {
-				continue
-			}
-			var m Message
-			if err := json.Unmarshal([]byte(line), &m); err != nil {
-				continue
-			}
-			all = append(all, m)
+		m, err := readLastNMessages(f, limit)
+		if err != nil {
+			return err
 		}
-		if err := scanner.Err(); err != nil {
-			if errors.Is(err, bufio.ErrTooLong) {
-				return fmt.Errorf("chatstore: scan messages: message exceeds %d bytes", messageScanBufferMax)
-			}
-			return fmt.Errorf("chatstore: scan messages: %w", err)
-		}
+		msgs = m
 		return nil
 	}); err != nil {
 		return nil, err
 	}
 
-	if len(all) <= limit {
-		return all, nil
+	return msgs, nil
+}
+
+func readLastNMessages(f *os.File, n int) ([]Message, error) {
+	if n <= 0 {
+		return nil, nil
 	}
-	return append([]Message(nil), all[len(all)-limit:]...), nil
+
+	stat, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("chatstore: stat file: %w", err)
+	}
+
+	fileSize := stat.Size()
+	if fileSize == 0 {
+		return []Message{}, nil
+	}
+
+	messages := make([]Message, 0, n)
+	const bufSize = 4096
+	buf := make([]byte, bufSize)
+
+	// partialLine holds the bytes of the line currently being constructed from the end.
+	var partialLine []byte
+
+	offset := fileSize
+	for offset > 0 && len(messages) < n {
+		readSize := int64(bufSize)
+		if offset < readSize {
+			readSize = offset
+		}
+		offset -= readSize
+
+		if _, err := f.Seek(offset, 0); err != nil {
+			return nil, fmt.Errorf("chatstore: seek: %w", err)
+		}
+		if _, err := io.ReadFull(f, buf[:readSize]); err != nil {
+			return nil, fmt.Errorf("chatstore: read: %w", err)
+		}
+
+		data := buf[:readSize]
+		for {
+			lastIdx := bytes.LastIndexByte(data, '\n')
+			if lastIdx >= 0 {
+				linePart := data[lastIdx+1:]
+				fullLine := append(linePart, partialLine...)
+				partialLine = nil
+
+				if len(fullLine) > 0 && len(bytes.TrimSpace(fullLine)) > 0 {
+					var m Message
+					if err := json.Unmarshal(fullLine, &m); err == nil {
+						messages = append(messages, m)
+						if len(messages) == n {
+							break
+						}
+					}
+				}
+				data = data[:lastIdx]
+			} else {
+				// We must copy data because it is a slice of buf, which is reused.
+				newPL := make([]byte, len(data)+len(partialLine))
+				copy(newPL, data)
+				copy(newPL[len(data):], partialLine)
+				partialLine = newPL
+
+				if len(partialLine) > messageScanBufferMax {
+					return nil, fmt.Errorf("chatstore: scan messages: message exceeds %d bytes", messageScanBufferMax)
+				}
+				break
+			}
+		}
+	}
+
+	// Process any remaining partial line at the beginning of the file
+	if len(messages) < n && len(partialLine) > 0 {
+		if len(bytes.TrimSpace(partialLine)) > 0 {
+			var m Message
+			if err := json.Unmarshal(partialLine, &m); err == nil {
+				messages = append(messages, m)
+			}
+		}
+	}
+
+	// Reverse messages to return in chronological order
+	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+		messages[i], messages[j] = messages[j], messages[i]
+	}
+
+	return messages, nil
 }
 
 func (s *Store) GetSession(sessionID string) (Session, error) {

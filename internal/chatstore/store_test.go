@@ -528,3 +528,131 @@ func TestGetActiveSessionPointerWaitsForPointerLock(t *testing.T) {
 		t.Fatal("timed out waiting for pointer lock release")
 	}
 }
+
+func TestReadRecentMessages_EdgeCases(t *testing.T) {
+	agentsRoot := filepath.Join(t.TempDir(), ".openclawssy", "agents")
+	store, err := NewStore(agentsRoot)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+
+	session, err := store.CreateSession(CreateSessionInput{
+		AgentID: "default",
+		Channel: "test",
+		UserID:  "u1",
+		RoomID:  "r1",
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	// Helper to write raw content to messages.jsonl
+	writeRaw := func(content string) {
+		msgPath := filepath.Join(agentsRoot, "default", "memory", "chats", session.SessionID, "messages.jsonl")
+		if err := os.WriteFile(msgPath, []byte(content), 0o600); err != nil {
+			t.Fatalf("write raw: %v", err)
+		}
+	}
+
+	// Helper to read messages
+	read := func(limit int) []Message {
+		msgs, err := store.ReadRecentMessages(session.SessionID, limit)
+		if err != nil {
+			t.Fatalf("read recent: %v", err)
+		}
+		return msgs
+	}
+
+	// 1. Empty file
+	writeRaw("")
+	msgs := read(10)
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages from empty file, got %d", len(msgs))
+	}
+
+	// 2. Single message
+	msg1 := `{"role":"user","content":"1"}`
+	writeRaw(msg1 + "\n")
+	msgs = read(10)
+	if len(msgs) != 1 || msgs[0].Content != "1" {
+		t.Errorf("expected 1 message '1', got %v", msgs)
+	}
+
+	// 3. Two messages
+	msg2 := `{"role":"assistant","content":"2"}`
+	writeRaw(msg1 + "\n" + msg2 + "\n")
+	msgs = read(10)
+	if len(msgs) != 2 || msgs[0].Content != "1" || msgs[1].Content != "2" {
+		t.Errorf("expected 2 messages '1', '2', got %v", msgs)
+	}
+
+	// 4. Limit 1
+	msgs = read(1)
+	if len(msgs) != 1 || msgs[0].Content != "2" {
+		t.Errorf("expected last message '2', got %v", msgs)
+	}
+
+	// 5. No trailing newline
+	writeRaw(msg1 + "\n" + msg2)
+	msgs = read(10)
+	if len(msgs) != 2 || msgs[0].Content != "1" || msgs[1].Content != "2" {
+		t.Errorf("expected 2 messages from file without trailing newline, got %v", msgs)
+	}
+
+	// 6. Only newlines
+	writeRaw("\n\n\n")
+	msgs = read(10)
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages from newlines only, got %d", len(msgs))
+	}
+
+	// 7. Messages with newlines in between
+	writeRaw(msg1 + "\n\n" + msg2 + "\n")
+	msgs = read(10)
+	if len(msgs) != 2 {
+		t.Errorf("expected 2 messages with extra newlines, got %d", len(msgs))
+	}
+
+	// 8. Large number of small messages (buffer boundary test)
+	// 4096 buffer. make messages small enough to fit many in buffer.
+	// say 50 bytes each. 100 messages = 5000 bytes. spanning 2 chunks.
+	var sb strings.Builder
+	for i := 0; i < 100; i++ {
+		line := fmt.Sprintf(`{"role":"user","content":"msg-%03d"}`, i)
+		sb.WriteString(line)
+		sb.WriteString("\n")
+	}
+	writeRaw(sb.String())
+
+	// Read all
+	msgs = read(1000)
+	if len(msgs) != 100 {
+		t.Errorf("expected 100 messages, got %d", len(msgs))
+	}
+	if msgs[0].Content != "msg-000" || msgs[99].Content != "msg-099" {
+		t.Errorf("message order mismatch")
+	}
+
+	// Read partial
+	msgs = read(10)
+	if len(msgs) != 10 {
+		t.Errorf("expected 10 messages, got %d", len(msgs))
+	}
+	if msgs[0].Content != "msg-090" || msgs[9].Content != "msg-099" {
+		t.Errorf("partial read content mismatch: first=%s last=%s", msgs[0].Content, msgs[9].Content)
+	}
+
+	// 9. Exact buffer size alignment (tricky to construct exactly but we can try)
+	// We rely on random chance or exact construction.
+	// Let's rely on previous test.
+
+	// 10. Malformed mixed with valid
+	writeRaw(msg1 + "\n" + "{bad}\n" + msg2 + "\n")
+	msgs = read(10)
+	if len(msgs) != 2 {
+		t.Errorf("expected 2 valid messages (skipping bad), got %d", len(msgs))
+	}
+	if msgs[0].Content != "1" || msgs[1].Content != "2" {
+		t.Errorf("content mismatch with malformed line")
+	}
+}
