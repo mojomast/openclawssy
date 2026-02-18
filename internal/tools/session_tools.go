@@ -170,14 +170,3 @@ func resolveChatstorePath(workspace, configuredPath string) (string, error) {
 	return filepath.Join(rootDir, ".openclawssy", "agents"), nil
 }
 
-func valueString(args map[string]any, key string) string {
-	raw, ok := args[key]
-	if !ok || raw == nil {
-		return ""
-	}
-	value, ok := raw.(string)
-	if !ok {
-		return ""
-	}
-	return value
-}

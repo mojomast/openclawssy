@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -81,7 +80,7 @@ func httpRequest(configuredPath string) Handler {
 			timeout = defaultHTTPRequestTimeout
 		}
 
-		maxBytes := intFromAny(req.Args["max_response_bytes"], defaultHTTPResponseBytes)
+		maxBytes := parseInt(req.Args["max_response_bytes"], defaultHTTPResponseBytes)
 		if maxBytes <= 0 {
 			maxBytes = defaultHTTPResponseBytes
 		}
@@ -261,24 +260,9 @@ func httpRequestBody(args map[string]any) ([]byte, error) {
 }
 
 func durationFromMS(raw any, fallback time.Duration) time.Duration {
-	ms := intFromAny(raw, int(fallback/time.Millisecond))
+	ms := parseInt(raw, int(fallback/time.Millisecond))
 	if ms <= 0 {
 		return fallback
 	}
 	return time.Duration(ms) * time.Millisecond
-}
-
-func intFromAny(raw any, fallback int) int {
-	if raw == nil {
-		return fallback
-	}
-	s := strings.TrimSpace(fmt.Sprintf("%v", raw))
-	if s == "" || s == "<nil>" {
-		return fallback
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return fallback
-	}
-	return n
 }
