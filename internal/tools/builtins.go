@@ -597,18 +597,16 @@ func shellExec(ctx context.Context, req Request) (map[string]any, error) {
 			return nil, fmt.Errorf("args must be an array")
 		}
 	}
-	if len(req.ShellAllowedCommands) > 0 {
-		invocation := strings.TrimSpace(strings.Join(append([]string{command}, args...), " "))
-		allowed := false
-		for _, prefix := range req.ShellAllowedCommands {
-			if commandMatchesPrefix(invocation, prefix) {
-				allowed = true
-				break
-			}
+	invocation := strings.TrimSpace(strings.Join(append([]string{command}, args...), " "))
+	allowed := false
+	for _, prefix := range req.ShellAllowedCommands {
+		if commandMatchesPrefix(invocation, prefix) {
+			allowed = true
+			break
 		}
-		if !allowed {
-			return nil, &ToolError{Code: ErrCodePolicyDenied, Tool: req.Tool, Message: "command is not allowed"}
-		}
+	}
+	if !allowed {
+		return nil, &ToolError{Code: ErrCodePolicyDenied, Tool: req.Tool, Message: "command is not allowed"}
 	}
 
 	// Apply timeout if specified
