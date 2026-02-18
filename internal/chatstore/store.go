@@ -30,13 +30,21 @@ const (
 	messageScanBufferMax  = 8 * 1024 * 1024
 )
 
+const maxMetaCacheSize = 10000
+
 type Store struct {
 	agentsRoot string
 
 	// mu guards all process-local state and writes. This does not protect against
 	// concurrent writers from other processes.
-	mu    sync.RWMutex
-	index map[string]string
+	mu        sync.RWMutex
+	index     map[string]string
+	metaCache map[string]cachedSession
+}
+
+type cachedSession struct {
+	session Session
+	modTime time.Time
 }
 
 type Session struct {
@@ -84,7 +92,11 @@ func NewStore(agentsRoot string) (*Store, error) {
 		return nil, fmt.Errorf("chatstore: create agents root: %w", err)
 	}
 
-	s := &Store{agentsRoot: absRoot, index: make(map[string]string)}
+	s := &Store{
+		agentsRoot: absRoot,
+		index:      make(map[string]string),
+		metaCache:  make(map[string]cachedSession),
+	}
 	if err := s.loadIndex(); err != nil {
 		return nil, err
 	}
@@ -149,9 +161,6 @@ func (s *Store) ListSessions(agentID, userID, roomID, channel string) ([]Session
 		return nil, err
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	chatRoot := s.chatRoot(agentID)
 	entries, err := os.ReadDir(chatRoot)
 	if err != nil {
@@ -169,14 +178,49 @@ func (s *Store) ListSessions(agentID, userID, roomID, channel string) ([]Session
 		if entry.Name() == "_active" {
 			continue
 		}
-		metaPath := filepath.Join(chatRoot, entry.Name(), "meta.json")
-		session, err := readSessionMeta(metaPath)
+		sessionID := entry.Name()
+		metaPath := filepath.Join(chatRoot, sessionID, "meta.json")
+
+		fi, err := os.Stat(metaPath)
 		if err != nil {
-			if errors.Is(err, ErrSessionNotFound) {
+			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
-			return nil, err
+			return nil, fmt.Errorf("chatstore: list sessions stat: %w", err)
 		}
+
+		s.mu.RLock()
+		cached, found := s.metaCache[sessionID]
+		s.mu.RUnlock()
+
+		var session Session
+		if found && fi.ModTime().Equal(cached.modTime) {
+			session = cached.session
+		} else {
+			// Although file system writes are atomic (rename), acquire RLock to
+			// coordinate with in-process writers and respect the lock contract.
+			s.mu.RLock()
+			session, err = readSessionMeta(metaPath)
+			s.mu.RUnlock()
+			if err != nil {
+				if errors.Is(err, ErrSessionNotFound) {
+					continue
+				}
+				return nil, err
+			}
+
+			s.mu.Lock()
+			if len(s.metaCache) >= maxMetaCacheSize {
+				// Simple random eviction to prevent unbounded growth
+				for k := range s.metaCache {
+					delete(s.metaCache, k)
+					break
+				}
+			}
+			s.metaCache[sessionID] = cachedSession{session: session, modTime: fi.ModTime()}
+			s.mu.Unlock()
+		}
+
 		if userID != "" && session.UserID != userID {
 			continue
 		}
