@@ -25,6 +25,12 @@ type Job struct {
 	LastRun   string `json:"lastRun"`
 }
 
+type jobUpdate struct {
+	JobID   string
+	RunAt   time.Time
+	Disable bool
+}
+
 type RunFunc func(agentID string, message string)
 type RunJobFunc func(job Job)
 
@@ -173,6 +179,31 @@ func (s *Store) updateAfterRun(job Job, runAt time.Time, disable bool) error {
 	return s.saveLocked()
 }
 
+func (s *Store) batchUpdateAfterRun(updates []jobUpdate) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.reloadLocked(); err != nil {
+		return err
+	}
+	dirty := false
+	for _, u := range updates {
+		cur, ok := s.jobs[u.JobID]
+		if !ok {
+			continue
+		}
+		cur.LastRun = u.RunAt.UTC().Format(time.RFC3339)
+		if u.Disable {
+			cur.Enabled = false
+		}
+		s.jobs[u.JobID] = cur
+		dirty = true
+	}
+	if dirty {
+		return s.saveLocked()
+	}
+	return nil
+}
+
 func (s *Store) SetPaused(paused bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -316,6 +347,7 @@ func (e *Executor) check(now time.Time) {
 	}
 
 	jobsCh := make(chan dueJob)
+	updatesCh := make(chan jobUpdate, len(dueJobs))
 	var wg sync.WaitGroup
 	wg.Add(workers)
 	for i := 0; i < workers; i++ {
@@ -323,7 +355,7 @@ func (e *Executor) check(now time.Time) {
 			defer wg.Done()
 			for item := range jobsCh {
 				e.runJobFunc(item.job)
-				_ = e.store.updateAfterRun(item.job, now, item.disableAfterRun)
+				updatesCh <- jobUpdate{JobID: item.job.ID, RunAt: now, Disable: item.disableAfterRun}
 			}
 		}()
 	}
@@ -332,6 +364,15 @@ func (e *Executor) check(now time.Time) {
 	}
 	close(jobsCh)
 	wg.Wait()
+	close(updatesCh)
+
+	var updates []jobUpdate
+	for update := range updatesCh {
+		updates = append(updates, update)
+	}
+	if len(updates) > 0 {
+		_ = e.store.batchUpdateAfterRun(updates)
+	}
 }
 
 func isMissedRun(job Job, now time.Time) bool {
