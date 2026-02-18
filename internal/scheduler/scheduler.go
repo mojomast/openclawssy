@@ -5,9 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
+
+	"openclawssy/internal/fsutil"
 	"sync"
 	"time"
 )
@@ -152,7 +153,7 @@ func (s *Store) saveLocked() error {
 	}
 	body = append(body, '\n')
 
-	return atomicWriteFile(s.path, body, 0o600)
+	return fsutil.WriteFileAtomic(s.path, body, 0o600)
 }
 
 func (s *Store) updateAfterRun(job Job, runAt time.Time, disable bool) error {
@@ -404,40 +405,4 @@ func parseLastRun(raw string) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("scheduler: invalid lastRun %q", raw)
 	}
 	return t, nil
-}
-
-func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("scheduler: ensure directory: %w", err)
-	}
-
-	tmpFile, err := os.CreateTemp(dir, ".tmp-scheduler-*")
-	if err != nil {
-		return fmt.Errorf("scheduler: create temp file: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-
-	defer func() {
-		_ = os.Remove(tmpPath)
-	}()
-
-	if _, err := tmpFile.Write(data); err != nil {
-		_ = tmpFile.Close()
-		return fmt.Errorf("scheduler: write temp file: %w", err)
-	}
-	if err := tmpFile.Sync(); err != nil {
-		_ = tmpFile.Close()
-		return fmt.Errorf("scheduler: sync temp file: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("scheduler: close temp file: %w", err)
-	}
-	if err := os.Chmod(tmpPath, perm); err != nil {
-		return fmt.Errorf("scheduler: chmod temp file: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("scheduler: rename temp file: %w", err)
-	}
-	return nil
 }

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"openclawssy/internal/fsutil"
 )
 
 var ErrSessionNotFound = errors.New("chatstore: session not found")
@@ -528,6 +530,7 @@ func writeJSONFile(path string, value any) error {
 	}
 	b = append(b, '\n')
 
+	// Ensure parent directory exists before backup/write
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("chatstore: create parent dir: %w", err)
@@ -537,31 +540,7 @@ func writeJSONFile(path string, value any) error {
 		_ = os.WriteFile(path+".bak", existing, 0o600)
 	}
 
-	tmp, err := os.CreateTemp(dir, ".tmp-chatstore-*")
-	if err != nil {
-		return fmt.Errorf("chatstore: create temp file: %w", err)
-	}
-	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-
-	if _, err := tmp.Write(b); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chatstore: write temp file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chatstore: sync temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("chatstore: close temp file: %w", err)
-	}
-	if err := os.Chmod(tmpPath, 0o600); err != nil {
-		return fmt.Errorf("chatstore: chmod temp file: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("chatstore: rename temp file: %w", err)
-	}
-	return nil
+	return fsutil.WriteFileAtomic(path, b, 0o600)
 }
 
 func readFileWithBackup(path string) ([]byte, error) {

@@ -1,11 +1,12 @@
 package artifacts
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"openclawssy/internal/fsutil"
 )
 
 const baseBundleDir = ".openclawssy"
@@ -84,47 +85,14 @@ func writeJSONAtomic(path string, v any) error {
 	}
 	data = append(data, '\n')
 
-	dir := filepath.Dir(path)
-	base := filepath.Base(path)
-
-	tmp, err := os.CreateTemp(dir, base+".tmp-")
-	if err != nil {
-		return fmt.Errorf("create temp for %s: %w", base, err)
-	}
-	tmpName := tmp.Name()
-
-	cleanup := func() {
-		_ = os.Remove(tmpName)
-	}
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return fmt.Errorf("write temp for %s: %w", base, err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return fmt.Errorf("sync temp for %s: %w", base, err)
-	}
-	if err := tmp.Close(); err != nil {
-		cleanup()
-		return fmt.Errorf("close temp for %s: %w", base, err)
-	}
-
-	if err := os.Rename(tmpName, path); err != nil {
-		cleanup()
-		return fmt.Errorf("rename temp for %s: %w", base, err)
-	}
-
-	return nil
+	return fsutil.WriteFileAtomic(path, data, 0o600)
 }
 
 func writeTextAtomic(path string, body string) error {
 	if body != "" && body[len(body)-1] != '\n' {
 		body += "\n"
 	}
-	return writeBytesAtomic(path, []byte(body))
+	return fsutil.WriteFileAtomic(path, []byte(body), 0o600)
 }
 
 func writeJSONLAtomic(path string, lines []string) error {
@@ -133,41 +101,5 @@ func writeJSONLAtomic(path string, lines []string) error {
 		buf = append(buf, line...)
 		buf = append(buf, '\n')
 	}
-	return writeBytesAtomic(path, buf)
-}
-
-func writeBytesAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	base := filepath.Base(path)
-	tmp, err := os.CreateTemp(dir, base+".tmp-")
-	if err != nil {
-		return fmt.Errorf("create temp for %s: %w", base, err)
-	}
-	tmpName := tmp.Name()
-	cleanup := func() { _ = os.Remove(tmpName) }
-	w := bufio.NewWriter(tmp)
-	if _, err := w.Write(data); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return fmt.Errorf("write temp for %s: %w", base, err)
-	}
-	if err := w.Flush(); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return fmt.Errorf("flush temp for %s: %w", base, err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return fmt.Errorf("sync temp for %s: %w", base, err)
-	}
-	if err := tmp.Close(); err != nil {
-		cleanup()
-		return fmt.Errorf("close temp for %s: %w", base, err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		cleanup()
-		return fmt.Errorf("rename temp for %s: %w", base, err)
-	}
-	return nil
+	return fsutil.WriteFileAtomic(path, buf, 0o600)
 }

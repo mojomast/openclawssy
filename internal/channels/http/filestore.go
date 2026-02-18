@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+
+	"openclawssy/internal/fsutil"
 )
 
 const defaultMaxPersistedRuns = 2000
@@ -110,7 +111,7 @@ func (s *FileRunStore) saveLocked() error {
 		return fmt.Errorf("marshal runs store: %w", err)
 	}
 	data = append(data, '\n')
-	return atomicWrite(s.path, data, 0o600)
+	return fsutil.WriteFileAtomic(s.path, data, 0o600)
 }
 
 func (s *FileRunStore) compactLocked() {
@@ -149,36 +150,4 @@ func (s *FileRunStore) compactLocked() {
 		delete(s.runs, run.ID)
 		toRemove--
 	}
-}
-
-func atomicWrite(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".tmp-runs-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmpPath, perm); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return err
-	}
-	return nil
 }

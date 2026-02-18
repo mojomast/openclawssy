@@ -649,17 +649,3 @@ func TestNextDueAndParseLastRunValidation(t *testing.T) {
 		t.Fatal("expected invalid lastRun parse error")
 	}
 }
-
-func TestAtomicWriteFileWritesDataAndCreatesParentDir(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "nested", "jobs.json")
-	if err := atomicWriteFile(path, []byte("hello"), 0o600); err != nil {
-		t.Fatalf("atomicWriteFile: %v", err)
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read written file: %v", err)
-	}
-	if string(raw) != "hello" {
-		t.Fatalf("unexpected written data: %q", string(raw))
-	}
-}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"openclawssy/internal/config"
+	"openclawssy/internal/fsutil"
 )
 
 const envMasterKey = "OPENCLAWSSY_MASTER_KEY"
@@ -120,30 +121,12 @@ func (s *Store) writeAllLocked(data map[string]string) error {
 	}
 	out = append(out, '\n')
 
+	// Ensure directory exists with restricted permissions before atomic write
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".tmp-secrets-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-	if _, err := tmp.Write(out); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmpPath, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, s.path)
+
+	return fsutil.WriteFileAtomic(s.path, out, 0o600)
 }
 
 func loadMasterKey(masterKeyFile string) ([]byte, error) {
