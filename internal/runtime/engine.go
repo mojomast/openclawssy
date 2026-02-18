@@ -30,6 +30,7 @@ type Engine struct {
 	workspaceDir string
 	agentsDir    string
 	runTracker   *RunTracker
+	chatStore    *chatstore.Store
 
 	runLimitMu  sync.Mutex
 	runLimitCap int
@@ -97,11 +98,24 @@ func NewEngine(rootDir string) (*Engine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("runtime: resolve root: %w", err)
 	}
+
+	agentsDir := filepath.Join(absRoot, ".openclawssy", "agents")
+	// Ensure agentsDir exists so NewStore succeeds even on fresh init
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		return nil, fmt.Errorf("runtime: create agents dir: %w", err)
+	}
+
+	chatStore, err := chatstore.NewStore(agentsDir)
+	if err != nil {
+		return nil, fmt.Errorf("runtime: init chat store: %w", err)
+	}
+
 	return &Engine{
 		rootDir:      absRoot,
 		workspaceDir: filepath.Join(absRoot, "workspace"),
-		agentsDir:    filepath.Join(absRoot, ".openclawssy", "agents"),
+		agentsDir:    agentsDir,
 		runTracker:   NewRunTracker(),
+		chatStore:    chatStore,
 	}, nil
 }
 
@@ -297,10 +311,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	modelMessages := []agent.ChatMessage{{Role: "user", Content: runMessage}}
 	var conversationStore *chatstore.Store
 	if sessionID != "" {
-		conversationStore, err = chatstore.NewStore(e.agentsDir)
-		if err != nil {
-			return RunResult{}, fmt.Errorf("runtime: init chat store: %w", err)
-		}
+		conversationStore = e.chatStore
 		sessionMeta, sessionErr := conversationStore.GetSession(sessionID)
 		if sessionErr != nil {
 			return RunResult{}, fmt.Errorf("runtime: load session: %w", sessionErr)
@@ -657,11 +668,10 @@ func logToolCallbackFailures(ctx context.Context, aud *audit.Logger, runID, agen
 }
 
 func (e *Engine) loadSessionMessages(sessionID string, limit int) ([]agent.ChatMessage, error) {
-	store, err := chatstore.NewStore(e.agentsDir)
-	if err != nil {
-		return nil, fmt.Errorf("runtime: init chat store: %w", err)
+	if e.chatStore == nil {
+		return nil, errors.New("runtime: chat store not initialized")
 	}
-	history, err := store.ReadRecentMessages(sessionID, chatstore.ClampHistoryCount(limit, maxSessionContextMessageCap))
+	history, err := e.chatStore.ReadRecentMessages(sessionID, chatstore.ClampHistoryCount(limit, maxSessionContextMessageCap))
 	if err != nil {
 		return nil, fmt.Errorf("runtime: read chat history: %w", err)
 	}
@@ -838,9 +848,9 @@ func hasTrailingUserMessage(messages []agent.ChatMessage, currentMessage string)
 }
 
 func (e *Engine) appendRunConversation(sessionID, runID string, out agent.RunOutput, includeToolMessages bool) error {
-	store, err := chatstore.NewStore(e.agentsDir)
-	if err != nil {
-		return fmt.Errorf("runtime: init chat store: %w", err)
+	store := e.chatStore
+	if store == nil {
+		return errors.New("runtime: chat store not initialized")
 	}
 	if includeToolMessages {
 		for _, rec := range out.ToolCalls {
