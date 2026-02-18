@@ -1470,3 +1470,40 @@ pre {
     display: block;
   }
 }
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--secondary);
+  color: var(--foreground);
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 0.15rem 0.55rem;
+  text-transform: capitalize;
+}
+
+.status-badge.running {
+  border-color: var(--accent);
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.status-badge.completed {
+  border-color: var(--success);
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.status-badge.failed {
+  border-color: var(--destructive);
+  background: var(--destructive-bg);
+  color: var(--destructive);
+}
+
+.status-badge.queued {
+  border-color: var(--warning);
+  background: var(--warning-bg);
+  color: var(--warning);
+}
