@@ -67,7 +67,7 @@ func httpRequest(configuredPath string) Handler {
 }
 
 func prepareRequest(ctx context.Context, req Request, configuredPath string) (*preparedHTTPRequest, error) {
-	cfgPath, err := resolveConfigPath(req.Workspace, configuredPath)
+	cfgPath, err := resolveOpenClawssyPath(req.Workspace, configuredPath, "config", "config.json")
 	if err != nil {
 		return nil, err
 	}
