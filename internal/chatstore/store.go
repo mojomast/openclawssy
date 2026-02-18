@@ -2,6 +2,7 @@ package chatstore
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -280,18 +281,24 @@ func (s *Store) ReadRecentMessages(sessionID string, limit int) ([]Message, erro
 		}
 		defer f.Close()
 
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, messageScanBufferInit), messageScanBufferMax)
+		scanner, err := NewReverseScanner(f, messageScanBufferInit, messageScanBufferMax)
+		if err != nil {
+			return fmt.Errorf("chatstore: init scanner: %w", err)
+		}
+
 		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" {
+			line := bytes.TrimSpace(scanner.Bytes())
+			if len(line) == 0 {
 				continue
 			}
 			var m Message
-			if err := json.Unmarshal([]byte(line), &m); err != nil {
+			if err := json.Unmarshal(line, &m); err != nil {
 				continue
 			}
 			all = append(all, m)
+			if len(all) >= limit {
+				break
+			}
 		}
 		if err := scanner.Err(); err != nil {
 			if errors.Is(err, bufio.ErrTooLong) {
@@ -304,10 +311,12 @@ func (s *Store) ReadRecentMessages(sessionID string, limit int) ([]Message, erro
 		return nil, err
 	}
 
-	if len(all) <= limit {
-		return all, nil
+	// Reverse the collected messages to restore chronological order
+	for i, j := 0, len(all)-1; i < j; i, j = i+1, j-1 {
+		all[i], all[j] = all[j], all[i]
 	}
-	return append([]Message(nil), all[len(all)-limit:]...), nil
+
+	return all, nil
 }
 
 func (s *Store) GetSession(sessionID string) (Session, error) {
