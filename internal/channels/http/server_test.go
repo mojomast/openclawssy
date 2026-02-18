@@ -437,3 +437,51 @@ func TestServer_AuthAllowsOnlyDashboardGetHeadPathsWithoutToken(t *testing.T) {
 		})
 	}
 }
+
+func TestAuthBypass_PathTraversal(t *testing.T) {
+	// Setup a server with a protected route "/protected" and the dashboard routes.
+	s := NewServer(Config{
+		BearerToken: "secret",
+		Store:       NewInMemoryRunStore(),
+		RegisterMux: func(mux *http.ServeMux) {
+			mux.HandleFunc("/protected", func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte("secret data"))
+			})
+			// Dashboard routes are implicitly handled by the logic in authMiddleware/isUnauthenticatedDashboardRoute
+			// but we need them registered to not 404 if we actually hit them?
+			// The middleware check doesn't depend on them being registered, only on the path string.
+		},
+	})
+
+	// Case 1: Clean path to protected resource. Should be blocked (401).
+	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("Direct access to /protected: expected 401, got %d", rr.Code)
+	}
+
+	// Case 2: Dirty path starting with /dashboard/static/ traversing to /protected.
+	// We want to see if the MIDDLEWARE allows this.
+	// If the middleware allows it, it passes to ServeMux.
+	// ServeMux will likely redirect (301) to /protected.
+	// If we get 301, it means the middleware ALLOWED the request.
+	// If the middleware BLOCKED the request, we would get 401.
+
+	req = httptest.NewRequest(http.MethodGet, "/dashboard/static/../../protected", nil)
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+
+	// If vulnerable:
+	// Middleware checks "/dashboard/static/../../protected". Starts with "/dashboard/static/". Returns true (allowed).
+	// Calls ServeMux. ServeMux cleans to "/protected". Redirects to "/protected" (301).
+	// So we expect 301.
+
+	// If fixed:
+	// Middleware cleans to "/protected". Checks prefix. Returns false (blocked).
+	// Returns 401.
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("Path traversal access to /protected: expected 401, got %d", rr.Code)
+	}
+}
