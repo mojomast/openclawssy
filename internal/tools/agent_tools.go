@@ -56,7 +56,7 @@ func registerAgentTools(reg *Registry, agentsPath, configPath string) error {
 
 func agentList(configuredPath string) Handler {
 	return func(_ context.Context, req Request) (map[string]any, error) {
-		agentsRoot, err := resolveAgentsPath(req.Workspace, configuredPath)
+		agentsRoot, err := resolveOpenClawssyPath(req.Workspace, configuredPath, "agents", "agents")
 		if err != nil {
 			return nil, err
 		}
@@ -92,7 +92,7 @@ func agentCreate(configuredPath string) Handler {
 		if err != nil {
 			return nil, err
 		}
-		agentsRoot, err := resolveAgentsPath(req.Workspace, configuredPath)
+		agentsRoot, err := resolveOpenClawssyPath(req.Workspace, configuredPath, "agents", "agents")
 		if err != nil {
 			return nil, err
 		}
@@ -126,7 +126,7 @@ func agentSwitch(agentsPath, configPath string) Handler {
 			return nil, err
 		}
 
-		agentsRoot, err := resolveAgentsPath(req.Workspace, agentsPath)
+		agentsRoot, err := resolveOpenClawssyPath(req.Workspace, agentsPath, "agents", "agents")
 		if err != nil {
 			return nil, err
 		}
@@ -151,7 +151,7 @@ func agentSwitch(agentsPath, configPath string) Handler {
 			return nil, errors.New("scope must be one of: chat, discord, both")
 		}
 
-		cfgPath, err := resolveConfigPath(req.Workspace, configPath)
+		cfgPath, err := resolveOpenClawssyPath(req.Workspace, configPath, "config", "config.json")
 		if err != nil {
 			return nil, err
 		}
@@ -182,22 +182,6 @@ func agentSwitch(agentsPath, configPath string) Handler {
 			"discord_default_agent": cfg.Discord.DefaultAgentID,
 		}, nil
 	}
-}
-
-func resolveAgentsPath(workspace, configuredPath string) (string, error) {
-	if strings.TrimSpace(configuredPath) != "" {
-		return configuredPath, nil
-	}
-	workspace = strings.TrimSpace(workspace)
-	if workspace == "" {
-		return "", errors.New("workspace is required to resolve agents path")
-	}
-	wsAbs, err := filepath.Abs(workspace)
-	if err != nil {
-		return "", err
-	}
-	rootDir := filepath.Dir(wsAbs)
-	return filepath.Join(rootDir, ".openclawssy", "agents"), nil
 }
 
 func createAgentScaffold(agentRoot string, force bool) ([]string, error) {

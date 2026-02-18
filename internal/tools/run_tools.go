@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"strings"
 
 	httpchannel "openclawssy/internal/channels/http"
@@ -111,25 +110,9 @@ func runGet(runsPath string) Handler {
 }
 
 func openRunStore(workspace, configuredPath string) (*httpchannel.FileRunStore, error) {
-	path, err := resolveRunsPath(workspace, configuredPath)
+	path, err := resolveOpenClawssyPath(workspace, configuredPath, "runs", "runs.json")
 	if err != nil {
 		return nil, err
 	}
 	return httpchannel.NewFileRunStore(path)
-}
-
-func resolveRunsPath(workspace, configuredPath string) (string, error) {
-	if strings.TrimSpace(configuredPath) != "" {
-		return configuredPath, nil
-	}
-	workspace = strings.TrimSpace(workspace)
-	if workspace == "" {
-		return "", errors.New("workspace is required to resolve runs path")
-	}
-	wsAbs, err := filepath.Abs(workspace)
-	if err != nil {
-		return "", err
-	}
-	rootDir := filepath.Dir(wsAbs)
-	return filepath.Join(rootDir, ".openclawssy", "runs.json"), nil
 }

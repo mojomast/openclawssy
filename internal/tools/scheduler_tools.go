@@ -2,9 +2,7 @@ package tools
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -203,25 +201,9 @@ func schedulerResume(configuredPath string) Handler {
 }
 
 func openSchedulerStore(workspace, configuredPath string) (*scheduler.Store, error) {
-	path, err := resolveSchedulerPath(workspace, configuredPath)
+	path, err := resolveOpenClawssyPath(workspace, configuredPath, "scheduler", "scheduler", "jobs.json")
 	if err != nil {
 		return nil, err
 	}
 	return scheduler.NewStore(path)
-}
-
-func resolveSchedulerPath(workspace, configuredPath string) (string, error) {
-	if strings.TrimSpace(configuredPath) != "" {
-		return configuredPath, nil
-	}
-	workspace = strings.TrimSpace(workspace)
-	if workspace == "" {
-		return "", errors.New("workspace is required to resolve scheduler path")
-	}
-	wsAbs, err := filepath.Abs(workspace)
-	if err != nil {
-		return "", err
-	}
-	rootDir := filepath.Dir(wsAbs)
-	return filepath.Join(rootDir, ".openclawssy", "scheduler", "jobs.json"), nil
 }

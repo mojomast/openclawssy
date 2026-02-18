@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -59,7 +58,7 @@ func policyList(configuredPath string, defaultGrants []string) Handler {
 		if err := requirePolicyAdmin(req); err != nil {
 			return nil, err
 		}
-		path, err := resolvePolicyPath(req.Workspace, configuredPath)
+		path, err := resolveOpenClawssyPath(req.Workspace, configuredPath, "policy", "policy", "capabilities.json")
 		if err != nil {
 			return nil, err
 		}
@@ -140,7 +139,7 @@ func policyGrant(configuredPath string, defaultGrants []string) Handler {
 		if err != nil {
 			return nil, err
 		}
-		path, err := resolvePolicyPath(req.Workspace, configuredPath)
+		path, err := resolveOpenClawssyPath(req.Workspace, configuredPath, "policy", "policy", "capabilities.json")
 		if err != nil {
 			return nil, err
 		}
@@ -180,7 +179,7 @@ func policyRevoke(configuredPath string, defaultGrants []string) Handler {
 		if err != nil {
 			return nil, err
 		}
-		path, err := resolvePolicyPath(req.Workspace, configuredPath)
+		path, err := resolveOpenClawssyPath(req.Workspace, configuredPath, "policy", "policy", "capabilities.json")
 		if err != nil {
 			return nil, err
 		}
@@ -217,22 +216,6 @@ func policyRevoke(configuredPath string, defaultGrants []string) Handler {
 			"capability_cnt": len(updated),
 		}, nil
 	}
-}
-
-func resolvePolicyPath(workspace, configuredPath string) (string, error) {
-	if strings.TrimSpace(configuredPath) != "" {
-		return configuredPath, nil
-	}
-	workspace = strings.TrimSpace(workspace)
-	if workspace == "" {
-		return "", errors.New("workspace is required to resolve policy path")
-	}
-	wsAbs, err := filepath.Abs(workspace)
-	if err != nil {
-		return "", err
-	}
-	rootDir := filepath.Dir(wsAbs)
-	return filepath.Join(rootDir, ".openclawssy", "policy", "capabilities.json"), nil
 }
 
 func requirePolicyAdmin(req Request) error {

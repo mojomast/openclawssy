@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -33,7 +32,7 @@ func registerConfigTools(reg *Registry, configuredPath string) error {
 
 func configGet(configuredPath string) Handler {
 	return func(_ context.Context, req Request) (map[string]any, error) {
-		cfgPath, err := resolveConfigPath(req.Workspace, configuredPath)
+		cfgPath, err := resolveOpenClawssyPath(req.Workspace, configuredPath, "config", "config.json")
 		if err != nil {
 			return nil, err
 		}
@@ -65,7 +64,7 @@ func configGet(configuredPath string) Handler {
 
 func configSet(configuredPath string) Handler {
 	return func(_ context.Context, req Request) (map[string]any, error) {
-		cfgPath, err := resolveConfigPath(req.Workspace, configuredPath)
+		cfgPath, err := resolveOpenClawssyPath(req.Workspace, configuredPath, "config", "config.json")
 		if err != nil {
 			return nil, err
 		}
@@ -115,22 +114,6 @@ func redactedConfigForTool(cfg config.Config) config.Config {
 	redacted.Secrets.StoreFile = ""
 	redacted.Secrets.MasterKeyFile = ""
 	return redacted
-}
-
-func resolveConfigPath(workspace, configuredPath string) (string, error) {
-	if strings.TrimSpace(configuredPath) != "" {
-		return configuredPath, nil
-	}
-	workspace = strings.TrimSpace(workspace)
-	if workspace == "" {
-		return "", errors.New("workspace is required to resolve config path")
-	}
-	wsAbs, err := filepath.Abs(workspace)
-	if err != nil {
-		return "", err
-	}
-	rootDir := filepath.Dir(wsAbs)
-	return filepath.Join(rootDir, ".openclawssy", "config.json"), nil
 }
 
 func applyConfigFieldUpdate(cfg *config.Config, field string, value any) error {

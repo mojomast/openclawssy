@@ -109,7 +109,7 @@ func secretsList(configuredPath string) Handler {
 }
 
 func openSecretsStore(workspace, configuredPath string) (*secrets.Store, error) {
-	path, err := resolveConfigPath(workspace, configuredPath)
+	path, err := resolveOpenClawssyPath(workspace, configuredPath, "config", "config.json")
 	if err != nil {
 		return nil, err
 	}

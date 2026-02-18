@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"strings"
 
 	"openclawssy/internal/chatstore"
@@ -147,27 +146,11 @@ func sessionClose(configuredPath string) Handler {
 }
 
 func openChatStore(workspace, configuredPath string) (*chatstore.Store, error) {
-	path, err := resolveChatstorePath(workspace, configuredPath)
+	path, err := resolveOpenClawssyPath(workspace, configuredPath, "chatstore", "agents")
 	if err != nil {
 		return nil, err
 	}
 	return chatstore.NewStore(path)
-}
-
-func resolveChatstorePath(workspace, configuredPath string) (string, error) {
-	if strings.TrimSpace(configuredPath) != "" {
-		return configuredPath, nil
-	}
-	workspace = strings.TrimSpace(workspace)
-	if workspace == "" {
-		return "", errors.New("workspace is required to resolve chatstore path")
-	}
-	wsAbs, err := filepath.Abs(workspace)
-	if err != nil {
-		return "", err
-	}
-	rootDir := filepath.Dir(wsAbs)
-	return filepath.Join(rootDir, ".openclawssy", "agents"), nil
 }
 
 func valueString(args map[string]any, key string) string {
