@@ -552,19 +552,33 @@ func codeSearch(_ context.Context, req Request) (map[string]any, error) {
 		if err != nil || info.Size() > int64(maxFileBytes) {
 			continue
 		}
-		data, err := os.ReadFile(p)
-		if err != nil || !isText(data) {
+		f, err := os.Open(p)
+		if err != nil {
 			continue
 		}
-		scanner := bufio.NewScanner(strings.NewReader(string(data)))
+
+		scanner := bufio.NewScanner(f)
 		lineNo := 0
+		var fileResults []map[string]any
+		isBinary := false
+
 		for scanner.Scan() {
-			lineNo++
-			line := scanner.Text()
-			if re.MatchString(line) {
-				rel, _ := filepath.Rel(req.Workspace, p)
-				results = append(results, map[string]any{"path": rel, "line": lineNo, "text": line})
+			lineBytes := scanner.Bytes()
+			if !isText(lineBytes) {
+				isBinary = true
+				break
 			}
+			lineNo++
+			if re.Match(lineBytes) {
+				line := string(lineBytes)
+				rel, _ := filepath.Rel(req.Workspace, p)
+				fileResults = append(fileResults, map[string]any{"path": rel, "line": lineNo, "text": line})
+			}
+		}
+		f.Close()
+
+		if !isBinary {
+			results = append(results, fileResults...)
 		}
 	}
 

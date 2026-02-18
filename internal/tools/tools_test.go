@@ -2168,3 +2168,50 @@ func TestRunCancelTool_NilTracker(t *testing.T) {
 		t.Fatal("expected error when tracker is nil")
 	}
 }
+
+func TestCodeSearchSkipsBinaryFiles(t *testing.T) {
+	ws := t.TempDir()
+	// Create a binary file (contains null byte)
+	if err := os.WriteFile(filepath.Join(ws, "binary.bin"), []byte("hello\x00world"), 0o600); err != nil {
+		t.Fatalf("write binary file: %v", err)
+	}
+	// Create a text file
+	if err := os.WriteFile(filepath.Join(ws, "text.txt"), []byte("hello world"), 0o600); err != nil {
+		t.Fatalf("write text file: %v", err)
+	}
+
+	reg := NewRegistry(fakePolicy{}, nil)
+	if err := RegisterCore(reg); err != nil {
+		t.Fatalf("register core: %v", err)
+	}
+
+	res, err := reg.Execute(context.Background(), "agent", "code.search", ws, map[string]any{"pattern": "hello"})
+	if err != nil {
+		t.Fatalf("code.search: %v", err)
+	}
+
+	matches, ok := res["matches"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected matches list, got %#v", res["matches"])
+	}
+
+	// Should only find match in text.txt
+	foundBinary := false
+	foundText := false
+	for _, m := range matches {
+		path := m["path"].(string)
+		if path == "binary.bin" {
+			foundBinary = true
+		}
+		if path == "text.txt" {
+			foundText = true
+		}
+	}
+
+	if foundBinary {
+		t.Fatalf("expected binary file to be skipped, but found match in binary.bin")
+	}
+	if !foundText {
+		t.Fatalf("expected match in text.txt, but not found")
+	}
+}
