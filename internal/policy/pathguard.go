@@ -140,6 +140,13 @@ func resolvePath(workspace, target string, write bool) (string, error) {
 			return "", &PathError{Path: target, Reason: "write parent does not exist or is invalid"}
 		}
 		candidate = filepath.Join(parentReal, filepath.Base(targetAbs))
+
+		// If the target file exists, resolve it to ensure it is not a symlink pointing outside
+		if _, err := os.Lstat(candidate); err == nil {
+			if realPath, err := filepath.EvalSymlinks(candidate); err == nil {
+				candidate = realPath
+			}
+		}
 	} else {
 		candidate, err = filepath.EvalSymlinks(targetAbs)
 		if err != nil {
