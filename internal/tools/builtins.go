@@ -445,68 +445,26 @@ func fsEdit(_ context.Context, req Request) (map[string]any, error) {
 		return nil, errors.New("fs.edit accepts exactly one edit mode: old/new, edits, or patch")
 	}
 
+	var updated string
+	var res map[string]any
+
 	if hasReplaceMode {
-		oldText, ok := req.Args["old"]
-		if !ok {
-			return nil, errors.New("missing argument: old")
-		}
-		oldS, ok := oldText.(string)
-		if !ok {
-			return nil, errors.New("old must be string")
-		}
-		newS, err := getString(req.Args, "new")
-		if err != nil {
-			return nil, err
-		}
-		orig := string(b)
-		updated := strings.Replace(orig, oldS, newS, 1)
-		if updated == orig {
-			return nil, errors.New("edit pattern not found")
-		}
-		if err := os.WriteFile(resolved, []byte(updated), 0o600); err != nil {
-			return nil, err
-		}
-		return map[string]any{"path": path, "updated": true, "mode": "replace_once"}, nil
+		updated, res, err = handleReplaceMode(string(b), req.Args)
+	} else if hasPatch {
+		updated, res, err = handleUnifiedDiffMode(string(b), req.Args)
+	} else {
+		updated, res, err = handleLineEditsMode(string(b), req.Args)
 	}
 
-	if hasPatch {
-		patch, err := getString(req.Args, "patch")
-		if err != nil {
-			return nil, err
-		}
-		if strings.TrimSpace(patch) == "" {
-			return nil, errors.New("patch must not be empty")
-		}
-		hunks, err := parseUnifiedDiff(patch)
-		if err != nil {
-			return nil, err
-		}
-		updated, applied, err := applyUnifiedDiff(string(b), hunks)
-		if err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(resolved, []byte(updated), 0o600); err != nil {
-			return nil, err
-		}
-		return map[string]any{"path": path, "updated": true, "applied_edits": applied, "mode": "unified_diff"}, nil
-	}
-
-	rawEdits, ok := req.Args["edits"]
-	if !ok {
-		return nil, errors.New("missing argument: edits")
-	}
-	edits, err := parseLineEdits(rawEdits)
 	if err != nil {
 		return nil, err
 	}
-	updated, applied, err := applyLineEdits(string(b), edits)
-	if err != nil {
-		return nil, err
-	}
+
 	if err := os.WriteFile(resolved, []byte(updated), 0o600); err != nil {
 		return nil, err
 	}
-	return map[string]any{"path": path, "updated": true, "applied_edits": applied, "mode": "line_patch"}, nil
+	res["path"] = path
+	return res, nil
 }
 
 func codeSearch(_ context.Context, req Request) (map[string]any, error) {
@@ -1017,4 +975,59 @@ func isWithinWorkspace(workspace, target string) (bool, error) {
 		return false, nil
 	}
 	return !filepath.IsAbs(rel), nil
+}
+
+func handleReplaceMode(content string, args map[string]any) (string, map[string]any, error) {
+	oldText, ok := args["old"]
+	if !ok {
+		return "", nil, errors.New("missing argument: old")
+	}
+	oldS, ok := oldText.(string)
+	if !ok {
+		return "", nil, errors.New("old must be string")
+	}
+	newS, err := getString(args, "new")
+	if err != nil {
+		return "", nil, err
+	}
+	updated := strings.Replace(content, oldS, newS, 1)
+	if updated == content {
+		return "", nil, errors.New("edit pattern not found")
+	}
+	return updated, map[string]any{"updated": true, "mode": "replace_once"}, nil
+}
+
+func handleUnifiedDiffMode(content string, args map[string]any) (string, map[string]any, error) {
+	patch, err := getString(args, "patch")
+	if err != nil {
+		return "", nil, err
+	}
+	if strings.TrimSpace(patch) == "" {
+		return "", nil, errors.New("patch must not be empty")
+	}
+	hunks, err := parseUnifiedDiff(patch)
+	if err != nil {
+		return "", nil, err
+	}
+	updated, applied, err := applyUnifiedDiff(content, hunks)
+	if err != nil {
+		return "", nil, err
+	}
+	return updated, map[string]any{"updated": true, "applied_edits": applied, "mode": "unified_diff"}, nil
+}
+
+func handleLineEditsMode(content string, args map[string]any) (string, map[string]any, error) {
+	rawEdits, ok := args["edits"]
+	if !ok {
+		return "", nil, errors.New("missing argument: edits")
+	}
+	edits, err := parseLineEdits(rawEdits)
+	if err != nil {
+		return "", nil, err
+	}
+	updated, applied, err := applyLineEdits(content, edits)
+	if err != nil {
+		return "", nil, err
+	}
+	return updated, map[string]any{"updated": true, "applied_edits": applied, "mode": "line_patch"}, nil
 }
