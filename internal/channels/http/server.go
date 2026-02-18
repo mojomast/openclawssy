@@ -17,12 +17,15 @@ import (
 
 const defaultAddr = "127.0.0.1:8080"
 
+var sseHeartbeatInterval = 15 * time.Second
+
 type Config struct {
 	Addr        string
 	BearerToken string
 	Store       RunStore
 	Executor    RunExecutor
 	Chat        ChatConnector
+	EventBus    *RunEventBus
 	RegisterMux func(mux *http.ServeMux)
 }
 
@@ -32,6 +35,7 @@ type Server struct {
 	store       RunStore
 	executor    RunExecutor
 	chat        ChatConnector
+	eventBus    *RunEventBus
 	httpServer  *http.Server
 }
 
@@ -60,6 +64,7 @@ type ExecutionInput struct {
 	Source       string
 	SessionID    string
 	ThinkingMode string
+	OnProgress   func(eventType string, data map[string]any)
 }
 
 type RunExecutor interface {
@@ -106,6 +111,10 @@ func NewServer(cfg Config) *Server {
 	if executor == nil {
 		executor = NopExecutor{}
 	}
+	eventBus := cfg.EventBus
+	if eventBus == nil {
+		eventBus = NewRunEventBus(0)
+	}
 
 	s := &Server{
 		addr:        addr,
@@ -113,9 +122,11 @@ func NewServer(cfg Config) *Server {
 		store:       store,
 		executor:    executor,
 		chat:        cfg.Chat,
+		eventBus:    eventBus,
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/runs/events/", s.handleRunEvents)
 	mux.HandleFunc("/v1/runs", s.handleRuns)
 	mux.HandleFunc("/v1/runs/", s.handleRunByID)
 	mux.HandleFunc("/v1/chat/messages", s.handleChatMessage)
@@ -268,7 +279,17 @@ func (s *Server) handlePostRun(w http.ResponseWriter, r *http.Request) {
 		req.ThinkingMode = normalized
 	}
 
-	created, err := QueueRun(r.Context(), s.store, s.executor, req.AgentID, req.Message, "http", "", req.ThinkingMode)
+	created, err := QueueRunWithOptions(
+		r.Context(),
+		s.store,
+		s.executor,
+		req.AgentID,
+		req.Message,
+		"http",
+		"",
+		req.ThinkingMode,
+		QueueRunOptions{EventBus: s.eventBus},
+	)
 	if err != nil {
 		if errors.Is(err, ErrQueueFull) {
 			writeErrorJSON(w, http.StatusTooManyRequests, "queue.full", "run queue is full", 0)
@@ -416,6 +437,122 @@ func (s *Server) handleRunByID(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(run)
+}
+
+func (s *Server) handleRunEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.eventBus == nil {
+		http.Error(w, "run event stream is disabled", http.StatusNotFound)
+		return
+	}
+
+	runID := strings.TrimPrefix(r.URL.Path, "/v1/runs/events/")
+	if !isValidRunID(runID) {
+		http.Error(w, "invalid run id", http.StatusBadRequest)
+		return
+	}
+
+	lastEventID := int64(0)
+	if raw := strings.TrimSpace(r.Header.Get("Last-Event-ID")); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || parsed < 0 {
+			http.Error(w, "invalid Last-Event-ID", http.StatusBadRequest)
+			return
+		}
+		lastEventID = parsed
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	headers := w.Header()
+	headers.Set("Content-Type", "text/event-stream")
+	headers.Set("Cache-Control", "no-cache")
+	headers.Set("Connection", "keep-alive")
+	headers.Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	events, unsubscribe := s.eventBus.Subscribe(runID, lastEventID)
+	defer unsubscribe()
+
+	heartbeatTicker := time.NewTicker(sseHeartbeatInterval)
+	defer heartbeatTicker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			if err := writeSSEEventFrame(w, event); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-heartbeatTicker.C:
+			if err := writeSSEHeartbeatFrame(w); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+func writeSSEEventFrame(w http.ResponseWriter, event RunEvent) error {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	eventType := strings.TrimSpace(string(event.Type))
+	if eventType == "" {
+		eventType = "message"
+	}
+	if _, err := fmt.Fprintf(w, "id: %d\n", event.ID); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "event: %s\n", eventType); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", payload); err != nil {
+		return err
+	}
+	return nil
+}
+
+func writeSSEHeartbeatFrame(w http.ResponseWriter) error {
+	payload, err := json.Marshal(map[string]any{"ts": time.Now().UTC()})
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "event: %s\n", RunEventHeartbeat); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", payload); err != nil {
+		return err
+	}
+	return nil
+}
+
+func isValidRunID(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {

@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -37,7 +38,7 @@ const (
 	providerMaxAttempts    = 3
 	providerRetryBackoff   = 700 * time.Millisecond
 	toolNamePattern        = `[A-Za-z][A-Za-z0-9_]*\.[A-Za-z][A-Za-z0-9_]*`
-	maxToolCallsPerReply   = 6
+	maxToolCallsPerReply   = 12
 	maxPromptToolResults   = 12
 	maxPromptToolOutput    = 6000
 	maxPromptToolError     = 1200
@@ -215,6 +216,9 @@ func (m *ProviderModel) Generate(ctx context.Context, req agent.ModelRequest) (a
 		"messages":   chatMessages,
 		"max_tokens": m.responseMaxTokens,
 	}
+	if req.OnTextDelta != nil {
+		body["stream"] = true
+	}
 
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -224,26 +228,41 @@ func (m *ProviderModel) Generate(ctx context.Context, req agent.ModelRequest) (a
 		trace.RecordModelInput(msg, len(promptText), len(normalizedMessages) > 1, string(raw))
 	}
 
-	var payload struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-		Error any `json:"error"`
-	}
-	statusCode, err := m.doChatCompletionWithRetry(ctx, raw, &payload)
-	if err != nil {
-		return agent.ModelResponse{}, err
-	}
-	if statusCode >= 300 {
-		return agent.ModelResponse{}, fmt.Errorf("provider %s request failed: status=%d error=%v", m.providerName, statusCode, payload.Error)
-	}
-	if len(payload.Choices) == 0 {
-		return agent.ModelResponse{}, errors.New("provider returned no choices")
+	content := ""
+	if req.OnTextDelta == nil {
+		var payload struct {
+			Choices []struct {
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+			Error any `json:"error"`
+		}
+		statusCode, err := m.doChatCompletionWithRetry(ctx, raw, &payload)
+		if err != nil {
+			return agent.ModelResponse{}, err
+		}
+		if statusCode >= 300 {
+			return agent.ModelResponse{}, fmt.Errorf("provider %s request failed: status=%d error=%v", m.providerName, statusCode, payload.Error)
+		}
+		if len(payload.Choices) == 0 {
+			return agent.ModelResponse{}, errors.New("provider returned no choices")
+		}
+		content = strings.TrimSpace(payload.Choices[0].Message.Content)
+	} else {
+		streamResult, err := m.doStreamingChatCompletionWithRetry(ctx, raw, req.OnTextDelta)
+		if err != nil {
+			return agent.ModelResponse{}, err
+		}
+		if streamResult.StatusCode >= 300 {
+			return agent.ModelResponse{}, fmt.Errorf("provider %s request failed: status=%d error=%v", m.providerName, streamResult.StatusCode, streamResult.Error)
+		}
+		content = strings.TrimSpace(streamResult.Content)
+		if content == "" {
+			return agent.ModelResponse{}, errors.New("provider returned no choices")
+		}
 	}
 
-	content := strings.TrimSpace(payload.Choices[0].Message.Content)
 	trace := runTraceCollectorFromContext(ctx)
 	visibleText, thinkingText, thinkingPresent := ExtractThinking(content)
 
@@ -313,6 +332,215 @@ func (m *ProviderModel) doChatCompletionWithRetry(ctx context.Context, raw []byt
 		return 0, lastErr
 	}
 	return 0, errors.New("provider request failed")
+}
+
+type streamingChatCompletionResult struct {
+	StatusCode   int
+	Content      string
+	Error        any
+	DeltaEmitted bool
+}
+
+func (m *ProviderModel) doStreamingChatCompletionWithRetry(ctx context.Context, raw []byte, onDelta func(string) error) (streamingChatCompletionResult, error) {
+	if m.httpClient == nil {
+		m.httpClient = &http.Client{Timeout: defaultProviderTimeout}
+	}
+
+	var lastResult streamingChatCompletionResult
+	var lastErr error
+	for attempt := 1; attempt <= providerMaxAttempts; attempt++ {
+		attemptCtx, cancel := ensureProviderRequestTimeout(ctx, defaultProviderTimeout)
+		result, err := m.doStreamingChatCompletionOnce(attemptCtx, raw, onDelta)
+		cancel()
+		if err == nil {
+			return result, nil
+		}
+		lastResult = result
+		lastErr = err
+		if result.DeltaEmitted {
+			return lastResult, fmt.Errorf("provider stream interrupted after partial output: %w", err)
+		}
+		if !shouldRetryProviderError(err) || attempt == providerMaxAttempts {
+			return lastResult, err
+		}
+
+		backoff := providerRetryBackoff
+		if attempt > 1 {
+			backoff = providerRetryBackoff * time.Duration(1<<(attempt-1))
+			if backoff > 5*time.Second {
+				backoff = 5 * time.Second
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return streamingChatCompletionResult{}, ctx.Err()
+		case <-time.After(backoff):
+		}
+	}
+	if lastErr != nil {
+		return lastResult, lastErr
+	}
+	return lastResult, errors.New("provider streaming request failed")
+}
+
+func (m *ProviderModel) doStreamingChatCompletionOnce(ctx context.Context, raw []byte, onDelta func(string) error) (streamingChatCompletionResult, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, m.baseURL+"/chat/completions", bytes.NewReader(raw))
+	if err != nil {
+		return streamingChatCompletionResult{}, err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+m.apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	for k, v := range m.headers {
+		httpReq.Header.Set(k, v)
+	}
+
+	resp, err := m.httpClient.Do(httpReq)
+	if err != nil {
+		return streamingChatCompletionResult{}, err
+	}
+	defer resp.Body.Close()
+
+	result := streamingChatCompletionResult{StatusCode: resp.StatusCode}
+	if resp.StatusCode >= 300 {
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return result, readErr
+		}
+		result.Error = parseProviderErrorBody(body)
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+			return result, fmt.Errorf("retryable provider status: %d", resp.StatusCode)
+		}
+		return result, nil
+	}
+
+	content, emitted, err := consumeProviderSSE(resp.Body, onDelta)
+	result.Content = content
+	result.DeltaEmitted = emitted
+	if err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+func consumeProviderSSE(reader io.Reader, onDelta func(string) error) (string, bool, error) {
+	br := bufio.NewReader(reader)
+	var content strings.Builder
+	emitted := false
+	for {
+		data, done, err := readNextSSEData(br)
+		if err != nil {
+			return content.String(), emitted, err
+		}
+		if done {
+			break
+		}
+		trimmed := strings.TrimSpace(data)
+		if trimmed == "" {
+			continue
+		}
+		if trimmed == "[DONE]" {
+			break
+		}
+		delta, err := extractStreamingDeltaText(trimmed)
+		if err != nil {
+			return content.String(), emitted, err
+		}
+		if delta == "" {
+			continue
+		}
+		content.WriteString(delta)
+		emitted = true
+		if onDelta != nil {
+			if err := onDelta(delta); err != nil {
+				return content.String(), emitted, err
+			}
+		}
+	}
+	return content.String(), emitted, nil
+}
+
+func readNextSSEData(reader *bufio.Reader) (string, bool, error) {
+	if reader == nil {
+		return "", true, nil
+	}
+	dataLines := make([]string, 0, 1)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return "", false, err
+		}
+		if line != "" {
+			line = strings.TrimRight(line, "\r\n")
+			if line == "" {
+				if len(dataLines) > 0 {
+					return strings.Join(dataLines, "\n"), false, nil
+				}
+			} else if strings.HasPrefix(line, ":") {
+				// Heartbeat/comment.
+			} else if strings.HasPrefix(line, "data:") {
+				value := strings.TrimPrefix(line, "data:")
+				if strings.HasPrefix(value, " ") {
+					value = value[1:]
+				}
+				dataLines = append(dataLines, value)
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			if len(dataLines) > 0 {
+				return strings.Join(dataLines, "\n"), false, nil
+			}
+			return "", true, nil
+		}
+	}
+}
+
+func extractStreamingDeltaText(raw string) (string, error) {
+	payload := strings.TrimSpace(raw)
+	if payload == "" {
+		return "", nil
+	}
+	var envelope struct {
+		Choices []struct {
+			Delta struct {
+				Content string `json:"content"`
+			} `json:"delta"`
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+			Text string `json:"text"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
+		return "", err
+	}
+	if len(envelope.Choices) == 0 {
+		return "", nil
+	}
+	choice := envelope.Choices[0]
+	if choice.Delta.Content != "" {
+		return choice.Delta.Content, nil
+	}
+	if choice.Text != "" {
+		return choice.Text, nil
+	}
+	if choice.Message.Content != "" {
+		return choice.Message.Content, nil
+	}
+	return "", nil
+}
+
+func parseProviderErrorBody(body []byte) any {
+	if len(body) == 0 {
+		return nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err == nil {
+		if value, ok := payload["error"]; ok {
+			return value
+		}
+		return payload
+	}
+	return strings.TrimSpace(string(body))
 }
 
 func (m *ProviderModel) doChatCompletionOnce(ctx context.Context, raw []byte, payload any) (int, error) {
@@ -391,6 +619,10 @@ func appendToolResultsPrompt(prompt string, results []agent.ToolCallResult) stri
 		b.WriteString("\n")
 	}
 	b.WriteString("\n## Tool Results\n")
+	b.WriteString("- total_results_so_far: ")
+	b.WriteString(strconv.Itoa(len(results)))
+	b.WriteString("\n")
+	b.WriteString("- If the user requested a specific number of tool calls and that count has been reached, stop calling tools and provide the final answer.\n")
 	if start > 0 {
 		b.WriteString("- older_results_omitted: ")
 		b.WriteString(strconv.Itoa(start))

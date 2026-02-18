@@ -22,6 +22,8 @@ type flakyRetryableExecutor struct {
 	calls int
 }
 
+type progressPublishingExecutor struct{}
+
 func (f *flakyRetryableExecutor) Execute(_ context.Context, _ ExecutionInput) (ExecutionResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -38,6 +40,14 @@ func (t traceExecutor) Execute(_ context.Context, _ ExecutionInput) (ExecutionRe
 
 func (b blockingExecutor) Execute(_ context.Context, _ ExecutionInput) (ExecutionResult, error) {
 	<-b.release
+	return ExecutionResult{Output: "done"}, nil
+}
+
+func (p progressPublishingExecutor) Execute(_ context.Context, input ExecutionInput) (ExecutionResult, error) {
+	if input.OnProgress != nil {
+		input.OnProgress("tool_end", map[string]any{"tool": "fs.list", "summary": "listed files"})
+		input.OnProgress("model_text", map[string]any{"text": "partial", "partial": true})
+	}
 	return ExecutionResult{Output: "done"}, nil
 }
 
@@ -213,5 +223,161 @@ func TestQueueRunRejectsWhenQueueLimitReached(t *testing.T) {
 	defer cancel()
 	if err := WaitForQueuedRuns(ctx); err != nil {
 		t.Fatalf("wait for queued runs: %v", err)
+	}
+}
+
+func TestQueueRunWithOptionsPublishesStatusAndTerminalEvents(t *testing.T) {
+	store := NewInMemoryRunStore()
+	eventBus := NewRunEventBus(16)
+
+	queued, err := QueueRunWithOptions(
+		context.Background(),
+		store,
+		traceExecutor{result: ExecutionResult{Output: "ok"}},
+		"agent-1",
+		"hello",
+		"dashboard",
+		"chat_123",
+		"",
+		QueueRunOptions{EventBus: eventBus},
+	)
+	if err != nil {
+		t.Fatalf("queue run: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		run, getErr := store.Get(context.Background(), queued.ID)
+		if getErr != nil {
+			t.Fatalf("get run: %v", getErr)
+		}
+		if run.Status == "completed" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	ch, unsubscribe := eventBus.Subscribe(queued.ID, 0)
+	defer unsubscribe()
+	var events []RunEvent
+	for event := range ch {
+		events = append(events, event)
+	}
+	if len(events) < 2 {
+		t.Fatalf("expected at least status + completed events, got %d", len(events))
+	}
+	if events[0].Type != RunEventStatus {
+		t.Fatalf("expected first event status, got %q", events[0].Type)
+	}
+	last := events[len(events)-1]
+	if last.Type != RunEventCompleted {
+		t.Fatalf("expected terminal completed event, got %q", last.Type)
+	}
+	if output := last.Data["output"]; output != "ok" {
+		t.Fatalf("expected completed output metadata, got %#v", last.Data)
+	}
+}
+
+func TestQueueRunWithOptionsPublishesProgressEvents(t *testing.T) {
+	store := NewInMemoryRunStore()
+	eventBus := NewRunEventBus(32)
+
+	queued, err := QueueRunWithOptions(
+		context.Background(),
+		store,
+		progressPublishingExecutor{},
+		"agent-1",
+		"hello",
+		"dashboard",
+		"chat_123",
+		"",
+		QueueRunOptions{EventBus: eventBus},
+	)
+	if err != nil {
+		t.Fatalf("queue run: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		run, getErr := store.Get(context.Background(), queued.ID)
+		if getErr != nil {
+			t.Fatalf("get run: %v", getErr)
+		}
+		if run.Status == "completed" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	ch, unsubscribe := eventBus.Subscribe(queued.ID, 0)
+	defer unsubscribe()
+	seenTool := false
+	seenText := false
+	seenCompleted := false
+	for event := range ch {
+		switch event.Type {
+		case RunEventToolEnd:
+			seenTool = true
+		case RunEventModelText:
+			seenText = true
+		case RunEventCompleted:
+			seenCompleted = true
+		}
+	}
+	if !seenTool {
+		t.Fatal("expected tool_end progress event")
+	}
+	if !seenText {
+		t.Fatal("expected model_text progress event")
+	}
+	if !seenCompleted {
+		t.Fatal("expected completed terminal event")
+	}
+}
+
+func TestQueueRunWithOptionsPublishesFailedTerminalEvent(t *testing.T) {
+	store := NewInMemoryRunStore()
+	eventBus := NewRunEventBus(16)
+
+	queued, err := QueueRunWithOptions(
+		context.Background(),
+		store,
+		traceExecutor{result: ExecutionResult{Trace: map[string]any{"attempt": 1}}, err: context.DeadlineExceeded},
+		"agent-1",
+		"hello",
+		"dashboard",
+		"chat_123",
+		"",
+		QueueRunOptions{EventBus: eventBus},
+	)
+	if err != nil {
+		t.Fatalf("queue run: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		run, getErr := store.Get(context.Background(), queued.ID)
+		if getErr != nil {
+			t.Fatalf("get run: %v", getErr)
+		}
+		if run.Status == "failed" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	ch, unsubscribe := eventBus.Subscribe(queued.ID, 0)
+	defer unsubscribe()
+	seenFailed := false
+	for event := range ch {
+		if event.Type == RunEventFailed {
+			seenFailed = true
+			if event.Data["error"] == "" {
+				t.Fatalf("expected failed event to include error payload, got %#v", event.Data)
+			}
+		}
+	}
+	if !seenFailed {
+		t.Fatal("expected failed terminal event")
 	}
 }

@@ -67,6 +67,7 @@ type ExecuteInput struct {
 	Source       string
 	SessionID    string
 	ThinkingMode string
+	OnProgress   func(eventType string, data map[string]any)
 }
 
 const (
@@ -358,6 +359,15 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	}
 
 	appendToolsAfterRun := true
+	emitProgress := func(eventType string, data map[string]any) {
+		if in.OnProgress == nil {
+			return
+		}
+		if data == nil {
+			data = map[string]any{}
+		}
+		in.OnProgress(eventType, data)
+	}
 	onToolCall := func(rec agent.ToolCallRecord) error { return nil }
 	if conversationStore != nil {
 		appendToolsAfterRun = false
@@ -367,6 +377,14 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	}
 	baseOnToolCall := onToolCall
 	onToolCall = func(rec agent.ToolCallRecord) error {
+		durationMS := rec.CompletedAt.Sub(rec.StartedAt).Milliseconds()
+		emitProgress("tool_end", map[string]any{
+			"tool":         rec.Request.Name,
+			"tool_call_id": rec.Request.ID,
+			"summary":      summarizeToolExecution(rec.Request.Name, rec.Result.Output, rec.Result.Error),
+			"error":        strings.TrimSpace(rec.Result.Error),
+			"duration_ms":  durationMS,
+		})
 		err := baseOnToolCall(rec)
 		e.maybeTriggerProactiveMemoryHook(runCtx, cfg, registry, agentID, sessionID, runID, rec)
 		return err
@@ -385,7 +403,17 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		AllowedTools:      allowedTools,
 		OnToolCall:        onToolCall,
 		SystemPromptExt:   e.memoryPromptExtender(cfg, agentID, runID),
+		OnTextDelta: func(delta string) error {
+			if delta == "" {
+				return nil
+			}
+			emitProgress("model_text", map[string]any{"text": delta, "partial": true})
+			return nil
+		},
 	})
+	if runErr == nil {
+		emitProgress("model_text", map[string]any{"text": out.FinalText, "partial": false})
+	}
 
 	artifactPath := ""
 	persistedThinking, thinkingPresent := sanitizedPersistedThinking(out.Thinking, out.ThinkingPresent, cfg.Output.MaxThinkingChars)

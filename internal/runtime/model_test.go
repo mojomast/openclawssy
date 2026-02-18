@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 type requestCapture struct {
 	Model     string `json:"model"`
 	MaxTokens int    `json:"max_tokens"`
+	Stream    bool   `json:"stream,omitempty"`
 	Messages  []struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
@@ -1512,6 +1514,121 @@ func TestProviderEndpointAndMessageHelpers(t *testing.T) {
 	}
 	if trimmed[len(trimmed)-1].Content != "tail" {
 		t.Fatalf("expected latest turn preserved, got %+v", trimmed)
+	}
+}
+
+func TestProviderModelStreamingParsesDeltasAndReturnsFinalText(t *testing.T) {
+	var captured requestCapture
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Hello \"}}]}\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"world!\"}}]}\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	model := testProviderModel(t, server.URL)
+	var deltas []string
+	resp, err := model.Generate(context.Background(), agent.ModelRequest{
+		Prompt:  "system",
+		Message: "hello",
+		OnTextDelta: func(delta string) error {
+			deltas = append(deltas, delta)
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("generate failed: %v", err)
+	}
+	if !captured.Stream {
+		t.Fatal("expected streaming request payload to set stream=true")
+	}
+	if resp.FinalText != "Hello world!" {
+		t.Fatalf("unexpected final text: %q", resp.FinalText)
+	}
+	if strings.Join(deltas, "") != "Hello world!" {
+		t.Fatalf("unexpected streamed deltas: %#v", deltas)
+	}
+}
+
+func TestProviderModelStreamingRetriesBeforeFirstDelta(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadGateway)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "temporary upstream"})
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"retry ok\"}}]}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	model := testProviderModel(t, server.URL)
+	var deltas []string
+	resp, err := model.Generate(context.Background(), agent.ModelRequest{
+		Prompt:  "system",
+		Message: "hello",
+		OnTextDelta: func(delta string) error {
+			deltas = append(deltas, delta)
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("generate failed: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("expected retry before first delta, got %d call(s)", calls)
+	}
+	if resp.FinalText != "retry ok" {
+		t.Fatalf("unexpected final text after retry: %q", resp.FinalText)
+	}
+	if strings.Join(deltas, "") != "retry ok" {
+		t.Fatalf("unexpected streamed deltas: %#v", deltas)
+	}
+}
+
+func TestProviderModelStreamingDoesNotRetryAfterFirstDelta(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	model := testProviderModel(t, server.URL)
+	deltaCalls := 0
+	_, err := model.Generate(context.Background(), agent.ModelRequest{
+		Prompt:  "system",
+		Message: "hello",
+		OnTextDelta: func(_ string) error {
+			deltaCalls++
+			return context.DeadlineExceeded
+		},
+	})
+	if err == nil {
+		t.Fatal("expected streaming callback error")
+	}
+	if calls != 1 {
+		t.Fatalf("expected no retry after first emitted delta, got %d call(s)", calls)
+	}
+	if deltaCalls != 1 {
+		t.Fatalf("expected one emitted delta before failure, got %d", deltaCalls)
 	}
 }
 

@@ -6,6 +6,8 @@ const CHAT_DEFAULTS = {
 
 const RUN_POLL_MS = 1500;
 const SESSION_POLL_MS = 2000;
+const STREAM_SESSION_POLL_MS = 5000;
+const STREAM_RENDER_THROTTLE_MS = 100;
 const SESSION_MESSAGES_LIMIT = 200;
 const SESSION_LOOKUP_LIMIT = 1;
 const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "canceled"]);
@@ -26,6 +28,7 @@ const chatViewState = {
   currentRunLastOutput: "",
 
   latestToolActivity: null,
+  streamToolEvents: [],
   lastErrorSummary: "",
   loopRisk: {
     level: "low",
@@ -45,10 +48,20 @@ const chatViewState = {
   sessionPollInFlight: false,
   idleSessionInFlight: false,
   sessionBootstrapInFlight: false,
+  runPollingEnabled: true,
+  sessionPollIntervalMS: SESSION_POLL_MS,
+
+  streamActive: false,
+  streamAbortController: null,
+  streamLastEventID: 0,
+  currentStreamingText: "",
+  currentStreamRunID: "",
+  streamRenderTimer: 0,
 
   transcriptPinned: true,
   transcriptScrollTop: 0,
 
+  routeUnsubscribe: null,
   container: null,
   apiClient: null,
   store: null,
@@ -431,7 +444,7 @@ function syncTranscriptFromSession(messages) {
 
   const pending = chatViewState.transcript.find((item) => item?.role === "assistant" && item?.pending) || null;
   chatViewState.transcript = sessionTranscript;
-  if (pending && (chatViewState.sendPending || chatViewState.polling)) {
+  if (pending && (chatViewState.sendPending || chatViewState.polling || chatViewState.streamActive)) {
     chatViewState.transcript.push(pending);
   }
 }
@@ -562,8 +575,8 @@ function replacePendingAssistant(message) {
 }
 
 function updatePendingAssistant(message) {
-  const text = safeText(message);
-  if (!text) {
+  const text = typeof message === "string" ? message : String(message || "");
+  if (!safeText(text)) {
     return;
   }
   for (let index = chatViewState.transcript.length - 1; index >= 0; index -= 1) {
@@ -586,6 +599,23 @@ function pushUserAndPendingAssistant(message) {
   chatViewState.transcript.push({ role: "assistant", content: "Thinking...", pending: true, ts: now });
 }
 
+function clearStreamingRenderTimer() {
+  if (chatViewState.streamRenderTimer) {
+    window.clearTimeout(chatViewState.streamRenderTimer);
+    chatViewState.streamRenderTimer = 0;
+  }
+}
+
+function scheduleStreamingRender() {
+  if (chatViewState.streamRenderTimer) {
+    return;
+  }
+  chatViewState.streamRenderTimer = window.setTimeout(() => {
+    chatViewState.streamRenderTimer = 0;
+    rerenderIfActive({ skipIfUnchanged: true });
+  }, STREAM_RENDER_THROTTLE_MS);
+}
+
 function clearTimers() {
   if (chatViewState.runPollTimer) {
     window.clearTimeout(chatViewState.runPollTimer);
@@ -594,6 +624,56 @@ function clearTimers() {
   if (chatViewState.sessionPollTimer) {
     window.clearTimeout(chatViewState.sessionPollTimer);
     chatViewState.sessionPollTimer = 0;
+  }
+}
+
+function resetStreamingState(options = {}) {
+  const { resetLastEventID = false, keepStreamingText = false } = options;
+  clearStreamingRenderTimer();
+  chatViewState.streamActive = false;
+  if (!keepStreamingText) {
+    chatViewState.currentStreamingText = "";
+  }
+  chatViewState.currentStreamRunID = "";
+  if (chatViewState.streamAbortController) {
+    chatViewState.streamAbortController.abort();
+    chatViewState.streamAbortController = null;
+  }
+  if (resetLastEventID) {
+    chatViewState.streamLastEventID = 0;
+  }
+}
+
+function enableStreamPollingMode() {
+  if (!chatViewState.polling) {
+    return;
+  }
+  chatViewState.runPollingEnabled = false;
+  chatViewState.sessionPollIntervalMS = STREAM_SESSION_POLL_MS;
+  if (chatViewState.runPollTimer) {
+    window.clearTimeout(chatViewState.runPollTimer);
+    chatViewState.runPollTimer = 0;
+  }
+  if (chatViewState.currentSessionID) {
+    scheduleSessionPoll(chatViewState.pollToken, true);
+  }
+}
+
+function restorePollingFallback(runID) {
+  chatViewState.runPollingEnabled = true;
+  chatViewState.sessionPollIntervalMS = SESSION_POLL_MS;
+
+  const activeRunID = safeText(runID) || safeText(chatViewState.currentRunID);
+  if (!activeRunID || isTerminalStatus(chatViewState.currentRunStatus)) {
+    return;
+  }
+  if (!chatViewState.polling) {
+    startPolling({ runID: activeRunID, sessionID: chatViewState.currentSessionID });
+    return;
+  }
+  scheduleRunPoll(chatViewState.pollToken, true);
+  if (chatViewState.currentSessionID) {
+    scheduleSessionPoll(chatViewState.pollToken, true);
   }
 }
 
@@ -609,6 +689,8 @@ function stopPolling() {
   chatViewState.pollToken += 1;
   chatViewState.runPollInFlight = false;
   chatViewState.sessionPollInFlight = false;
+  chatViewState.runPollingEnabled = true;
+  chatViewState.sessionPollIntervalMS = SESSION_POLL_MS;
   clearTimers();
 }
 
@@ -632,7 +714,7 @@ function rerenderIfActive(options = {}) {
 }
 
 function scheduleRunPoll(token, immediate = false) {
-  if (!chatViewState.polling || token !== chatViewState.pollToken) {
+  if (!chatViewState.polling || token !== chatViewState.pollToken || !chatViewState.runPollingEnabled) {
     return;
   }
   if (chatViewState.runPollTimer) {
@@ -655,7 +737,7 @@ function scheduleSessionPoll(token, immediate = false) {
   }
   chatViewState.sessionPollTimer = window.setTimeout(() => {
     void pollSessionMessagesOnce(token);
-  }, immediate ? 0 : SESSION_POLL_MS);
+  }, immediate ? 0 : chatViewState.sessionPollIntervalMS);
 }
 
 function startPolling({ runID, sessionID }) {
@@ -670,11 +752,19 @@ function startPolling({ runID, sessionID }) {
   if (nextSessionID) {
     chatViewState.currentSessionID = nextSessionID;
   }
-  chatViewState.currentRunStartedAtMs = Date.now();
+  if (!sameRun) {
+    chatViewState.currentRunStartedAtMs = Date.now();
+  }
 
   if (sameRun) {
+    if (chatViewState.currentRunStartedAtMs <= 0) {
+      chatViewState.currentRunStartedAtMs = Date.now();
+    }
     if (nextSessionID) {
       scheduleSessionPoll(chatViewState.pollToken, true);
+    }
+    if (chatViewState.runPollingEnabled) {
+      scheduleRunPoll(chatViewState.pollToken, true);
     }
     return;
   }
@@ -686,6 +776,8 @@ function startPolling({ runID, sessionID }) {
   }
   chatViewState.currentRunStatus = "running";
   chatViewState.currentRunStartedAtMs = Date.now();
+  chatViewState.runPollingEnabled = true;
+  chatViewState.sessionPollIntervalMS = SESSION_POLL_MS;
   chatViewState.polling = true;
   chatViewState.pollToken += 1;
 
@@ -719,6 +811,355 @@ async function ensureCurrentSessionID() {
   } finally {
     chatViewState.sessionBootstrapInFlight = false;
   }
+}
+
+function parseSSEBlock(rawBlock) {
+  const lines = String(rawBlock || "").replace(/\r/g, "").split("\n");
+  const dataLines = [];
+  let eventName = "message";
+  let eventID = "";
+
+  lines.forEach((line) => {
+    if (!line || line.startsWith(":")) {
+      return;
+    }
+    const separator = line.indexOf(":");
+    const key = separator >= 0 ? line.slice(0, separator).trim() : line.trim();
+    let value = separator >= 0 ? line.slice(separator + 1) : "";
+    if (value.startsWith(" ")) {
+      value = value.slice(1);
+    }
+
+    if (key === "event") {
+      eventName = safeText(value) || "message";
+      return;
+    }
+    if (key === "id") {
+      eventID = safeText(value);
+      return;
+    }
+    if (key === "data") {
+      dataLines.push(value);
+    }
+  });
+
+  if (!dataLines.length) {
+    return null;
+  }
+  return {
+    eventName,
+    eventID,
+    data: dataLines.join("\n"),
+  };
+}
+
+function noteStreamEventID(rawID) {
+  const parsed = Number(rawID);
+  if (!Number.isFinite(parsed)) {
+    return;
+  }
+  const id = Math.floor(parsed);
+  if (id > chatViewState.streamLastEventID) {
+    chatViewState.streamLastEventID = id;
+  }
+}
+
+function handleRunStreamStatus(eventEnvelope) {
+  const status = safeText(eventEnvelope?.data?.status || eventEnvelope?.status).toLowerCase();
+  if (status) {
+    chatViewState.currentRunStatus = status;
+  }
+  const sessionID = safeText(eventEnvelope?.data?.session_id);
+  if (sessionID) {
+    chatViewState.currentSessionID = sessionID;
+  }
+  const ts = safeText(eventEnvelope?.ts);
+  chatViewState.currentRunLastUpdatedAt = ts || new Date().toISOString();
+  if (chatViewState.currentRunStartedAtMs <= 0 && status && !isTerminalStatus(status)) {
+    chatViewState.currentRunStartedAtMs = Date.now();
+  }
+  scheduleStreamingRender();
+  return false;
+}
+
+function handleRunStreamToolEnd(eventEnvelope) {
+  const payload = eventEnvelope?.data || {};
+  const event = {
+    tool: firstNonEmpty(payload.tool, payload.name, "unknown.tool"),
+    toolCallID: firstNonEmpty(payload.tool_call_id, payload.id),
+    runID: firstNonEmpty(eventEnvelope?.run_id, chatViewState.currentRunID),
+    summary: firstNonEmpty(payload.summary, payload.message),
+    argsText: asDisplayText(payload.arguments ?? payload.args ?? payload.params),
+    outputText: asDisplayText(payload.output ?? payload.result),
+    errorText: asDisplayText(payload.error ?? payload.callback_error),
+    status: safeText(payload.error) ? "failed" : "ok",
+    ts: String(eventEnvelope?.ts || new Date().toISOString()),
+    index: chatViewState.streamToolEvents.length,
+  };
+
+  chatViewState.streamToolEvents.push(event);
+  if (chatViewState.streamToolEvents.length > 32) {
+    chatViewState.streamToolEvents = chatViewState.streamToolEvents.slice(-32);
+  }
+  chatViewState.latestToolActivity = event;
+  chatViewState.loopRisk = buildLoopRisk(chatViewState.streamToolEvents);
+
+  if (!safeText(chatViewState.currentStreamingText)) {
+    const detail = compactText(firstNonEmpty(event.summary, event.errorText, event.outputText, event.argsText), 180);
+    if (detail) {
+      updatePendingAssistant(`Working... ${event.tool}: ${detail}`);
+    } else {
+      updatePendingAssistant(`Working... ${event.tool}`);
+    }
+  }
+
+  if (event.status === "failed" && safeText(event.errorText)) {
+    chatViewState.lastErrorSummary = compactText(event.errorText, 280);
+    updateLastError(
+      chatViewState.store,
+      toErrorPayload(
+        "chat.stream_tool",
+        { message: event.errorText },
+        {
+          run_id: event.runID || chatViewState.currentRunID,
+          session_id: chatViewState.currentSessionID,
+          tool: event.tool,
+        }
+      )
+    );
+  }
+
+  scheduleStreamingRender();
+  return false;
+}
+
+function handleRunStreamModelText(eventEnvelope) {
+  const payload = eventEnvelope?.data || {};
+  const text = typeof payload.text === "string" ? payload.text : String(payload.text || "");
+  if (!text) {
+    return false;
+  }
+
+  if (payload.partial === false) {
+    chatViewState.currentStreamingText = text;
+  } else {
+    chatViewState.currentStreamingText += text;
+  }
+
+  if (chatViewState.currentStreamingText) {
+    updatePendingAssistant(chatViewState.currentStreamingText);
+  }
+  scheduleStreamingRender();
+  return false;
+}
+
+function handleRunStreamCompleted(eventEnvelope) {
+  const payload = eventEnvelope?.data || {};
+  chatViewState.currentRunStatus = "completed";
+  chatViewState.currentRunLastUpdatedAt = safeText(eventEnvelope?.ts) || new Date().toISOString();
+  chatViewState.currentRunLastOutput = String(payload.output || chatViewState.currentStreamingText || "");
+  const message =
+    chatViewState.currentRunLastOutput ||
+    "Run completed without assistant output. Open trace or tool activity for details.";
+  replacePendingAssistant(message);
+  chatViewState.currentStreamingText = "";
+  stopPolling();
+  resetStreamingState();
+  rerenderIfActive();
+  return true;
+}
+
+function handleRunStreamFailed(eventEnvelope) {
+  const payload = eventEnvelope?.data || {};
+  const message = firstNonEmpty(payload.error, eventEnvelope?.error, "Run failed.");
+  chatViewState.currentRunStatus = "failed";
+  chatViewState.currentRunLastUpdatedAt = safeText(eventEnvelope?.ts) || new Date().toISOString();
+  replacePendingAssistant(`Error: ${message}`);
+  chatViewState.lastErrorSummary = compactText(message, 280);
+  updateLastError(
+    chatViewState.store,
+    toErrorPayload("chat.stream_failed", { message }, { run_id: chatViewState.currentRunID })
+  );
+  chatViewState.currentStreamingText = "";
+  stopPolling();
+  resetStreamingState();
+  rerenderIfActive();
+  return true;
+}
+
+function handleRunStreamEvent(rawType, eventEnvelope) {
+  const type = safeText(rawType).toLowerCase();
+  switch (type) {
+    case "status":
+      return handleRunStreamStatus(eventEnvelope);
+    case "tool_end":
+      return handleRunStreamToolEnd(eventEnvelope);
+    case "model_text":
+      return handleRunStreamModelText(eventEnvelope);
+    case "completed":
+      return handleRunStreamCompleted(eventEnvelope);
+    case "failed":
+      return handleRunStreamFailed(eventEnvelope);
+    case "heartbeat":
+      return false;
+    default:
+      return false;
+  }
+}
+
+function processSSEBlock(rawBlock, runID) {
+  const block = parseSSEBlock(rawBlock);
+  if (!block) {
+    return false;
+  }
+
+  if (block.eventID) {
+    noteStreamEventID(block.eventID);
+  }
+
+  const dataText = String(block.data || "");
+  if (!safeText(dataText)) {
+    return false;
+  }
+  if (safeText(dataText) === "[DONE]") {
+    return true;
+  }
+
+  const parsedPayload = parseMaybeJSON(dataText);
+  const envelope =
+    parsedPayload && typeof parsedPayload === "object"
+      ? parsedPayload
+      : {
+          type: block.eventName,
+          run_id: runID,
+          data: { text: dataText },
+        };
+
+  if (envelope?.id !== undefined && envelope?.id !== null) {
+    noteStreamEventID(envelope.id);
+  }
+
+  const eventType = safeText(envelope?.type || block.eventName || "message");
+  return handleRunStreamEvent(eventType, envelope);
+}
+
+async function consumeRunEventStream(readableStream, runID, signal) {
+  const reader = readableStream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+    if (signal.aborted || !isChatRouteActive()) {
+      throw new Error("stream aborted");
+    }
+
+    buffer += decoder.decode(value, { stream: true }).replace(/\r/g, "");
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary >= 0) {
+      const block = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      if (processSSEBlock(block, runID)) {
+        return true;
+      }
+      boundary = buffer.indexOf("\n\n");
+    }
+  }
+
+  const tail = decoder.decode();
+  if (tail) {
+    buffer += tail.replace(/\r/g, "");
+  }
+  if (safeText(buffer) && processSSEBlock(buffer, runID)) {
+    return true;
+  }
+  return false;
+}
+
+async function connectRunEventStream(runID) {
+  const targetRunID = safeText(runID);
+  if (!targetRunID || !chatViewState.apiClient || !isChatRouteActive()) {
+    return;
+  }
+  if (chatViewState.streamActive && chatViewState.currentStreamRunID === targetRunID) {
+    return;
+  }
+
+  resetStreamingState({ keepStreamingText: true });
+  const controller = new AbortController();
+  chatViewState.streamAbortController = controller;
+  chatViewState.streamActive = true;
+  chatViewState.currentStreamRunID = targetRunID;
+
+  try {
+    const token = safeText(chatViewState.apiClient.resolveBearerToken());
+    const headers = new Headers({ Accept: "text/event-stream" });
+    if (token) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+    if (chatViewState.streamLastEventID > 0) {
+      headers.set("Last-Event-ID", String(chatViewState.streamLastEventID));
+    }
+
+    const response = await window.fetch(`/v1/runs/events/${encodeURIComponent(targetRunID)}`, {
+      method: "GET",
+      headers,
+      signal: controller.signal,
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw new Error(`stream request failed (${response.status})`);
+    }
+    if (!response.body || typeof response.body.getReader !== "function") {
+      throw new Error("streaming not supported by this browser/runtime");
+    }
+
+    enableStreamPollingMode();
+    const terminal = await consumeRunEventStream(response.body, targetRunID, controller.signal);
+    if (terminal || isTerminalStatus(chatViewState.currentRunStatus)) {
+      return;
+    }
+    throw new Error("stream disconnected");
+  } catch (err) {
+    if (controller.signal.aborted) {
+      return;
+    }
+    chatViewState.lastErrorSummary = compactText(err?.message || String(err), 280);
+    updateLastError(chatViewState.store, toErrorPayload("chat.stream", err, { run_id: targetRunID }));
+  } finally {
+    const sameRun = chatViewState.currentStreamRunID === targetRunID;
+    if (sameRun) {
+      chatViewState.streamActive = false;
+      chatViewState.currentStreamRunID = "";
+      if (chatViewState.streamAbortController === controller) {
+        chatViewState.streamAbortController = null;
+      }
+      clearStreamingRenderTimer();
+    }
+    if (!controller.signal.aborted && !isTerminalStatus(chatViewState.currentRunStatus) && isChatRouteActive()) {
+      restorePollingFallback(targetRunID);
+    }
+    rerenderIfActive({ skipIfUnchanged: true });
+  }
+}
+
+function ensureRouteWatcher() {
+  if (chatViewState.routeUnsubscribe || !chatViewState.store) {
+    return;
+  }
+  chatViewState.routeUnsubscribe = chatViewState.store.subscribe((state) => {
+    const route = state?.route || "";
+    if (route === "/chat") {
+      return;
+    }
+    resetStreamingState();
+    stopPolling();
+    clearIdleSessionTimer();
+  });
 }
 
 function scheduleIdleSessionPoll(immediate = false) {
@@ -776,6 +1217,9 @@ async function pollRunOnce(token) {
   if (!chatViewState.polling || token !== chatViewState.pollToken) {
     return;
   }
+  if (!chatViewState.runPollingEnabled) {
+    return;
+  }
   if (chatViewState.runPollInFlight) {
     scheduleRunPoll(token, false);
     return;
@@ -821,6 +1265,7 @@ async function pollRunOnce(token) {
         replacePendingAssistant("Run canceled.");
       }
       stopPolling();
+      resetStreamingState();
       rerenderIfActive();
       return;
     }
@@ -860,11 +1305,15 @@ function applySessionMessagesPayload(payload) {
   syncTranscriptFromSession(messages);
 
   const toolEvents = normalizeToolEvents(messages);
-  const latest = toolEvents.length ? toolEvents[toolEvents.length - 1] : null;
+  if (toolEvents.length) {
+    chatViewState.streamToolEvents = toolEvents.slice(-32);
+  }
+  const mergedToolEvents = chatViewState.streamToolEvents.length ? chatViewState.streamToolEvents : toolEvents;
+  const latest = mergedToolEvents.length ? mergedToolEvents[mergedToolEvents.length - 1] : null;
   chatViewState.latestToolActivity = latest;
-  chatViewState.loopRisk = buildLoopRisk(toolEvents);
+  chatViewState.loopRisk = buildLoopRisk(mergedToolEvents);
 
-  const latestFailed = toolEvents
+  const latestFailed = mergedToolEvents
     .slice()
     .reverse()
     .find((event) => event.status === "failed" && safeText(event.errorText));
@@ -952,18 +1401,27 @@ async function sendMessage() {
     }
 
     if (runID) {
+      const normalizedStatus = safeText(payload?.status).toLowerCase() || "queued";
       chatViewState.currentRunID = runID;
-      chatViewState.currentRunStatus = safeText(payload?.status).toLowerCase() || "queued";
+      chatViewState.currentRunStatus = normalizedStatus;
+      chatViewState.currentRunLastUpdatedAt = "";
+      chatViewState.currentRunLastOutput = "";
+      chatViewState.currentRunStartedAtMs = Date.now();
+      chatViewState.streamLastEventID = 0;
+      chatViewState.currentStreamingText = "";
+      chatViewState.streamToolEvents = [];
       updatePendingAssistant(
         safeText(payload?.response) ||
-          `Working on it now. Run ${runID} is ${chatViewState.currentRunStatus || "queued"}. I will follow up when it completes or fails.`
+          `Working on it now. Run ${runID} is ${normalizedStatus || "queued"}. I will follow up when it completes or fails.`
       );
       startPolling({ runID, sessionID });
+      void connectRunEventStream(runID);
     } else {
       const directResponse = safeText(payload?.response);
       replacePendingAssistant(directResponse || "Request accepted.");
       chatViewState.currentRunStatus = "idle";
       chatViewState.currentRunStartedAtMs = 0;
+      resetStreamingState({ resetLastEventID: true });
     }
   } catch (err) {
     const messageText = err?.message || String(err);
@@ -1036,6 +1494,9 @@ function renderChatPage() {
       if (item.pending) {
         message.classList.add("pending");
       }
+      if (item.pending && item.role === "assistant" && chatViewState.streamActive) {
+        message.classList.add("streaming");
+      }
 
       const meta = document.createElement("p");
       meta.className = "chat-message-meta";
@@ -1046,6 +1507,19 @@ function renderChatPage() {
       body.textContent = String(item.content || "");
 
       message.append(meta, body);
+      if (item.pending && item.role === "assistant" && chatViewState.latestToolActivity) {
+        const toolHint = document.createElement("p");
+        const latest = chatViewState.latestToolActivity;
+        const detail = compactText(
+          firstNonEmpty(latest.summary, latest.errorText, latest.outputText, latest.argsText),
+          150
+        );
+        toolHint.className = `chat-tool-indicator ${latest.status === "failed" ? "failed" : "ok"}`;
+        toolHint.textContent = detail
+          ? `Latest tool: ${latest.tool} · ${detail}`
+          : `Latest tool: ${latest.tool}`;
+        message.append(toolHint);
+      }
       transcript.append(message);
     });
   }
@@ -1203,7 +1677,8 @@ function renderChatPage() {
 
   const runMeta = document.createElement("p");
   runMeta.className = "chat-activity-meta";
-  runMeta.textContent = `Run: ${runID || "-"} · status ${status}`;
+  const streamState = chatViewState.streamActive ? "stream live" : "stream idle";
+  runMeta.textContent = `Run: ${runID || "-"} · status ${status} · ${streamState}`;
 
   const sessionMeta = document.createElement("p");
   sessionMeta.className = "chat-activity-meta muted";
@@ -1234,7 +1709,7 @@ function renderChatPage() {
   } else {
     const event = chatViewState.latestToolActivity;
     const summary = document.createElement("p");
-    summary.className = "chat-tool-line";
+    summary.className = `chat-tool-line ${event.status === "failed" ? "failed" : "ok"}`;
     summary.textContent = `${event.tool} · ${event.status}${event.ts ? ` · ${formatDateTime(event.ts)}` : ""}`;
 
     const detail = document.createElement("p");
@@ -1313,17 +1788,24 @@ export const chatPage = {
     chatViewState.container = container;
     chatViewState.apiClient = apiClient;
     chatViewState.store = store;
+    ensureRouteWatcher();
 
     await refreshAvailableAgents();
     renderChatPage();
     startIdleSessionWatch();
 
-    if (
-      chatViewState.currentRunID &&
-      !isTerminalStatus(chatViewState.currentRunStatus) &&
-      !chatViewState.polling
-    ) {
-      startPolling({ runID: chatViewState.currentRunID, sessionID: chatViewState.currentSessionID });
+    if (chatViewState.currentRunID && !isTerminalStatus(chatViewState.currentRunStatus)) {
+      if (!chatViewState.polling) {
+        startPolling({ runID: chatViewState.currentRunID, sessionID: chatViewState.currentSessionID });
+      }
+      if (!chatViewState.streamActive || chatViewState.currentStreamRunID !== chatViewState.currentRunID) {
+        void connectRunEventStream(chatViewState.currentRunID);
+      }
+      return;
+    }
+
+    if (chatViewState.streamActive) {
+      resetStreamingState();
     }
   },
 };
