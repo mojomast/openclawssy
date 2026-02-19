@@ -497,9 +497,9 @@ func (m *DockerAdminManager) PullImage(ctx context.Context, image string) error 
 // Format: "{{.ID}}\t{{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}"
 func (m *DockerAdminManager) ListImages(ctx context.Context) ([]DockerImageInfo, error) {
 	out, err := exec.CommandContext(ctx, "docker", "images",
-		"--format", "{{.ID}}\t{{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}").Output()
+		"--format", "{{.ID}}\t{{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}").CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("sandbox: docker images: %w", err)
+		return nil, fmt.Errorf("sandbox: docker images: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 
 	var images []DockerImageInfo
@@ -548,9 +548,9 @@ func (m *DockerAdminManager) ListImages(ctx context.Context) ([]DockerImageInfo,
 // so we omit it from the format string and fall back gracefully.
 func (m *DockerAdminManager) ListVolumes(ctx context.Context) ([]DockerVolumeInfo, error) {
 	out, err := exec.CommandContext(ctx, "docker", "volume", "ls",
-		"--format", "{{.Name}}\t{{.Driver}}\t{{.Mountpoint}}").Output()
+		"--format", "{{.Name}}\t{{.Driver}}\t{{.Mountpoint}}").CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("sandbox: docker volume ls: %w", err)
+		return nil, fmt.Errorf("sandbox: docker volume ls: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 
 	var volumes []DockerVolumeInfo
