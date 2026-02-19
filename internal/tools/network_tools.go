@@ -21,8 +21,8 @@ import (
 const (
 	defaultHTTPRequestTimeout = 15 * time.Second
 	maxHTTPRedirects          = 10
-	defaultHTTPResponseBytes  = 1 * 1024 * 1024
-	maxHTTPResponseBytes      = 5 * 1024 * 1024
+	defaultHTTPResponseBytes  = 10 * 1024 * 1024 // 10MB default (was 1MB)
+	maxHTTPResponseBytes      = 50 * 1024 * 1024 // 50MB max (was 5MB)
 )
 
 func registerNetworkTools(reg *Registry, configuredPath string) error {
