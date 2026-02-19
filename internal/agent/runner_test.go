@@ -635,14 +635,11 @@ func TestRunnerAsksUserGuidanceAfterThreeMoreFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
-	if !strings.Contains(out.FinalText, "need your guidance before I continue") {
+	if !strings.Contains(out.FinalText, "need your help to continue") {
 		t.Fatalf("expected user-guidance finalization, got %q", out.FinalText)
 	}
-	if !strings.Contains(out.FinalText, "What I tried and what failed") {
+	if !strings.Contains(out.FinalText, "What I tried") {
 		t.Fatalf("expected attempted steps in finalization, got %q", out.FinalText)
-	}
-	if !strings.Contains(out.FinalText, "error:") || !strings.Contains(out.FinalText, "output:") {
-		t.Fatalf("expected error and output details in finalization, got %q", out.FinalText)
 	}
 	if len(out.ToolCalls) != 5 {
 		t.Fatalf("expected 5 tool calls before user-guidance escalation, got %d", len(out.ToolCalls))
@@ -723,11 +720,8 @@ func TestRunnerEscalatesGuidanceForStructuredToolOutputErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
-	if !strings.Contains(out.FinalText, "need your guidance before I continue") {
+	if !strings.Contains(out.FinalText, "need your help to continue") {
 		t.Fatalf("expected guidance escalation, got %q", out.FinalText)
-	}
-	if !strings.Contains(out.FinalText, "rc-update: not found") {
-		t.Fatalf("expected structured stderr in guidance output, got %q", out.FinalText)
 	}
 	if len(out.ToolCalls) != 5 {
 		t.Fatalf("expected 5 tool calls before escalation, got %d", len(out.ToolCalls))
@@ -762,7 +756,7 @@ func TestRunnerEscalatesGuidanceAfterIntermittentFailuresInRecoveryMode(t *testi
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
-	if !strings.Contains(out.FinalText, "need your guidance before I continue") {
+	if !strings.Contains(out.FinalText, "need your help to continue") {
 		t.Fatalf("expected guidance escalation after intermittent failures, got %q", out.FinalText)
 	}
 	if len(out.ToolCalls) != 8 {

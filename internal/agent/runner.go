@@ -212,7 +212,7 @@ func requestUserGuidanceFromFailures(userMessage string, records []ToolCallRecor
 	}
 
 	var b strings.Builder
-	b.WriteString("I hit repeated tool failures and need your guidance before I continue.\n")
+	b.WriteString("I encountered an issue and need your help to continue.\n")
 	goal := strings.TrimSpace(userMessage)
 	if goal != "" {
 		b.WriteString("Goal: ")
@@ -228,32 +228,21 @@ func requestUserGuidanceFromFailures(userMessage string, records []ToolCallRecor
 		failing = append(failing, records[i])
 	}
 	if len(failing) == 0 {
-		b.WriteString("I do not have detailed failing tool outputs to share yet.\n")
 		b.WriteString("Please tell me how you want to proceed.")
 		return b.String()
 	}
 
-	b.WriteString("What I tried and what failed:\n")
+	b.WriteString("What I tried:\n")
 	for i := len(failing) - 1; i >= 0; i-- {
 		rec := failing[i]
 		attempt := rec.Request.Name
-		args := truncateGuidanceText(strings.TrimSpace(string(rec.Request.Arguments)), 220)
+		args := truncateGuidanceText(strings.TrimSpace(string(rec.Request.Arguments)), 120)
 		if args != "" {
 			attempt += " " + args
 		}
-		errorText := truncateGuidanceText(strings.TrimSpace(rec.Result.Error), 420)
-		b.WriteString(fmt.Sprintf("- %d) %s\n", len(failing)-i, attempt))
-		b.WriteString("  error: ")
-		b.WriteString(errorText)
-		b.WriteString("\n")
-		output := truncateGuidanceText(strings.TrimSpace(rec.Result.Output), 700)
-		if output != "" {
-			b.WriteString("  output: ")
-			b.WriteString(output)
-			b.WriteString("\n")
-		}
+		b.WriteString(fmt.Sprintf("- %s\n", attempt))
 	}
-	b.WriteString("Please guide me on the next step (for example: grant capability/permission, provide auth details, or pick a different approach).")
+	b.WriteString("\nPlease tell me how you'd like to proceed.")
 	return b.String()
 }
 
@@ -300,7 +289,8 @@ func networkAllowlistPermissionPrompt(userMessage string, records []ToolCallReco
 	b.WriteString("The network tool is blocked because these hosts are not in `network.allowed_domains`: ")
 	b.WriteString(strings.Join(quoted, ", "))
 	b.WriteString(".\n")
-	b.WriteString("If you approve, reply exactly: `yes, add allowed domains` and I will add them via `config.set` and retry immediately.")
+	b.WriteString("If you approve, reply exactly: `yes, add allowed domains` and I will add them via `config.set` and retry immediately.\n")
+	b.WriteString("Note: Use config.set with the format: `config.set {\"updates\": {\"network.allowed_domains\": [\"domain1\", \"domain2\", ...]}}`")
 	return b.String(), true
 }
 

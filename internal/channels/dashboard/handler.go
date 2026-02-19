@@ -1501,8 +1501,20 @@ async function listSecrets(){
 byId('secrets').textContent=JSON.stringify(await j('/api/admin/secrets'),null,2);
 }
 
+function stripToolCalls(text){
+if(!text)return'';
+// Remove tool_call XML blocks - these are internal implementation details
+// that should not be shown to users
+text=text.replace(/<tool_call>\s*\/?>\s*\{[\s\S]*?\}/g,'');
+text=text.replace(/<tool_call>[\s\S]*?<\/tool_call>/g,'');
+text=text.replace(/<tool_call\s+[^>]*\/>/g,'');
+return text;
+}
+
 function formatContent(text){
 if(!text)return'';
+// Strip tool calls before displaying to users
+text=stripToolCalls(text);
 text=text.replace(/\u0026/g,'\u0026amp;').replace(/\u003c/g,'\u0026lt;').replace(/\u003e/g,'\u0026gt;');
 text=text.replace(/\u0060\u0060\u0060(\w+)?\n([\s\S]*?)\u0060\u0060\u0060/g,'\u003cpre\u003e\u003ccode\u003e$2\u003c/code\u003e\u003c/pre\u003e');
 text=text.replace(/\u0060([^\u0060]+)\u0060/g,'\u003ccode\u003e$1\u003c/code\u003e');
