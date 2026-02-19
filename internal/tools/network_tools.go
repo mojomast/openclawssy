@@ -216,6 +216,11 @@ func hostAllowedByDomainList(host string, allowedDomains []string) bool {
 		return false
 	}
 	for _, raw := range allowedDomains {
+		raw = strings.ToLower(strings.TrimSpace(raw))
+		// standalone "*" allows all domains
+		if raw == "*" {
+			return true
+		}
 		candidate := normalizeAllowedDomainCandidate(raw)
 		if candidate == "" {
 			continue
