@@ -5,6 +5,7 @@ const CATEGORY_DEFS = [
   { key: "model", title: "Model Provider", summary: "Model selection and provider endpoint settings." },
   { key: "chat", title: "Chat/Discord", summary: "Runtime chat and Discord connector controls." },
   { key: "agents", title: "Agents", summary: "Per-agent activation, model overrides, and self-improvement controls." },
+  { key: "memory", title: "Memory", summary: "Event persistence, working memory limits, and embeddings." },
   { key: "sandbox", title: "Sandbox/Shell", summary: "Sandbox and shell execution constraints." },
   { key: "network", title: "Network", summary: "Network policy allowlist and localhost behavior." },
   { key: "scheduler", title: "Scheduler", summary: "Job catch-up and concurrency limits." },
@@ -193,6 +194,10 @@ function normalizeConfigShape(input) {
 
   if (!cfg.secrets || typeof cfg.secrets !== "object") {
     cfg.secrets = {};
+  }
+
+  if (!cfg.memory || typeof cfg.memory !== "object") {
+    cfg.memory = {};
   }
 
   if (!cfg.agents || typeof cfg.agents !== "object") {
@@ -458,6 +463,38 @@ function validateDraftConfig(draft) {
     }
   });
 
+  const maxWorkingItems = Number(draft?.memory?.max_working_items);
+  if (
+    draft?.memory?.max_working_items !== undefined &&
+    (!Number.isInteger(maxWorkingItems) || maxWorkingItems < 1 || maxWorkingItems > 100000)
+  ) {
+    setFieldError("memory.max_working_items", "Max working items must be an integer between 1 and 100000.");
+  }
+
+  const maxPromptTokens = Number(draft?.memory?.max_prompt_tokens);
+  if (
+    draft?.memory?.max_prompt_tokens !== undefined &&
+    (!Number.isInteger(maxPromptTokens) || maxPromptTokens < 64 || maxPromptTokens > 100000)
+  ) {
+    setFieldError("memory.max_prompt_tokens", "Max prompt tokens must be an integer between 64 and 100000.");
+  }
+
+  const eventBufferSize = Number(draft?.memory?.event_buffer_size);
+  if (
+    draft?.memory?.event_buffer_size !== undefined &&
+    (!Number.isInteger(eventBufferSize) || eventBufferSize < 1 || eventBufferSize > 10000)
+  ) {
+    setFieldError("memory.event_buffer_size", "Event buffer size must be an integer between 1 and 10000.");
+  }
+
+  const embeddingProvider = asTrimmedString(draft?.memory?.embedding_provider).toLowerCase();
+  if (draft?.memory?.embeddings_enabled && embeddingProvider && !PROVIDERS.includes(embeddingProvider)) {
+    setFieldError("memory.embedding_provider", "Embedding provider must be one of the supported providers.");
+  }
+  if (draft?.memory?.embeddings_enabled && !asTrimmedString(draft?.memory?.embedding_model)) {
+    setFieldError("memory.embedding_model", "Embedding model is required when embeddings are enabled.");
+  }
+
   if (Object.keys(fieldErrors).length > 0) {
     formErrors.push("Fix validation errors before saving.");
   }
@@ -505,6 +542,8 @@ function getCategorySnapshot(categoryKey, draft) {
       return { chat: draft.chat, discord: draft.discord };
     case "agents":
       return { agents: draft.agents };
+    case "memory":
+      return { memory: draft.memory };
     case "sandbox":
       return { sandbox: draft.sandbox, shell: draft.shell };
     case "network":
@@ -1024,10 +1063,99 @@ function resolveSelectedProfileKey() {
   }
   settingsState.selectedAgentProfile = preferred;
   const next = cloneJSON(settingsState.draftConfig);
+  next.agents = next.agents || {};
+  next.agents.profiles = next.agents.profiles || {};
   next.agents.profiles[preferred] = next.agents.profiles[preferred] || {};
   settingsState.draftConfig = normalizeConfigShape(next);
   settingsState.advancedRaw = `${JSON.stringify(settingsState.draftConfig, null, 2)}\n`;
   return preferred;
+}
+
+function buildMemoryCategory(panel, fieldErrors) {
+  const query = settingsState.searchQuery;
+  appendCheckboxField({
+    parent: panel,
+    query,
+    title: "Memory enabled",
+    path: "memory.enabled",
+    helpText: "Enables memory system persistence and tools.",
+    fieldErrors,
+  });
+  appendNumberField({
+    parent: panel,
+    query,
+    title: "Max working items",
+    path: "memory.max_working_items",
+    helpText: "Maximum active memory items (recall/context limit).",
+    placeholder: "200",
+    fieldErrors,
+  });
+  appendNumberField({
+    parent: panel,
+    query,
+    title: "Max prompt tokens",
+    path: "memory.max_prompt_tokens",
+    helpText: "Token budget for injected memory context.",
+    placeholder: "1200",
+    fieldErrors,
+  });
+  appendCheckboxField({
+    parent: panel,
+    query,
+    title: "Auto checkpoint",
+    path: "memory.auto_checkpoint",
+    helpText: "Automatically create checkpoints during runs.",
+    fieldErrors,
+  });
+  appendCheckboxField({
+    parent: panel,
+    query,
+    title: "Proactive enabled",
+    path: "memory.proactive_enabled",
+    helpText: "Allow agents to use proactive memory tools.",
+    fieldErrors,
+  });
+  appendNumberField({
+    parent: panel,
+    query,
+    title: "Event buffer size",
+    path: "memory.event_buffer_size",
+    helpText: "In-memory buffer size for event stream.",
+    placeholder: "256",
+    fieldErrors,
+  });
+
+  const embeddingsHeader = document.createElement("h4");
+  embeddingsHeader.className = "settings-subheading";
+  embeddingsHeader.textContent = "Embeddings & Semantic Search";
+  panel.append(embeddingsHeader);
+
+  appendCheckboxField({
+    parent: panel,
+    query,
+    title: "Embeddings enabled",
+    path: "memory.embeddings_enabled",
+    helpText: "Enables vector embeddings for semantic recall.",
+    fieldErrors,
+  });
+  appendSelectField({
+    parent: panel,
+    query,
+    title: "Embedding provider",
+    path: "memory.embedding_provider",
+    helpText: "Provider for embedding vectors.",
+    options: PROVIDERS.map((provider) => ({ value: provider, label: provider })),
+    fieldErrors,
+  });
+  appendTextField({
+    parent: panel,
+    query,
+    title: "Embedding model",
+    path: "memory.embedding_model",
+    helpText: "Model name for embeddings (e.g. text-embedding-3-small).",
+    placeholder: "text-embedding-3-small",
+    fieldErrors,
+  });
 }
 
 function buildAgentsCategory(panel, fieldErrors) {
@@ -1478,6 +1606,9 @@ function renderCategoryPanel(categoryKey, fieldErrors, diffRows) {
       break;
     case "agents":
       buildAgentsCategory(panel, fieldErrors);
+      break;
+    case "memory":
+      buildMemoryCategory(panel, fieldErrors);
       break;
     case "sandbox":
       buildSandboxCategory(panel, fieldErrors);
