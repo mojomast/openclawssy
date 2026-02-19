@@ -40,9 +40,11 @@ var ErrJobNotFound = errors.New("scheduler: job not found")
 type Store struct {
 	path string
 
-	mu     sync.Mutex
-	jobs   map[string]Job
-	paused bool
+	mu       sync.Mutex
+	jobs     map[string]Job
+	paused   bool
+	lastMod  time.Time
+	lastSize int64
 }
 
 type persistedJobs struct {
@@ -114,33 +116,49 @@ func (s *Store) load() error {
 }
 
 func (s *Store) reloadLocked() error {
-	jobs := make(map[string]Job)
-	paused := false
+	info, err := os.Stat(s.path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			s.jobs = make(map[string]Job)
+			s.paused = false
+			s.lastMod = time.Time{}
+			s.lastSize = 0
+			return nil
+		}
+		return fmt.Errorf("scheduler: stat store: %w", err)
+	}
+
+	if info.ModTime().Equal(s.lastMod) && info.Size() == s.lastSize {
+		return nil
+	}
 
 	data, err := os.ReadFile(s.path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			s.jobs = jobs
-			s.paused = paused
-			return nil
-		}
 		return fmt.Errorf("scheduler: read store: %w", err)
 	}
+
 	var p persistedJobs
 	if len(data) == 0 {
-		s.jobs = jobs
-		s.paused = paused
+		s.jobs = make(map[string]Job)
+		s.paused = false
+		s.lastMod = info.ModTime()
+		s.lastSize = info.Size()
 		return nil
 	}
+
 	if err := json.Unmarshal(data, &p); err != nil {
 		return fmt.Errorf("scheduler: parse store: %w", err)
 	}
+
+	jobs := make(map[string]Job)
 	for _, job := range p.Jobs {
 		jobs[job.ID] = job
 	}
-	paused = p.Paused
+
 	s.jobs = jobs
-	s.paused = paused
+	s.paused = p.Paused
+	s.lastMod = info.ModTime()
+	s.lastSize = info.Size()
 	return nil
 }
 
@@ -159,7 +177,15 @@ func (s *Store) saveLocked() error {
 	}
 	body = append(body, '\n')
 
-	return fsutil.WriteFileAtomic(s.path, body, 0o600)
+	if err := fsutil.WriteFileAtomic(s.path, body, 0o600); err != nil {
+		return err
+	}
+
+	if info, err := os.Stat(s.path); err == nil {
+		s.lastMod = info.ModTime()
+		s.lastSize = info.Size()
+	}
+	return nil
 }
 
 func (s *Store) updateAfterRun(job Job, runAt time.Time, disable bool) error {
