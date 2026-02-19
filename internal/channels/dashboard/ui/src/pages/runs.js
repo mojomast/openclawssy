@@ -358,6 +358,7 @@ export const runsPage = {
 
     const listWrap = document.createElement("div");
     listWrap.className = "runs-list";
+    listWrap.setAttribute("aria-live", "polite");
 
     const selectionWrap = document.createElement("div");
     selectionWrap.className = "runs-selection";
@@ -371,6 +372,7 @@ export const runsPage = {
         const loading = document.createElement("p");
         loading.className = "muted";
         loading.textContent = "Loading runs...";
+        loading.setAttribute("role", "status");
         listWrap.append(loading);
       } else if (runsViewState.listError) {
         const error = document.createElement("p");
@@ -408,7 +410,14 @@ export const runsPage = {
           idCell.append(idCode);
 
           const statusCell = document.createElement("td");
-          statusCell.textContent = run.status || "-";
+          const statusBadge = document.createElement("span");
+          statusBadge.className = "status-badge";
+          const status = (run.status || "-").toLowerCase();
+          statusBadge.textContent = run.status || "-";
+          if (["running", "completed", "failed", "queued"].includes(status)) {
+            statusBadge.classList.add(status);
+          }
+          statusCell.append(statusBadge);
 
           const agentCell = document.createElement("td");
           agentCell.textContent = run.agent_id || "-";
@@ -420,6 +429,7 @@ export const runsPage = {
           const openButton = document.createElement("button");
           openButton.type = "button";
           openButton.textContent = run.id === runsViewState.selectedRunID ? "Reload" : "Open";
+          openButton.setAttribute("aria-label", `${openButton.textContent} run ${run.id}`);
           openButton.addEventListener("click", () => {
             openRun(run.id);
           });

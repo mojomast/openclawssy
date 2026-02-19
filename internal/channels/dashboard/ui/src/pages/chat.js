@@ -224,7 +224,6 @@ function retryLastPrompt() {
   chatViewState.debugCopyStatus = "";
   void sendMessage();
 }
-
 function transcriptFingerprint() {
   return chatViewState.transcript
     .map((item) => `${item?.role}:${item?.pending ? "p" : "d"}:${(item?.content || "").length}`)
