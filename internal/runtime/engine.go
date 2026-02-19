@@ -390,6 +390,17 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		return err
 	}
 
+	var onTextDelta func(delta string) error
+	if in.OnProgress != nil {
+		onTextDelta = func(delta string) error {
+			if delta == "" {
+				return nil
+			}
+			emitProgress("model_text", map[string]any{"text": delta, "partial": true})
+			return nil
+		}
+	}
+
 	start := time.Now().UTC()
 	out, runErr := runner.Run(runCtx, agent.RunInput{
 		AgentID:           agentID,
@@ -403,13 +414,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		AllowedTools:      allowedTools,
 		OnToolCall:        onToolCall,
 		SystemPromptExt:   e.memoryPromptExtender(cfg, agentID, runID),
-		OnTextDelta: func(delta string) error {
-			if delta == "" {
-				return nil
-			}
-			emitProgress("model_text", map[string]any{"text": delta, "partial": true})
-			return nil
-		},
+		OnTextDelta:       onTextDelta,
 	})
 	if runErr == nil {
 		emitProgress("model_text", map[string]any{"text": out.FinalText, "partial": false})
