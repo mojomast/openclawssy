@@ -106,9 +106,18 @@ func TestValidateRejectsInvalidThinkingMode(t *testing.T) {
 
 func TestValidateRejectsUnsupportedSandboxProvider(t *testing.T) {
 	cfg := Default()
-	cfg.Sandbox.Provider = "docker"
+	cfg.Sandbox.Provider = "kubernetes"
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected validation error for unsupported sandbox provider")
+	}
+}
+
+func TestValidateAcceptsDockerSandboxProvider(t *testing.T) {
+	cfg := Default()
+	cfg.Sandbox.Provider = "docker"
+	// docker is a known (Phase 2) provider — config validation must accept it
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected docker provider to be accepted by config, got: %v", err)
 	}
 }
 

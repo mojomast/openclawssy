@@ -49,7 +49,16 @@ Provider API key env defaults:
   },
   "sandbox": {
     "active": false,
-    "provider": "none"
+    "provider": "none",
+    "docker": {
+      "image": "ubuntu:24.04",
+      "network_enabled": false,
+      "cpu_limit": 0,
+      "memory_limit_mb": 0,
+      "pull_policy": "if-not-present",
+      "extra_env": [],
+      "mounts": []
+    }
   },
   "server": {
     "bind_address": "127.0.0.1",
@@ -152,12 +161,24 @@ Provider API key env defaults:
 - Workspace write policy stays enforced after path and symlink resolution.
 - `shell.exec` is enabled only when sandbox is active and provider is not `none`.
 - `shell.allowed_commands` entries must be non-empty when provided.
-- Supported sandbox providers are `none` and `local`.
+- Supported sandbox providers: `none`, `local`, `docker`.
+- When `provider=docker`, all agent fs.* tools and shell.exec run inside the container; no host filesystem access.
 - HTTP APIs require bearer token.
 - Chat queue accepts allowlisted senders only and enforces rate limits.
 - Discord queue accepts allowlisted senders/channels/guilds and enforces rate limits.
 - Secret values are write-only at API/UI surface; only key names are listed.
 - Tool calls and run lifecycle events are always audited with redaction.
+
+## Docker Sandbox Notes
+- `sandbox.docker.image` — Docker image to use (default: `ubuntu:24.04`).
+- `sandbox.docker.network_enabled` — enables bridge networking; default `false` (network=none).
+- `sandbox.docker.cpu_limit` — fractional CPU limit (e.g. `0.5`); `0` means no limit.
+- `sandbox.docker.memory_limit_mb` — memory limit in MB; `0` means no limit.
+- `sandbox.docker.pull_policy` — `if-not-present` (default), `always`, or `never`.
+- `sandbox.docker.extra_env` — non-secret env vars injected into the container. **Never put secrets here.**
+- `sandbox.docker.mounts` — additional bind mounts (advanced; exposes host paths, use with caution).
+- Container name is `openclawssy_agent_<agent_id>`; volume is `openclawssy_ws_<agent_id>`.
+- Workspace inside the container is always `/workspace`.
 
 ## Model Runtime Notes
 - `model.max_tokens` is validated in the range `1..20000`.

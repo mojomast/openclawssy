@@ -80,9 +80,29 @@ type SchedulerConfig struct {
 	MaxConcurrentJobs int  `json:"max_concurrent_jobs,omitempty"`
 }
 
+// DockerMountConfig describes a single bind mount for Docker containers.
+type DockerMountConfig struct {
+	HostPath      string `json:"host_path"`
+	ContainerPath string `json:"container_path"`
+	ReadOnly      bool   `json:"readonly"`
+}
+
+// DockerSandboxConfig holds Docker-specific sandbox parameters.
+// These are used by the Docker provider (Phase 2).
+type DockerSandboxConfig struct {
+	Image          string              `json:"image"`
+	NetworkEnabled bool                `json:"network_enabled"`
+	CPULimit       float64             `json:"cpu_limit,omitempty"`       // e.g. 0.5 = half CPU
+	MemoryLimitMB  int                 `json:"memory_limit_mb,omitempty"` // e.g. 512
+	ExtraEnv       []string            `json:"extra_env,omitempty"`
+	Mounts         []DockerMountConfig `json:"mounts,omitempty"`
+	PullPolicy     string              `json:"pull_policy,omitempty"` // "always", "if-not-present", "never"
+}
+
 type SandboxConfig struct {
-	Active   bool   `json:"active"`
-	Provider string `json:"provider"`
+	Active   bool                `json:"active"`
+	Provider string              `json:"provider"`
+	Docker   DockerSandboxConfig `json:"docker,omitempty"`
 }
 
 type ServerConfig struct {
@@ -183,6 +203,10 @@ func Default() Config {
 		Sandbox: SandboxConfig{
 			Active:   false,
 			Provider: "none",
+			Docker: DockerSandboxConfig{
+				Image:      "ubuntu:24.04",
+				PullPolicy: "if-not-present",
+			},
 		},
 		Engine: EngineConfig{
 			MaxConcurrentRuns:   64,
@@ -393,7 +417,7 @@ func (c Config) Validate() error {
 	}
 
 	sandboxProvider := strings.ToLower(strings.TrimSpace(c.Sandbox.Provider))
-	allowedSandboxProviders := map[string]bool{"none": true, "local": true}
+	allowedSandboxProviders := map[string]bool{"none": true, "local": true, "docker": true}
 	if !allowedSandboxProviders[sandboxProvider] {
 		return fmt.Errorf("unsupported sandbox provider: %q", c.Sandbox.Provider)
 	}

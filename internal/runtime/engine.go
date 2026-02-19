@@ -283,7 +283,24 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	traceCollector := newRunTraceCollector(runID, sessionID, source, message)
 	runCtx = withRunTraceCollector(runCtx, traceCollector)
 	enforcer := policy.NewEnforcer(e.workspaceDir, map[string][]string{agentID: effectiveCaps})
-	registry := tools.NewRegistry(enforcer, aud)
+
+	// For docker provider: use /workspace as the workspace root inside the
+	// container.  All path resolution is redirected to the container paths.
+	isDockerSandbox := cfg.Sandbox.Active && strings.ToLower(cfg.Sandbox.Provider) == "docker"
+	var effectivePolicy tools.Policy = enforcer
+	if isDockerSandbox {
+		effectivePolicy = &dockerPolicyEnforcer{inner: enforcer}
+	}
+
+	registry := tools.NewRegistry(effectivePolicy, aud)
+
+	// Resolve workspace root: in docker mode the workspace root inside the
+	// container is always /workspace; on host it is e.workspaceDir.
+	toolWorkspaceRoot := e.workspaceDir
+	if isDockerSandbox {
+		toolWorkspaceRoot = "/workspace"
+	}
+
 	if err := tools.RegisterCoreWithOptions(registry, tools.CoreOptions{
 		EnableShellExec: cfg.Shell.EnableExec && cfg.Sandbox.Active && strings.ToLower(cfg.Sandbox.Provider) != "none",
 		ConfigPath:      filepath.Join(e.rootDir, ".openclawssy", "config.json"),
@@ -294,7 +311,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		DefaultGrants:   allowedTools,
 		RunsPath:        filepath.Join(e.rootDir, ".openclawssy", "runs.json"),
 		RunTracker:      e.runTracker,
-		WorkspaceRoot:   e.workspaceDir,
+		WorkspaceRoot:   toolWorkspaceRoot,
 		AgentRunner:     &subAgentRunner{engine: e},
 	}); err != nil {
 		return RunResult{}, fmt.Errorf("runtime: register core tools: %w", err)
@@ -303,7 +320,8 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 
 	var provider sandbox.Provider
 	if cfg.Sandbox.Active {
-		provider, err = sandbox.NewProvider(cfg.Sandbox.Provider, e.workspaceDir)
+		provider, err = sandbox.NewProviderForAgent(
+			cfg.Sandbox.Provider, e.workspaceDir, agentID, cfg.Sandbox.Docker)
 		if err != nil {
 			return RunResult{}, fmt.Errorf("runtime: create sandbox provider: %w", err)
 		}
@@ -313,6 +331,11 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		defer provider.Stop()
 		if cfg.Shell.EnableExec && sandbox.ShellExecAllowed(provider) {
 			registry.SetShellExecutor(&sandboxShellExecutor{provider: provider})
+		}
+		// For docker provider: route all fs.* operations through the container
+		// so no workspace data ever touches the host filesystem.
+		if isDockerSandbox {
+			registry.SetSandboxProvider(&sandboxProviderAdapter{provider: provider})
 		}
 	}
 
@@ -1534,6 +1557,73 @@ type sandboxShellExecutor struct {
 	provider sandbox.Provider
 }
 
+// dockerPolicyEnforcer wraps a policy.Enforcer and overrides path resolution
+// for docker mode.  In docker mode the workspace root is /workspace inside the
+// container, so all relative paths are resolved against that root and absolute
+// paths must be prefixed with /workspace.
+type dockerPolicyEnforcer struct {
+	inner *policy.Enforcer
+}
+
+func (d *dockerPolicyEnforcer) CheckTool(agentID, tool string) error {
+	return d.inner.CheckTool(agentID, tool)
+}
+
+func (d *dockerPolicyEnforcer) ResolveReadPath(_, target string) (string, error) {
+	return dockerResolvePath("", target)
+}
+
+func (d *dockerPolicyEnforcer) ResolveWritePath(_, target string) (string, error) {
+	return dockerResolvePath("", target)
+}
+
+// dockerResolvePath resolves a path relative to the container workspace root
+// (/workspace).  Absolute paths must reside within /workspace.
+//
+// Security hardening applied:
+//   - Null bytes are stripped (prevents bypass via C-string truncation)
+//   - Whitespace is trimmed
+//   - Empty and excessively long paths are rejected
+//   - Raw traversal sequences are blocked via policy.HasTraversal()
+//   - Absolute paths outside /workspace are rejected
+//   - Relative paths are joined with /workspace and the result is re-verified
+//     so that tricky cleaned paths (e.g. "a/../../etc") are always caught
+func dockerResolvePath(_, target string) (string, error) {
+	// Strip null bytes — these can bypass string comparisons in some contexts.
+	target = strings.ReplaceAll(target, "\x00", "")
+	target = strings.TrimSpace(target)
+
+	if target == "" {
+		return "", fmt.Errorf("sandbox: docker: empty path")
+	}
+	if len(target) > 4096 {
+		return "", fmt.Errorf("sandbox: docker: path too long (%d bytes)", len(target))
+	}
+
+	// Block traversal sequences in the raw (pre-clean) path.
+	if policy.HasTraversal(target) {
+		return "", fmt.Errorf("sandbox: docker: path traversal not allowed: %s", target)
+	}
+
+	var resolved string
+	if filepath.IsAbs(target) {
+		// Absolute path: clean it and verify it stays within /workspace.
+		resolved = filepath.Clean(target)
+	} else {
+		// Relative path: join with /workspace and clean.
+		resolved = filepath.Clean(filepath.Join("/workspace", target))
+	}
+
+	// Final containment guard: even after all cleaning the result must be
+	// /workspace itself or a direct descendant.  This catches edge cases like
+	// filepath.Clean("/workspace/a/../../etc") → "/etc".
+	if resolved != "/workspace" && !strings.HasPrefix(resolved, "/workspace/") {
+		return "", fmt.Errorf("sandbox: docker: path outside workspace: %s", target)
+	}
+
+	return resolved, nil
+}
+
 type subAgentRunner struct {
 	engine *Engine
 }
@@ -1565,6 +1655,65 @@ func (s *subAgentRunner) ExecuteSubAgent(ctx context.Context, input tools.AgentR
 func (s *sandboxShellExecutor) Exec(_ context.Context, command string, args []string) (string, string, int, error) {
 	result, err := s.provider.Exec(sandbox.Command{Name: command, Args: args})
 	return result.Stdout, result.Stderr, result.ExitCode, err
+}
+
+// sandboxProviderAdapter bridges sandbox.Provider (which uses sandbox.FileInfo)
+// to tools.SandboxFileOps (which uses tools.SandboxFileInfo), avoiding an
+// import cycle between the tools and sandbox packages.
+type sandboxProviderAdapter struct {
+	provider sandbox.Provider
+}
+
+func (a *sandboxProviderAdapter) ReadFile(ctx context.Context, path string) ([]byte, error) {
+	return a.provider.ReadFile(ctx, path)
+}
+
+func (a *sandboxProviderAdapter) WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error {
+	return a.provider.WriteFile(ctx, path, data, perm)
+}
+
+func (a *sandboxProviderAdapter) ListDir(ctx context.Context, path string) ([]tools.SandboxFileInfo, error) {
+	entries, err := a.provider.ListDir(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]tools.SandboxFileInfo, len(entries))
+	for i, e := range entries {
+		out[i] = tools.SandboxFileInfo{
+			Name:  e.Name,
+			IsDir: e.IsDir,
+			Size:  e.Size,
+		}
+	}
+	return out, nil
+}
+
+func (a *sandboxProviderAdapter) MkdirAll(ctx context.Context, path string, perm os.FileMode) error {
+	return a.provider.MkdirAll(ctx, path, perm)
+}
+
+func (a *sandboxProviderAdapter) Remove(ctx context.Context, path string, recursive bool) error {
+	return a.provider.Remove(ctx, path, recursive)
+}
+
+func (a *sandboxProviderAdapter) Rename(ctx context.Context, src, dst string) error {
+	return a.provider.Rename(ctx, src, dst)
+}
+
+func (a *sandboxProviderAdapter) Lstat(ctx context.Context, path string) (tools.SandboxFileInfo, bool, error) {
+	info, exists, err := a.provider.Lstat(ctx, path)
+	if err != nil {
+		return tools.SandboxFileInfo{}, false, err
+	}
+	return tools.SandboxFileInfo{
+		Name:  info.Name,
+		IsDir: info.IsDir,
+		Size:  info.Size,
+	}, exists, nil
+}
+
+func (a *sandboxProviderAdapter) EvalSymlinks(ctx context.Context, path string) (string, error) {
+	return a.provider.EvalSymlinks(ctx, path)
 }
 
 func fileExists(path string) bool {

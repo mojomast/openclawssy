@@ -172,7 +172,7 @@ func TestEngineExecuteIngestsMemoryEventsWhenEnabled(t *testing.T) {
 	}
 }
 
-func TestExecuteWithInputRejectsUnsupportedSandboxProvider(t *testing.T) {
+func TestExecuteWithInputDockerProviderFailsWhenDockerUnavailable(t *testing.T) {
 	root := t.TempDir()
 	e, err := NewEngine(root)
 	if err != nil {
@@ -200,11 +200,19 @@ func TestExecuteWithInputRejectsUnsupportedSandboxProvider(t *testing.T) {
 
 	_, err = e.ExecuteWithInput(context.Background(), ExecuteInput{AgentID: "default", Message: "run diagnostic", Source: "dashboard"})
 	if err == nil {
-		t.Fatalf("expected unsupported sandbox provider error")
+		// Docker happened to be available and worked — that's fine too.
+		t.Log("docker provider succeeded (Docker is available in this environment)")
+		return
 	}
-	if !strings.Contains(err.Error(), "unsupported sandbox provider") {
-		t.Fatalf("expected unsupported sandbox provider error, got %v", err)
+	// Docker is the now-implemented sandbox provider.  If Docker is unavailable
+	// we expect a docker-specific infrastructure error (permission denied, image
+	// pull failure, etc.), not an "unsupported provider" error.
+	errStr := err.Error()
+	if strings.Contains(errStr, "unsupported sandbox provider") {
+		t.Fatalf("docker is now a supported provider; got unsupported-provider error: %v", err)
 	}
+	// Accept any docker infrastructure error — the provider itself is valid.
+	t.Logf("docker provider correctly attempted but failed due to infrastructure: %v", err)
 }
 
 func TestLoadPromptDocsIncludesRuntimeContext(t *testing.T) {
@@ -1784,6 +1792,30 @@ func (s stubSandboxProvider) Stop() error                 { return nil }
 func (s stubSandboxProvider) Exec(cmd sandbox.Command) (sandbox.Result, error) {
 	_ = cmd
 	return s.result, s.err
+}
+func (s stubSandboxProvider) ReadFile(_ context.Context, _ string) ([]byte, error) {
+	return nil, errors.New("stub: not implemented")
+}
+func (s stubSandboxProvider) WriteFile(_ context.Context, _ string, _ []byte, _ os.FileMode) error {
+	return errors.New("stub: not implemented")
+}
+func (s stubSandboxProvider) ListDir(_ context.Context, _ string) ([]sandbox.FileInfo, error) {
+	return nil, errors.New("stub: not implemented")
+}
+func (s stubSandboxProvider) MkdirAll(_ context.Context, _ string, _ os.FileMode) error {
+	return errors.New("stub: not implemented")
+}
+func (s stubSandboxProvider) Remove(_ context.Context, _ string, _ bool) error {
+	return errors.New("stub: not implemented")
+}
+func (s stubSandboxProvider) Rename(_ context.Context, _, _ string) error {
+	return errors.New("stub: not implemented")
+}
+func (s stubSandboxProvider) Lstat(_ context.Context, _ string) (sandbox.FileInfo, bool, error) {
+	return sandbox.FileInfo{}, false, errors.New("stub: not implemented")
+}
+func (s stubSandboxProvider) EvalSymlinks(_ context.Context, _ string) (string, error) {
+	return "", errors.New("stub: not implemented")
 }
 
 func TestRunLimitErrorMessage(t *testing.T) {

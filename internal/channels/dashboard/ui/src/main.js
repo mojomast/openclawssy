@@ -8,6 +8,7 @@ import { schedulerPage } from "./pages/scheduler.js";
 import { settingsPage } from "./pages/settings.js";
 import { secretsPage } from "./pages/secrets.js";
 import { docsPage } from "./pages/docs.js";
+import { sandboxPage } from "./pages/sandbox.js";
 import { toolInspector } from "./inspectors/tool_inspector.js";
 import { traceInspector } from "./inspectors/trace_inspector.js";
 import { toolSchemaInspector } from "./inspectors/tool_schema_inspector.js";
@@ -23,6 +24,7 @@ const ROUTES = [
   { path: "/settings", label: "Settings", page: settingsPage },
   { path: "/docs", label: "Docs", page: docsPage },
   { path: "/secrets", label: "Secrets", page: secretsPage },
+  { path: "/sandbox", label: "Sandbox", page: sandboxPage },
 ];
 
 const INSPECTORS = [toolInspector, traceInspector, toolSchemaInspector, fixSuggestionsInspector, pythonEnvInspector];
@@ -137,7 +139,11 @@ export function bootDashboardApp() {
     }
   });
 
-  store.setState({ route: "/chat" });
+  // Determine the initial route from the URL hash so we render the correct
+  // page immediately without a race between the default "/chat" render and
+  // the router's hash-based route change.
+  const initialRoute = router.current();
+  store.setState({ route: initialRoute });
   router.start();
   void refreshAdminStatus(true);
 }

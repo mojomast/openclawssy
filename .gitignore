@@ -48,3 +48,23 @@ logs/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Node / frontend
+node_modules/
+internal/channels/dashboard/ui/node_modules/
+
+# Playwright test artifacts
+internal/channels/dashboard/ui/test-results/
+!internal/channels/dashboard/ui/test-results/placeholder.txt
+internal/channels/dashboard/ui/playwright-report/
+internal/channels/dashboard/ui/.playwright/
+
+# Downloaded .deb packages (left by playwright install attempts)
+*.deb
+
+# Stale dev planning files
+devplan.old
+devplanold*.md
+mondaydevplan.md
+_debug_logs/
+_debug_tools/

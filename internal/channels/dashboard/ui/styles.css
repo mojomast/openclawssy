@@ -1540,6 +1540,289 @@ pre {
   color: var(--destructive);
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   Sandbox Manager page
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* Header row with heading + provider badge */
+.sandbox-header-section {
+  margin-bottom: 1.25rem;
+}
+
+.sandbox-header-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.sandbox-header-row h2 {
+  margin: 0;
+}
+
+/* Inline badges */
+.sandbox-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.15rem 0.6rem;
+  border: 1px solid transparent;
+  text-transform: lowercase;
+  letter-spacing: 0.01em;
+}
+
+.sandbox-badge--success {
+  background: var(--success-bg);
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.sandbox-badge--danger {
+  background: var(--destructive-bg);
+  color: var(--destructive);
+  border-color: var(--destructive);
+}
+
+.sandbox-badge--info {
+  background: var(--selected);
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.sandbox-badge--warning {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border-color: var(--warning);
+}
+
+.sandbox-badge--neutral {
+  background: var(--secondary);
+  color: var(--muted-foreground);
+  border-color: var(--border);
+}
+
+/* Cards */
+.sandbox-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.sandbox-card h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.sandbox-card-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+  gap: 0.5rem;
+}
+
+.sandbox-card-title-row h3 {
+  margin: 0;
+}
+
+/* Workspace banner */
+.sandbox-banner {
+  border-radius: 6px;
+  padding: 0.65rem 1rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin-bottom: 1.25rem;
+}
+
+.sandbox-banner--active {
+  background: var(--success-bg);
+  color: var(--success);
+  border: 1px solid var(--success);
+}
+
+.sandbox-banner--warning {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning);
+}
+
+/* Notices (inline warnings) */
+.sandbox-notice {
+  border-radius: 5px;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.88rem;
+  margin: 0.5rem 0;
+}
+
+.sandbox-notice--warning {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning);
+}
+
+/* Status table */
+.sandbox-status-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.sandbox-status-table tr {
+  border-bottom: 1px solid var(--border);
+}
+
+.sandbox-status-table tr:last-child {
+  border-bottom: none;
+}
+
+.sandbox-status-th {
+  text-align: left;
+  padding: 0.4rem 0.6rem 0.4rem 0;
+  color: var(--muted-foreground);
+  font-weight: 500;
+  width: 9rem;
+  white-space: nowrap;
+}
+
+.sandbox-status-td {
+  padding: 0.4rem 0.25rem;
+  word-break: break-all;
+}
+
+/* Actions row */
+.sandbox-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+/* Danger variant for buttons */
+.sandbox-btn--danger {
+  border-color: var(--destructive) !important;
+  color: var(--destructive) !important;
+}
+
+.sandbox-btn--danger:hover:not(:disabled) {
+  background: var(--destructive-bg) !important;
+}
+
+/* Pull row */
+.sandbox-pull-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.sandbox-pull-row .settings-input {
+  flex: 1;
+  min-width: 12rem;
+}
+
+/* Tables (images / volumes) */
+.sandbox-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+  overflow-x: auto;
+}
+
+.sandbox-table thead tr {
+  border-bottom: 2px solid var(--border);
+}
+
+.sandbox-table tbody tr {
+  border-bottom: 1px solid var(--border);
+}
+
+.sandbox-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.sandbox-table th,
+.sandbox-table td {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  vertical-align: middle;
+}
+
+.sandbox-table th {
+  color: var(--muted-foreground);
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Mono / small helpers */
+.sandbox-mono {
+  font-family: "IBM Plex Mono", "Fira Code", monospace;
+  font-size: 0.82rem;
+}
+
+.sandbox-small {
+  font-size: 0.78rem;
+  word-break: break-all;
+}
+
+/* Advanced section */
+.sandbox-advanced {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 1.25rem;
+  overflow: hidden;
+}
+
+.sandbox-advanced-summary {
+  padding: 0.65rem 1rem;
+  cursor: pointer;
+  background: var(--secondary);
+  font-weight: 600;
+  font-size: 0.9rem;
+  list-style: none;
+  user-select: none;
+}
+
+.sandbox-advanced-summary::-webkit-details-marker {
+  display: none;
+}
+
+.sandbox-advanced-summary::before {
+  content: "▶ ";
+  font-size: 0.7rem;
+}
+
+details[open] .sandbox-advanced-summary::before {
+  content: "▼ ";
+}
+
+.sandbox-advanced > *:not(summary) {
+  padding: 0.75rem 1rem;
+}
+
+/* Spinner */
+.sandbox-spinner {
+  display: inline-block;
+  width: 0.85em;
+  height: 0.85em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: sandbox-spin 0.7s linear infinite;
+  vertical-align: middle;
+  margin-right: 0.3em;
+}
+
+@keyframes sandbox-spin {
+  to { transform: rotate(360deg); }
+}
+
 .status-badge.queued {
   border-color: var(--warning);
   background: var(--warning-bg);

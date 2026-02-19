@@ -34,6 +34,10 @@ What works now:
 - end-to-end memory lifecycle (event stream -> checkpoint -> recall injection -> maintenance -> proactive hooks)
 - optional embedding-backed semantic hybrid memory search (OpenRouter/OpenAI-compatible `/embeddings`)
 - admin memory observability (`/api/admin/memory/<agent>`) including health and embedding coverage stats
+- **Docker sandbox provider** (`sandbox.provider=docker`): all agent workspace activity runs inside an isolated Docker container; no host filesystem access from fs.* or shell.exec tools
+- **Sandbox Provider interface** (`internal/sandbox`): pluggable `Provider` abstraction; Local, None, and Docker implementations; all fs.* tools and shell.exec route through it
+- **Docker sandbox admin API** (`/api/admin/sandbox/docker/*`): 8 endpoints for container lifecycle, image management, volume management; bearer-auth protected
+- **Sandbox Manager dashboard page** (`/sandbox` route): UI for container status, create/stop/reset actions, image pull, volume management with confirmation dialogs
 
 What is not production-ready:
 - compatibility and schema stability

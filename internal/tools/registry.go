@@ -49,6 +49,7 @@ type Request struct {
 	Policy               Policy
 	Shell                ShellExecutor
 	ShellAllowedCommands []string
+	SandboxProvider      SandboxFileOps // nil = use host OS directly
 }
 
 type registryItem struct {
@@ -61,6 +62,7 @@ type Registry struct {
 	audit                Auditor
 	shell                ShellExecutor
 	shellAllowedCommands []string
+	sandboxProvider      SandboxFileOps
 	mu                   sync.RWMutex
 	tools                map[string]registryItem
 }
@@ -77,6 +79,12 @@ func (r *Registry) SetShellExecutor(shell ShellExecutor) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.shell = shell
+}
+
+func (r *Registry) SetSandboxProvider(sp SandboxFileOps) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sandboxProvider = sp
 }
 
 func (r *Registry) SetShellAllowedCommands(prefixes []string) {
@@ -180,6 +188,7 @@ func (r *Registry) Execute(ctx context.Context, agentID, name, workspace string,
 		Policy:               r.policy,
 		Shell:                r.shell,
 		ShellAllowedCommands: append([]string(nil), r.shellAllowedCommands...),
+		SandboxProvider:      r.sandboxProvider,
 	})
 	if err != nil {
 		errCode := classifyToolErrorCode(err)

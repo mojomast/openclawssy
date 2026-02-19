@@ -42,6 +42,7 @@ type CoreOptions struct {
 	RunTracker      RunCanceller
 	WorkspaceRoot   string
 	AgentRunner     AgentRunner
+	SandboxProvider SandboxFileOps // nil = use host OS (local/none mode)
 }
 
 func RegisterCore(reg *Registry) error {
@@ -117,7 +118,7 @@ func RegisterCoreWithOptions(reg *Registry, opts CoreOptions) error {
 	return nil
 }
 
-func fsRead(_ context.Context, req Request) (map[string]any, error) {
+func fsRead(ctx context.Context, req Request) (map[string]any, error) {
 	path, err := getString(req.Args, "path")
 	if err != nil {
 		return nil, err
@@ -129,7 +130,12 @@ func fsRead(_ context.Context, req Request) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, err := os.ReadFile(resolved)
+	var b []byte
+	if req.SandboxProvider != nil {
+		b, err = req.SandboxProvider.ReadFile(ctx, resolved)
+	} else {
+		b, err = os.ReadFile(resolved)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +149,7 @@ func fsRead(_ context.Context, req Request) (map[string]any, error) {
 	return map[string]any{"path": path, "content": string(b), "truncated": len(b) == maxBytes}, nil
 }
 
-func fsList(_ context.Context, req Request) (map[string]any, error) {
+func fsList(ctx context.Context, req Request) (map[string]any, error) {
 	path, err := getString(req.Args, "path")
 	if err != nil {
 		return nil, err
@@ -155,23 +161,37 @@ func fsList(_ context.Context, req Request) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(resolved)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]string, 0, len(entries))
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() {
-			name += "/"
+	out := make([]string, 0)
+	if req.SandboxProvider != nil {
+		entries, err := req.SandboxProvider.ListDir(ctx, resolved)
+		if err != nil {
+			return nil, err
 		}
-		out = append(out, name)
+		for _, e := range entries {
+			name := e.Name
+			if e.IsDir {
+				name += "/"
+			}
+			out = append(out, name)
+		}
+	} else {
+		entries, err := os.ReadDir(resolved)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() {
+				name += "/"
+			}
+			out = append(out, name)
+		}
 	}
 	sort.Strings(out)
 	return map[string]any{"path": path, "entries": out}, nil
 }
 
-func fsWrite(_ context.Context, req Request) (map[string]any, error) {
+func fsWrite(ctx context.Context, req Request) (map[string]any, error) {
 	path, err := getString(req.Args, "path")
 	if err != nil {
 		return nil, err
@@ -190,8 +210,14 @@ func fsWrite(_ context.Context, req Request) (map[string]any, error) {
 	if err := guardWorkspaceControlPlaneFilename(req.Workspace, resolved, req.AgentID); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(resolved, []byte(content), 0o600); err != nil {
-		return nil, err
+	if req.SandboxProvider != nil {
+		if err := req.SandboxProvider.WriteFile(ctx, resolved, []byte(content), 0o600); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := os.WriteFile(resolved, []byte(content), 0o600); err != nil {
+			return nil, err
+		}
 	}
 	lines := 0
 	if content != "" {
@@ -205,7 +231,7 @@ func fsWrite(_ context.Context, req Request) (map[string]any, error) {
 	}, nil
 }
 
-func fsAppend(_ context.Context, req Request) (map[string]any, error) {
+func fsAppend(ctx context.Context, req Request) (map[string]any, error) {
 	path, err := getString(req.Args, "path")
 	if err != nil {
 		return nil, err
@@ -224,16 +250,28 @@ func fsAppend(_ context.Context, req Request) (map[string]any, error) {
 	if err := guardWorkspaceControlPlaneFilename(req.Workspace, resolved, req.AgentID); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(resolved, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := f.WriteString(content); err != nil {
-		_ = f.Close()
-		return nil, err
-	}
-	if err := f.Close(); err != nil {
-		return nil, err
+	if req.SandboxProvider != nil {
+		// For sandbox: read existing data, concatenate, write back.
+		existing, readErr := req.SandboxProvider.ReadFile(ctx, resolved)
+		if readErr != nil && !os.IsNotExist(readErr) {
+			return nil, readErr
+		}
+		combined := append(existing, []byte(content)...)
+		if err := req.SandboxProvider.WriteFile(ctx, resolved, combined, 0o600); err != nil {
+			return nil, err
+		}
+	} else {
+		f, err := os.OpenFile(resolved, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := f.WriteString(content); err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+		if err := f.Close(); err != nil {
+			return nil, err
+		}
 	}
 	lines := 0
 	if content != "" {
@@ -247,7 +285,7 @@ func fsAppend(_ context.Context, req Request) (map[string]any, error) {
 	}, nil
 }
 
-func fsDelete(_ context.Context, req Request) (map[string]any, error) {
+func fsDelete(ctx context.Context, req Request) (map[string]any, error) {
 	path, err := getString(req.Args, "path")
 	if err != nil {
 		return nil, err
@@ -266,39 +304,65 @@ func fsDelete(_ context.Context, req Request) (map[string]any, error) {
 	recursive := getBoolArg(req.Args, "recursive", false)
 	force := getBoolArg(req.Args, "force", false)
 
-	info, err := os.Lstat(resolved)
-	if err != nil {
-		if os.IsNotExist(err) && force {
-			return map[string]any{
-				"path":    path,
-				"deleted": false,
-				"skipped": "not_found",
-				"summary": fmt.Sprintf("path not found, skipped delete: %s", path),
-			}, nil
+	var isDir bool
+	if req.SandboxProvider != nil {
+		info, exists, statErr := req.SandboxProvider.Lstat(ctx, resolved)
+		if statErr != nil {
+			return nil, statErr
 		}
-		return nil, err
-	}
-
-	isDir := info.IsDir()
-	if isDir && !recursive {
-		return nil, errors.New("path is a directory; set recursive=true to delete directories")
-	}
-
-	if isDir {
-		err = os.RemoveAll(resolved)
+		if !exists {
+			if force {
+				return map[string]any{
+					"path":    path,
+					"deleted": false,
+					"skipped": "not_found",
+					"summary": fmt.Sprintf("path not found, skipped delete: %s", path),
+				}, nil
+			}
+			return nil, os.ErrNotExist
+		}
+		isDir = info.IsDir
+		if isDir && !recursive {
+			return nil, errors.New("path is a directory; set recursive=true to delete directories")
+		}
+		if err := req.SandboxProvider.Remove(ctx, resolved, recursive); err != nil {
+			return nil, err
+		}
 	} else {
-		err = os.Remove(resolved)
-	}
-	if err != nil {
-		if os.IsNotExist(err) && force {
-			return map[string]any{
-				"path":    path,
-				"deleted": false,
-				"skipped": "not_found",
-				"summary": fmt.Sprintf("path not found, skipped delete: %s", path),
-			}, nil
+		osInfo, err := os.Lstat(resolved)
+		if err != nil {
+			if os.IsNotExist(err) && force {
+				return map[string]any{
+					"path":    path,
+					"deleted": false,
+					"skipped": "not_found",
+					"summary": fmt.Sprintf("path not found, skipped delete: %s", path),
+				}, nil
+			}
+			return nil, err
 		}
-		return nil, err
+
+		isDir = osInfo.IsDir()
+		if isDir && !recursive {
+			return nil, errors.New("path is a directory; set recursive=true to delete directories")
+		}
+
+		if isDir {
+			err = os.RemoveAll(resolved)
+		} else {
+			err = os.Remove(resolved)
+		}
+		if err != nil {
+			if os.IsNotExist(err) && force {
+				return map[string]any{
+					"path":    path,
+					"deleted": false,
+					"skipped": "not_found",
+					"summary": fmt.Sprintf("path not found, skipped delete: %s", path),
+				}, nil
+			}
+			return nil, err
+		}
 	}
 
 	targetType := "file"
@@ -314,7 +378,7 @@ func fsDelete(_ context.Context, req Request) (map[string]any, error) {
 	}, nil
 }
 
-func fsMove(_ context.Context, req Request) (map[string]any, error) {
+func fsMove(ctx context.Context, req Request) (map[string]any, error) {
 	src, err := getString(req.Args, "src")
 	if err != nil {
 		return nil, err
@@ -343,42 +407,82 @@ func fsMove(_ context.Context, req Request) (map[string]any, error) {
 
 	overwrite := getBoolArg(req.Args, "overwrite", false)
 
-	srcInfo, err := os.Lstat(srcResolved)
-	if err != nil {
-		return nil, err
-	}
-
-	if srcResolved == dstResolved {
-		return map[string]any{
-			"src":       src,
-			"dst":       dst,
-			"moved":     true,
-			"overwrite": overwrite,
-			"summary":   fmt.Sprintf("moved %s to %s", src, dst),
-		}, nil
-	}
-
-	if dstInfo, err := os.Lstat(dstResolved); err == nil {
-		if !overwrite {
-			return nil, fmt.Errorf("destination already exists: %s", dst)
+	var srcIsDir bool
+	if req.SandboxProvider != nil {
+		srcInfo, exists, statErr := req.SandboxProvider.Lstat(ctx, srcResolved)
+		if statErr != nil {
+			return nil, statErr
 		}
-		if dstInfo.IsDir() {
-			if err := os.RemoveAll(dstResolved); err != nil {
+		if !exists {
+			return nil, os.ErrNotExist
+		}
+		srcIsDir = srcInfo.IsDir
+
+		if srcResolved == dstResolved {
+			return map[string]any{
+				"src":       src,
+				"dst":       dst,
+				"moved":     true,
+				"overwrite": overwrite,
+				"summary":   fmt.Sprintf("moved %s to %s", src, dst),
+			}, nil
+		}
+
+		dstInfo, dstExists, dstStatErr := req.SandboxProvider.Lstat(ctx, dstResolved)
+		if dstStatErr != nil {
+			return nil, dstStatErr
+		}
+		if dstExists {
+			if !overwrite {
+				return nil, fmt.Errorf("destination already exists: %s", dst)
+			}
+			if err := req.SandboxProvider.Remove(ctx, dstResolved, dstInfo.IsDir); err != nil {
 				return nil, err
 			}
-		} else if err := os.Remove(dstResolved); err != nil {
+		}
+
+		if err := req.SandboxProvider.Rename(ctx, srcResolved, dstResolved); err != nil {
 			return nil, err
 		}
-	} else if !os.IsNotExist(err) {
-		return nil, err
-	}
+	} else {
+		srcInfo, err := os.Lstat(srcResolved)
+		if err != nil {
+			return nil, err
+		}
+		srcIsDir = srcInfo.IsDir()
 
-	if err := os.Rename(srcResolved, dstResolved); err != nil {
-		return nil, err
+		if srcResolved == dstResolved {
+			return map[string]any{
+				"src":       src,
+				"dst":       dst,
+				"moved":     true,
+				"overwrite": overwrite,
+				"summary":   fmt.Sprintf("moved %s to %s", src, dst),
+			}, nil
+		}
+
+		if dstInfo, err := os.Lstat(dstResolved); err == nil {
+			if !overwrite {
+				return nil, fmt.Errorf("destination already exists: %s", dst)
+			}
+			if dstInfo.IsDir() {
+				if err := os.RemoveAll(dstResolved); err != nil {
+					return nil, err
+				}
+			} else if err := os.Remove(dstResolved); err != nil {
+				return nil, err
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+
+		if err := os.Rename(srcResolved, dstResolved); err != nil {
+			return nil, err
+		}
 	}
 
 	kind := "file"
-	if srcInfo.IsDir() {
+	if srcIsDir {
 		kind = "dir"
 	}
 	return map[string]any{
@@ -407,7 +511,7 @@ type unifiedDiffHunk struct {
 
 var unifiedDiffHeaderPattern = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$`)
 
-func fsEdit(_ context.Context, req Request) (map[string]any, error) {
+func fsEdit(ctx context.Context, req Request) (map[string]any, error) {
 	path, err := getString(req.Args, "path")
 	if err != nil {
 		return nil, err
@@ -422,7 +526,12 @@ func fsEdit(_ context.Context, req Request) (map[string]any, error) {
 	if err := guardWorkspaceControlPlaneFilename(req.Workspace, resolved, req.AgentID); err != nil {
 		return nil, err
 	}
-	b, err := os.ReadFile(resolved)
+	var b []byte
+	if req.SandboxProvider != nil {
+		b, err = req.SandboxProvider.ReadFile(ctx, resolved)
+	} else {
+		b, err = os.ReadFile(resolved)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -465,8 +574,14 @@ func fsEdit(_ context.Context, req Request) (map[string]any, error) {
 		return nil, err
 	}
 
-	if err := os.WriteFile(resolved, []byte(updated), 0o600); err != nil {
-		return nil, err
+	var writeErr error
+	if req.SandboxProvider != nil {
+		writeErr = req.SandboxProvider.WriteFile(ctx, resolved, []byte(updated), 0o600)
+	} else {
+		writeErr = os.WriteFile(resolved, []byte(updated), 0o600)
+	}
+	if writeErr != nil {
+		return nil, writeErr
 	}
 	res["path"] = path
 	return res, nil

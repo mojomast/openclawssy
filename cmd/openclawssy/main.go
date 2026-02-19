@@ -190,6 +190,10 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 			if runtimeCfg.Server.Dashboard {
 				dash.Register(mux)
 			}
+			// Wire sandbox admin endpoints under /api/admin/sandbox/docker/…
+			// These are protected by the existing authMiddleware via the mux.
+			sandboxAdmin := httpchannel.NewSandboxAdminHandler(httpchannel.NewDockerAdminManager())
+			sandboxAdmin.Register(mux)
 		},
 	})
 
