@@ -349,11 +349,12 @@ function validateDraftConfig(draft) {
   }
 
   const sandboxProvider = asTrimmedString(draft?.sandbox?.provider).toLowerCase();
-  if (!sandboxProvider || (sandboxProvider !== "none" && sandboxProvider !== "local")) {
-    setFieldError("sandbox.provider", "Sandbox provider must be local or none.");
+  const validProviders = ["none", "local", "docker"];
+  if (!sandboxProvider || !validProviders.includes(sandboxProvider)) {
+    setFieldError("sandbox.provider", "Sandbox provider must be none, local, or docker.");
   }
   if (draft?.sandbox?.active && sandboxProvider === "none") {
-    setFieldError("sandbox.provider", "Sandbox provider must be local when sandbox is active.");
+    setFieldError("sandbox.provider", "Sandbox provider must be local or docker when sandbox is active.");
   }
   if (draft?.shell?.enable_exec && !draft?.sandbox?.active) {
     setFieldError("shell.enable_exec", "Shell execution requires sandbox.active=true.");
@@ -965,6 +966,7 @@ function buildSandboxCategory(panel, fieldErrors) {
     options: [
       { value: "none", label: "none" },
       { value: "local", label: "local" },
+      { value: "docker", label: "docker" },
     ],
     fieldErrors,
   });
