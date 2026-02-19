@@ -109,15 +109,15 @@ This is still a prototype under active development.
 
 Detailed operational/reference content has been moved out of the README into `docs/`.
 
-- Getting started: `docs/GETTING_STARTED.md`
-- Usage and workflows: `docs/USAGE.md`
-- Architecture: `docs/ARCHITECTURE.md`
-- Memory system: `docs/MEMORY_SYSTEM.md`
-- Tool catalog: `docs/TOOL_CATALOG.md`
-- Config spec: `docs/specs/CONFIG.md`
-- Contracts + acceptance: `docs/specs/CONTRACTS.md`, `docs/specs/ACCEPTANCE.md`
-- Threat model: `docs/security/THREAT_MODEL.md`
-- Project status: `docs/PROJECT_STATUS.md`
+- Getting started: [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md)
+- Usage and workflows: [`docs/USAGE.md`](docs/USAGE.md)
+- Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- Memory system: [`docs/MEMORY_SYSTEM.md`](docs/MEMORY_SYSTEM.md)
+- Tool catalog: [`docs/TOOL_CATALOG.md`](docs/TOOL_CATALOG.md)
+- Config spec: [`docs/specs/CONFIG.md`](docs/specs/CONFIG.md)
+- Contracts + acceptance: [`docs/specs/CONTRACTS.md`](docs/specs/CONTRACTS.md), [`docs/specs/ACCEPTANCE.md`](docs/specs/ACCEPTANCE.md)
+- Threat model: [`docs/security/THREAT_MODEL.md`](docs/security/THREAT_MODEL.md)
+- Project status: [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md)
 
 ## MIT License
 
