@@ -204,3 +204,37 @@ func TestCheckToolCanonicalizesRequestAlias(t *testing.T) {
 		t.Fatalf("expected bash.exec allowed via shell.exec grant, got %v", err)
 	}
 }
+
+func TestSymlinkFileEscapeDeniedOnWrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior requires elevated privileges on many windows setups")
+	}
+
+	root := t.TempDir()
+	ws := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	outsideFile := filepath.Join(root, "secret.txt")
+	if err := os.WriteFile(outsideFile, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+
+	linkPath := filepath.Join(ws, "link.txt")
+	if err := os.Symlink(outsideFile, linkPath); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	enf := NewEnforcer(ws, map[string][]string{"agent": {"fs.write"}})
+
+	// Attempt to resolve write path for the symlink
+	_, err := enf.ResolveWritePath(ws, "link.txt")
+	if err == nil {
+		t.Fatalf("expected symlink write escape denial")
+	}
+	pathErr, ok := err.(*PathError)
+	if !ok || pathErr.Reason != "outside workspace" {
+		t.Fatalf("expected outside workspace denial, got %v", err)
+	}
+}
