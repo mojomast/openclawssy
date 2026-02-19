@@ -233,6 +233,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 			Prompt:        systemPrompt,
 			Message:       input.Message,
 			ToolResults:   append([]ToolCallResult(nil), s.toolResults...),
+			OnTextDelta:   input.OnTextDelta,
 		})
 		if resp.ThinkingPresent {
 			s.thinkingPresent = true

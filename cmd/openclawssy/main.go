@@ -87,6 +87,7 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
+	eventBus := httpchannel.NewRunEventBus(0)
 
 	exec := runtimeExecutor{engine: engine}
 	runtimeCfg, err := config.LoadOrDefault(filepath.Join(".openclawssy", "config.json"))
@@ -132,14 +133,24 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 		if channel := strings.TrimSpace(job.Channel); channel != "" {
 			source = "scheduler/" + channel
 		}
-		if _, err := httpchannel.QueueRun(context.Background(), runStore, exec, agentID, job.Message, source, sessionID, ""); err != nil {
+		if _, err := httpchannel.QueueRunWithOptions(
+			context.Background(),
+			runStore,
+			exec,
+			agentID,
+			job.Message,
+			source,
+			sessionID,
+			"",
+			httpchannel.QueueRunOptions{EventBus: eventBus},
+		); err != nil {
 			fmt.Fprintln(os.Stderr, "scheduler queue warning:", err)
 		}
 	})
 	schedulerExec.Start()
 	defer schedulerExec.Stop()
 
-	sharedChat, err := buildSharedChatConnector(runtimeCfg, runStore, exec)
+	sharedChat, err := buildSharedChatConnector(runtimeCfg, runStore, exec, eventBus)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -174,6 +185,7 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 		Store:       runStore,
 		Executor:    exec,
 		Chat:        buildDashboardChatConnector(runtimeCfg, sharedChat),
+		EventBus:    eventBus,
 		RegisterMux: func(mux *http.ServeMux) {
 			if runtimeCfg.Server.Dashboard {
 				dash.Register(mux)
@@ -513,14 +525,21 @@ func (cronService) Cron(_ context.Context, input cli.CronInput) (string, error) 
 type runtimeExecutor struct{ engine *runtime.Engine }
 
 func (e runtimeExecutor) Execute(ctx context.Context, input httpchannel.ExecutionInput) (httpchannel.ExecutionResult, error) {
-	res, err := e.engine.ExecuteWithInput(ctx, runtime.ExecuteInput{AgentID: input.AgentID, Message: input.Message, Source: input.Source, SessionID: input.SessionID, ThinkingMode: input.ThinkingMode})
+	res, err := e.engine.ExecuteWithInput(ctx, runtime.ExecuteInput{
+		AgentID:      input.AgentID,
+		Message:      input.Message,
+		Source:       input.Source,
+		SessionID:    input.SessionID,
+		ThinkingMode: input.ThinkingMode,
+		OnProgress:   input.OnProgress,
+	})
 	if err != nil {
 		return httpchannel.ExecutionResult{Trace: res.Trace, Provider: res.Provider, Model: res.Model, ToolCalls: res.ToolCalls}, err
 	}
 	return httpchannel.ExecutionResult{Output: res.FinalText, ArtifactPath: res.ArtifactPath, DurationMS: res.DurationMS, ToolCalls: res.ToolCalls, Provider: res.Provider, Model: res.Model, Trace: res.Trace}, nil
 }
 
-func buildSharedChatConnector(cfg config.Config, store httpchannel.RunStore, exec httpchannel.RunExecutor) (*chat.Connector, error) {
+func buildSharedChatConnector(cfg config.Config, store httpchannel.RunStore, exec httpchannel.RunExecutor, eventBus *httpchannel.RunEventBus) (*chat.Connector, error) {
 	if !cfg.Chat.Enabled && !cfg.Discord.Enabled {
 		return nil, nil
 	}
@@ -541,7 +560,17 @@ func buildSharedChatConnector(cfg config.Config, store httpchannel.RunStore, exe
 		HistoryLimit:   30,
 		GlobalLimiter:  chat.NewRateLimiter(cfg.Chat.GlobalRateLimitPerMin, time.Minute),
 		Queue: func(ctx context.Context, agentID, message, source, sessionID, thinkingMode string) (chat.QueuedRun, error) {
-			run, err := httpchannel.QueueRun(ctx, store, exec, agentID, message, source, sessionID, thinkingMode)
+			run, err := httpchannel.QueueRunWithOptions(
+				ctx,
+				store,
+				exec,
+				agentID,
+				message,
+				source,
+				sessionID,
+				thinkingMode,
+				httpchannel.QueueRunOptions{EventBus: eventBus},
+			)
 			if err != nil {
 				return chat.QueuedRun{}, err
 			}

@@ -266,6 +266,22 @@ body {
   opacity: 0.78;
 }
 
+.chat-message.pending.streaming .chat-message-content::after {
+  content: " ▋";
+  animation: chat-stream-cursor-blink 1s steps(1, end) infinite;
+}
+
+@keyframes chat-stream-cursor-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  46%,
+  100% {
+    opacity: 0;
+  }
+}
+
 .chat-user {
   border-left: 3px solid var(--primary);
   background: color-mix(in srgb, var(--primary) 6%, var(--background));
@@ -353,6 +369,28 @@ body {
   margin: 0;
   color: var(--foreground);
   font-weight: 600;
+}
+
+.chat-tool-line.ok {
+  color: var(--foreground);
+}
+
+.chat-tool-line.failed {
+  color: var(--destructive);
+}
+
+.chat-tool-indicator {
+  margin: 0.45rem 0 0;
+  padding: 0.3rem 0.4rem;
+  border-radius: 0.35rem;
+  font-size: 0.82rem;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 10%, var(--background));
+}
+
+.chat-tool-indicator.failed {
+  border-color: color-mix(in srgb, var(--destructive) 55%, var(--border));
+  background: color-mix(in srgb, var(--destructive) 12%, var(--background));
 }
 
 .chat-loop-risk {

@@ -28,7 +28,15 @@ const defaultQueuedRunMaxInFlight = 64
 
 var ErrQueueFull = errors.New("httpchannel: run queue is full")
 
+type QueueRunOptions struct {
+	EventBus *RunEventBus
+}
+
 func QueueRun(ctx context.Context, store RunStore, executor RunExecutor, agentID, message, source, sessionID, thinkingMode string) (Run, error) {
+	return QueueRunWithOptions(ctx, store, executor, agentID, message, source, sessionID, thinkingMode, QueueRunOptions{})
+}
+
+func QueueRunWithOptions(ctx context.Context, store RunStore, executor RunExecutor, agentID, message, source, sessionID, thinkingMode string, opts QueueRunOptions) (Run, error) {
 	now := time.Now().UTC()
 	run := Run{
 		ID:           newRunID(),
@@ -49,18 +57,39 @@ func QueueRun(ctx context.Context, store RunStore, executor RunExecutor, agentID
 		defaultQueuedRunTracker.done()
 		return Run{}, fmt.Errorf("create run: %w", err)
 	}
-	go executeQueuedRun(context.Background(), store, executor, created)
+	go executeQueuedRun(context.Background(), store, executor, created, opts)
 	return created, nil
 }
 
-func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor, run Run) {
+func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor, run Run, opts QueueRunOptions) {
 	defer defaultQueuedRunTracker.done()
+	if opts.EventBus != nil {
+		defer opts.EventBus.Close(run.ID)
+	}
 
 	run.Status = "running"
 	run.UpdatedAt = time.Now().UTC()
 	_ = store.Update(ctx, run)
+	publishQueueRunEvent(opts.EventBus, run.ID, RunEventStatus, map[string]any{"status": "running"})
 
-	result, err := executeWithRetry(ctx, executor, ExecutionInput{AgentID: run.AgentID, Message: run.Message, Source: run.Source, SessionID: run.SessionID, ThinkingMode: run.ThinkingMode})
+	input := ExecutionInput{
+		AgentID:      run.AgentID,
+		Message:      run.Message,
+		Source:       run.Source,
+		SessionID:    run.SessionID,
+		ThinkingMode: run.ThinkingMode,
+	}
+	if opts.EventBus != nil {
+		input.OnProgress = func(eventType string, data map[string]any) {
+			eventKind, ok := progressEventType(eventType)
+			if !ok {
+				return
+			}
+			publishQueueRunEvent(opts.EventBus, run.ID, eventKind, cloneProgressData(data))
+		}
+	}
+
+	result, err := executeWithRetry(ctx, executor, input)
 	if err != nil {
 		run.Status = "failed"
 		run.Error = err.Error()
@@ -68,6 +97,13 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 		run.Provider = result.Provider
 		run.Model = result.Model
 		run.ToolCalls = result.ToolCalls
+		publishQueueRunEvent(opts.EventBus, run.ID, RunEventFailed, map[string]any{
+			"status":     "failed",
+			"error":      run.Error,
+			"provider":   run.Provider,
+			"model":      run.Model,
+			"tool_calls": run.ToolCalls,
+		})
 	} else {
 		run.Status = "completed"
 		output := strings.TrimSpace(result.Output)
@@ -81,9 +117,53 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 		run.Provider = result.Provider
 		run.Model = result.Model
 		run.Trace = result.Trace
+		publishQueueRunEvent(opts.EventBus, run.ID, RunEventCompleted, map[string]any{
+			"status":        "completed",
+			"output":        run.Output,
+			"artifact_path": run.ArtifactPath,
+			"duration_ms":   run.DurationMS,
+			"tool_calls":    run.ToolCalls,
+			"provider":      run.Provider,
+			"model":         run.Model,
+		})
 	}
 	run.UpdatedAt = time.Now().UTC()
 	_ = store.Update(ctx, run)
+}
+
+func publishQueueRunEvent(bus *RunEventBus, runID string, eventType RunEventType, data map[string]any) {
+	if bus == nil {
+		return
+	}
+	bus.Publish(runID, RunEvent{Type: eventType, Data: data})
+}
+
+func progressEventType(eventType string) (RunEventType, bool) {
+	switch strings.ToLower(strings.TrimSpace(eventType)) {
+	case "status":
+		return RunEventStatus, true
+	case "tool_end":
+		return RunEventToolEnd, true
+	case "model_text":
+		return RunEventModelText, true
+	case "completed":
+		return RunEventCompleted, true
+	case "failed":
+		return RunEventFailed, true
+	default:
+		return "", false
+	}
+}
+
+func cloneProgressData(data map[string]any) map[string]any {
+	if len(data) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(data))
+	for key, value := range data {
+		out[key] = value
+	}
+	return out
 }
 
 func executeWithRetry(ctx context.Context, executor RunExecutor, input ExecutionInput) (ExecutionResult, error) {

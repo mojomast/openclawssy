@@ -1,12 +1,15 @@
 package httpchannel
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -395,6 +398,133 @@ func TestServer_ChatRejectsInvalidThinkingMode(t *testing.T) {
 	}
 	if resp.Error.Code != "request.invalid_thinking_mode" {
 		t.Fatalf("unexpected error code: %#v", resp)
+	}
+}
+
+func TestServer_RunEventsSSERequiresAuth(t *testing.T) {
+	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore(), EventBus: NewRunEventBus(16)})
+	req := httptest.NewRequest(http.MethodGet, "/v1/runs/events/run_1", nil)
+	rr := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected %d, got %d", http.StatusUnauthorized, rr.Code)
+	}
+}
+
+func TestServer_RunEventsSSEFrameFormat(t *testing.T) {
+	eventBus := NewRunEventBus(16)
+	runID := "run_stream_frame"
+	eventBus.Publish(runID, RunEvent{Type: RunEventStatus, Data: map[string]any{"status": "running"}})
+	eventBus.Close(runID)
+
+	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore(), EventBus: eventBus})
+	httpServer := httptest.NewServer(s.Handler())
+	defer httpServer.Close()
+
+	req, err := http.NewRequest(http.MethodGet, httpServer.URL+"/v1/runs/events/"+runID, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := httpServer.Client().Do(req)
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	text := string(body)
+	if !strings.Contains(text, "id: 1") {
+		t.Fatalf("expected id frame, got %q", text)
+	}
+	if !strings.Contains(text, "event: status") {
+		t.Fatalf("expected event frame, got %q", text)
+	}
+	if !strings.Contains(text, `"type":"status"`) {
+		t.Fatalf("expected serialized run event payload, got %q", text)
+	}
+}
+
+func TestServer_RunEventsSSEHeartbeatEmission(t *testing.T) {
+	original := sseHeartbeatInterval
+	sseHeartbeatInterval = 20 * time.Millisecond
+	defer func() { sseHeartbeatInterval = original }()
+
+	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore(), EventBus: NewRunEventBus(16)})
+	httpServer := httptest.NewServer(s.Handler())
+	defer httpServer.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, httpServer.URL+"/v1/runs/events/run_heartbeat", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := httpServer.Client().Do(req)
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	reader := bufio.NewReader(resp.Body)
+	foundHeartbeat := false
+	deadline := time.Now().Add(400 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		line, readErr := reader.ReadString('\n')
+		if strings.Contains(line, "event: heartbeat") {
+			foundHeartbeat = true
+			break
+		}
+		if readErr != nil {
+			break
+		}
+	}
+	cancel()
+	if !foundHeartbeat {
+		t.Fatal("expected heartbeat event in SSE stream")
+	}
+}
+
+func TestServer_RunEventsLateSubscriberGetsTerminalReplay(t *testing.T) {
+	eventBus := NewRunEventBus(16)
+	runID := "run_stream_replay_terminal"
+	eventBus.Publish(runID, RunEvent{Type: RunEventStatus, Data: map[string]any{"status": "running"}})
+	eventBus.Publish(runID, RunEvent{Type: RunEventCompleted, Data: map[string]any{"status": "completed", "output": "done"}})
+	eventBus.Close(runID)
+
+	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore(), EventBus: eventBus})
+	httpServer := httptest.NewServer(s.Handler())
+	defer httpServer.Close()
+
+	req, err := http.NewRequest(http.MethodGet, httpServer.URL+"/v1/runs/events/"+runID, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Last-Event-ID", "1")
+	resp, err := httpServer.Client().Do(req)
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	text := string(body)
+	if strings.Contains(text, "event: status") {
+		t.Fatalf("did not expect stale status replay when Last-Event-ID=1: %q", text)
+	}
+	if !strings.Contains(text, "event: completed") {
+		t.Fatalf("expected completed terminal replay, got %q", text)
 	}
 }
 

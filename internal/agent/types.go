@@ -27,6 +27,7 @@ type RunInput struct {
 	AllowedTools      []string                   `json:"allowed_tools,omitempty"`
 	OnToolCall        func(ToolCallRecord) error `json:"-"`
 	SystemPromptExt   SystemPromptExtender       `json:"-"`
+	OnTextDelta       func(delta string) error   `json:"-"`
 }
 
 // RunOutput is the finalized output contract for a run.
@@ -43,15 +44,16 @@ type RunOutput struct {
 
 // ModelRequest is sent to the model on each loop iteration.
 type ModelRequest struct {
-	AgentID       string           `json:"agent_id,omitempty"`
-	RunID         string           `json:"run_id,omitempty"`
-	SystemPrompt  string           `json:"system_prompt,omitempty"`
-	Messages      []ChatMessage    `json:"messages,omitempty"`
-	AllowedTools  []string         `json:"allowed_tools,omitempty"`
-	ToolTimeoutMS int              `json:"tool_timeout_ms,omitempty"`
-	Prompt        string           `json:"prompt,omitempty"`
-	Message       string           `json:"message,omitempty"`
-	ToolResults   []ToolCallResult `json:"tool_results"`
+	AgentID       string                   `json:"agent_id,omitempty"`
+	RunID         string                   `json:"run_id,omitempty"`
+	SystemPrompt  string                   `json:"system_prompt,omitempty"`
+	Messages      []ChatMessage            `json:"messages,omitempty"`
+	AllowedTools  []string                 `json:"allowed_tools,omitempty"`
+	ToolTimeoutMS int                      `json:"tool_timeout_ms,omitempty"`
+	Prompt        string                   `json:"prompt,omitempty"`
+	Message       string                   `json:"message,omitempty"`
+	ToolResults   []ToolCallResult         `json:"tool_results"`
+	OnTextDelta   func(delta string) error `json:"-"`
 }
 
 // ChatMessage is a role-tagged conversational turn passed to the model.
