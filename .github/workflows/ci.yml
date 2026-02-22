@@ -23,27 +23,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Fmt check
-        run: |
-          files=$(git ls-files '*.go')
-          if [ -z "$files" ]; then
-            echo "no go files to check"
-            exit 0
-          fi
-          unformatted=$(gofmt -l $files)
-          if [ -n "$unformatted" ]; then
-            echo "unformatted files:"
-            echo "$unformatted"
-            exit 1
-          fi
+      - name: CI quick profile (fmt+lint+test+smoke)
+        run: make ci-quick
 
-      - name: Vet
-        run: |
-          if go list ./... >/dev/null 2>&1; then
-            go vet ./...
-          else
-            echo "no packages to vet"
-          fi
+      - name: CI security profile
+        run: make ci-security
+
+      - name: CI race profile
+        run: make ci-race
 
       - name: Test
         run: |
