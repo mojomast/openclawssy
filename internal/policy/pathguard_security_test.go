@@ -123,3 +123,43 @@ func TestResolveWritePath_Security(t *testing.T) {
 		}
 	}
 }
+
+func TestSecurity_MasterKeyLeak(t *testing.T) {
+	ws := t.TempDir()
+
+	// Create master.key in the workspace root (simulating user mistake or misconfiguration)
+	secret := "SUPER_SECRET_KEY"
+	keyPath := filepath.Join(ws, "master.key")
+	if err := os.WriteFile(keyPath, []byte(secret), 0600); err != nil {
+		t.Fatalf("failed to write master.key: %v", err)
+	}
+
+	e := &Enforcer{}
+
+	// Try to resolve it for reading
+	// If it succeeds, the agent can read the master key!
+	resolved, err := e.ResolveReadPath(ws, "master.key")
+	if err == nil {
+		t.Errorf("CRITICAL VULNERABILITY: Allowed reading master.key from workspace root: %s", resolved)
+	} else {
+		// Verify it's the correct error
+		pathErr, ok := err.(*PathError)
+		if !ok {
+			t.Errorf("Expected PathError, got %T: %v", err, err)
+		} else if pathErr.Reason != "protected control-plane path" {
+			t.Errorf("Expected 'protected control-plane path' error, got: %s", pathErr.Reason)
+		}
+	}
+
+	// Try to resolve it for writing
+	// If it succeeds, the agent can overwrite the master key!
+	resolvedWrite, err := e.ResolveWritePath(ws, "master.key")
+	if err == nil {
+		t.Errorf("CRITICAL VULNERABILITY: Allowed writing master.key to workspace root: %s", resolvedWrite)
+	} else {
+		pathErr, ok := err.(*PathError)
+		if !ok || pathErr.Reason != "protected control-plane path" {
+			t.Errorf("Expected protected path error for write, got: %v", err)
+		}
+	}
+}

@@ -10,11 +10,14 @@ import (
 
 var protectedControlFiles = map[string]bool{
 	"config.json": true,
-	"master.key":  true,
-	"secrets.enc": true,
 	"SOUL.md":     true,
 	"RULES.md":    true,
 	"SPECPLAN.md": true,
+}
+
+var globallyProtectedFiles = map[string]bool{
+	"master.key":  true,
+	"secrets.enc": true,
 }
 
 func HasTraversal(targetPath string) bool {
@@ -166,6 +169,11 @@ func resolvePath(workspace, target string, write bool) (string, error) {
 }
 
 func isProtectedControlPath(absPath string) bool {
+	base := filepath.Base(absPath)
+	if globallyProtectedFiles[base] {
+		return true
+	}
+
 	parts := strings.Split(filepath.ToSlash(absPath), "/")
 	for i := 0; i < len(parts); i++ {
 		if parts[i] != ".openclawssy" {
