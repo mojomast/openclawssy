@@ -205,6 +205,12 @@ func applyConfigFieldUpdate(cfg *config.Config, field string, value any) error {
 			return err
 		}
 		cfg.Network.AllowLocalhosts = b
+	case "network.allow_private_networks":
+		b, err := requireBool(value, field)
+		if err != nil {
+			return err
+		}
+		cfg.Network.AllowPrivateNetworks = b
 	case "shell.enable_exec":
 		b, err := requireBool(value, field)
 		if err != nil {
@@ -323,6 +329,8 @@ func configGetField(cfg config.Config, field string) (any, bool) {
 		return cfg.Network.AllowedDomains, true
 	case "network.allow_localhosts":
 		return cfg.Network.AllowLocalhosts, true
+	case "network.allow_private_networks":
+		return cfg.Network.AllowPrivateNetworks, true
 	case "shell.enable_exec":
 		return cfg.Shell.EnableExec, true
 	case "agents.self_improvement_enabled":

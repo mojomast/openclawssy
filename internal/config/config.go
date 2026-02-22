@@ -57,9 +57,10 @@ func IsValidThinkingMode(mode string) bool {
 }
 
 type NetworkConfig struct {
-	Enabled         bool     `json:"enabled"`
-	AllowedDomains  []string `json:"allowed_domains,omitempty"`
-	AllowLocalhosts bool     `json:"allow_localhosts,omitempty"`
+	Enabled              bool     `json:"enabled"`
+	AllowedDomains       []string `json:"allowed_domains,omitempty"`
+	AllowLocalhosts      bool     `json:"allow_localhosts,omitempty"`
+	AllowPrivateNetworks bool     `json:"allow_private_networks,omitempty"`
 }
 
 type ShellConfig struct {

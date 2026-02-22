@@ -70,6 +70,13 @@ func TestDefaultConfigBindsServerToLoopback(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigDisablesPrivateNetworkHTTPByDefault(t *testing.T) {
+	cfg := Default()
+	if cfg.Network.AllowPrivateNetworks {
+		t.Fatal("expected network.allow_private_networks=false by default")
+	}
+}
+
 func TestValidateRejectsOutOfRangeMaxTokens(t *testing.T) {
 	cfg := Default()
 	cfg.Model.MaxTokens = 25000

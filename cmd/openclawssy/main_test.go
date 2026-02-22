@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"os"
 	"path/filepath"
@@ -269,5 +271,51 @@ func TestEnsureDefaultMemoryMaintenanceJob(t *testing.T) {
 	}
 	if len(store.List()) != 1 {
 		t.Fatalf("expected idempotent setup to keep one job, got %d", len(store.List()))
+	}
+}
+
+func TestHandleSetupRejectsUnknownArgs(t *testing.T) {
+	if code := handleSetup([]string{"--definitely-not-a-real-flag"}); code != 2 {
+		t.Fatalf("expected setup parse failure exit code 2, got %d", code)
+	}
+}
+
+func TestEnsureSelfSignedIncludesLoopbackIPs(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "server.crt")
+	keyPath := filepath.Join(dir, "server.key")
+
+	if err := ensureSelfSigned(certPath, keyPath); err != nil {
+		t.Fatalf("ensure self-signed cert: %v", err)
+	}
+
+	certPEM, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatalf("read cert: %v", err)
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		t.Fatal("failed to decode cert pem")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse cert: %v", err)
+	}
+
+	if len(cert.IPAddresses) == 0 {
+		t.Fatalf("expected loopback IP SANs, got none")
+	}
+	foundV4 := false
+	foundV6 := false
+	for _, ip := range cert.IPAddresses {
+		if ip.String() == "127.0.0.1" {
+			foundV4 = true
+		}
+		if ip.String() == "::1" {
+			foundV6 = true
+		}
+	}
+	if !foundV4 || !foundV6 {
+		t.Fatalf("expected 127.0.0.1 and ::1 SANs, got %+v", cert.IPAddresses)
 	}
 }
