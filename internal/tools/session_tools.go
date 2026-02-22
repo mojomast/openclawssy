@@ -152,5 +152,3 @@ func openChatStore(workspace, configuredPath string) (*chatstore.Store, error) {
 	}
 	return chatstore.NewStore(path)
 }
-
-

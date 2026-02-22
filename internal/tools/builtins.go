@@ -661,7 +661,6 @@ func isProcessExitStatusError(err error) bool {
 	return strings.HasPrefix(text, "exit status ")
 }
 
-
 func listFiles(root string, maxFiles int) ([]string, error) {
 	if maxFiles <= 0 {
 		maxFiles = defaultSearchMaxFiles
@@ -913,7 +912,6 @@ func splitContentLines(content string) ([]string, bool) {
 	}
 	return strings.Split(content, "\n"), hadTrailingNewline
 }
-
 
 func guardWorkspaceControlPlaneFilename(workspace, targetAbs, agentID string) error {
 	base := strings.ToUpper(filepath.Base(targetAbs))
