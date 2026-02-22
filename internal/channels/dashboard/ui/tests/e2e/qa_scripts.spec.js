@@ -261,7 +261,7 @@ test("Script 3: secrets workflow and key visibility", async ({ page }) => {
 
 test("Script 4: scheduler create, disable, pause, delete", async ({ page }) => {
   await page.goto("/dashboard#/scheduler");
-  await expect(page.getByRole("heading", { name: "Scheduler" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Scheduler", exact: true })).toBeVisible();
 
   await page.getByLabel("schedule").fill("@every 5m");
   await page.getByLabel("message").fill("status ping");
@@ -275,5 +275,7 @@ test("Script 4: scheduler create, disable, pause, delete", async ({ page }) => {
   await expect(page.getByText("Scheduler paused globally.")).toBeVisible();
 
   await page.getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByRole("button", { name: "Confirm delete" })).toBeVisible();
+  await page.getByRole("button", { name: "Confirm delete" }).click();
   await expect(page.getByText("Deleted job: job_1")).toBeVisible();
 });
