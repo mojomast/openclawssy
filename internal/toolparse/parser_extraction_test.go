@@ -11,6 +11,7 @@ func TestExtractBalancedJSONCandidates(t *testing.T) {
 		input    string
 		expected []string
 	}{
+		// Basic cases
 		{
 			name:     "Empty",
 			input:    "",
@@ -31,6 +32,32 @@ func TestExtractBalancedJSONCandidates(t *testing.T) {
 			input:    `[1, 2]`,
 			expected: []string{`[1, 2]`},
 		},
+
+		// Surrounding text
+		{
+			name:     "Surrounding Text",
+			input:    `prefix {"a": 1} suffix`,
+			expected: []string{`{"a": 1}`},
+		},
+		{
+			name:     "JSON inside markdown",
+			input:    "Here is the JSON:\n```json\n{\"foo\": \"bar\"}\n```",
+			expected: []string{`{"foo": "bar"}`},
+		},
+
+		// Multiple candidates
+		{
+			name:     "Multiple Candidates",
+			input:    `Here is one: {"a": 1} and another: {"b": 2}`,
+			expected: []string{`{"a": 1}`, `{"b": 2}`},
+		},
+		{
+			name:     "Mixed Object and Array",
+			input:    `Start {"a": 1} Middle [1, 2] End`,
+			expected: []string{`{"a": 1}`, `[1, 2]`},
+		},
+
+		// Nesting
 		{
 			name:     "Nested Object",
 			input:    `{"a": {"b": 2}}`,
@@ -42,14 +69,31 @@ func TestExtractBalancedJSONCandidates(t *testing.T) {
 			expected: []string{`[1, [2, 3], 4]`},
 		},
 		{
-			name:     "Mixed Nesting",
+			name:     "Mixed Nesting Object with Array",
 			input:    `{"a": [1, 2]}`,
 			expected: []string{`{"a": [1, 2]}`},
 		},
 		{
+			name:     "Mixed Nesting Array with Object",
+			input:    `{"a": [1, {"b": 2}]}`,
+			expected: []string{`{"a": [1, {"b": 2}]}`},
+		},
+		{
+			name:     "Deeply Nested",
+			input:    `{"a": {"b": {"c": {"d": 1}}}}`,
+			expected: []string{`{"a": {"b": {"c": {"d": 1}}}}`},
+		},
+
+		// Strings with special characters
+		{
 			name:     "Braces in String",
 			input:    `{"msg": "{hello}"}`,
 			expected: []string{`{"msg": "{hello}"}`},
+		},
+		{
+			name:     "Brackets in String",
+			input:    `{"msg": "open [ and close ]"}`,
+			expected: []string{`{"msg": "open [ and close ]"}`},
 		},
 		{
 			name:     "Escaped Quotes",
@@ -62,49 +106,51 @@ func TestExtractBalancedJSONCandidates(t *testing.T) {
 			expected: []string{`{"path": "C:\\Windows"}`},
 		},
 		{
-			name:     "Multiple Candidates",
-			input:    `Here is one: {"a": 1} and another: {"b": 2}`,
-			expected: []string{`{"a": 1}`, `{"b": 2}`},
+			name:     "Escaped Backslash Before Quote",
+			input:    `{"path": "ends with backslash \\"}`,
+			expected: []string{`{"path": "ends with backslash \\"}`},
 		},
-		{
-			name:     "Surrounding Text",
-			input:    `prefix {"a": 1} suffix`,
-			expected: []string{`{"a": 1}`},
-		},
+
+		// Edge cases / Malformed
 		{
 			name:     "Incomplete JSON",
 			input:    `{"a": 1`,
-			expected: []string{}, // Expecting empty slice, not nil? Or nil depending on implementation. The current impl returns empty slice if candidates created but none complete? No, make() uses cap 4. But slice is empty.
+			expected: []string{},
 		},
 		{
-			name:     "Malformed Mismatched",
+			name:     "Extra Closing Brace",
+			input:    `{"a": 1}}`,
+			expected: []string{`{"a": 1}`},
+		},
+		{
+			name:     "Mismatched Types Rejected",
+			input:    `{"a": [1}}`,
+			expected: []string{}, // stack-based parser rejects mismatched bracket/brace
+		},
+		{
+			name:     "Interleaved Brackets Braces Rejected",
 			input:    `{[}]`,
-			expected: []string{}, // Should be rejected
+			expected: []string{}, // stack-based parser rejects mismatched bracket/brace
 		},
 		{
-			name:     "Malformed Typo",
-			input:    `{"a": [1, 2}}`,
-			expected: []string{}, // Should be rejected
+			name:     "Quote Inside String Without Escape",
+			input:    `{"key": "va"lue"}`,
+			expected: []string{},
 		},
 		{
-			name:     "Deeply Nested",
-			input:    `{"a": {"b": {"c": {"d": 1}}}}`,
-			expected: []string{`{"a": {"b": {"c": {"d": 1}}}}`},
+			name:     "Brace Immediately After Quote",
+			input:    `{"key": "value"}` + "}",
+			expected: []string{`{"key": "value"}`},
 		},
 		{
-			name:     "Ignore Partial",
+			name:     "Ignore Partial Balanced Braces",
 			input:    `text { partial } text`,
-			expected: []string{`{ partial }`}, // This is balanced so it extracts.
+			expected: []string{`{ partial }`},
 		},
 		{
-			name:     "Loose Brackets",
+			name:     "Ignore Partial Balanced Brackets",
 			input:    `text [ loose ] text`,
-			expected: []string{`[ loose ]`}, // Balanced, extracts.
-		},
-		{
-			name:     "JSON inside markdown",
-			input:    "Here is the JSON:\n```json\n{\"foo\": \"bar\"}\n```",
-			expected: []string{`{"foo": "bar"}`},
+			expected: []string{`[ loose ]`},
 		},
 	}
 
