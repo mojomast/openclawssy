@@ -942,15 +942,16 @@ func TestConfigSetAppliesAndPersistsSafeUpdates(t *testing.T) {
 
 	res, err := reg.Execute(context.Background(), "agent", "config.set", ws, map[string]any{
 		"updates": map[string]any{
-			"output.thinking_mode":       "on_error",
-			"engine.max_concurrent_runs": 32,
+			"output.thinking_mode":           "on_error",
+			"engine.max_concurrent_runs":     32,
+			"network.allow_private_networks": true,
 		},
 	})
 	if err != nil {
 		t.Fatalf("config.set: %v", err)
 	}
 	updatedFields, ok := res["updated_fields"].([]string)
-	if !ok || len(updatedFields) != 2 {
+	if !ok || len(updatedFields) != 3 {
 		t.Fatalf("expected updated_fields list, got %#v", res["updated_fields"])
 	}
 
@@ -963,6 +964,9 @@ func TestConfigSetAppliesAndPersistsSafeUpdates(t *testing.T) {
 	}
 	if cfg.Engine.MaxConcurrentRuns != 32 {
 		t.Fatalf("expected engine.max_concurrent_runs=32, got %d", cfg.Engine.MaxConcurrentRuns)
+	}
+	if !cfg.Network.AllowPrivateNetworks {
+		t.Fatal("expected network.allow_private_networks=true")
 	}
 }
 

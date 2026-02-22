@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -673,6 +674,15 @@ func (a scopedChatAdapter) HandleMessage(ctx context.Context, msg httpchannel.Ch
 	return httpchannel.ChatResponse{ID: queued.ID, Status: queued.Status, Response: queued.Response, SessionID: queued.SessionID}, nil
 }
 
+func isSupportedProvider(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai", "openrouter", "requesty", "zai", "generic":
+		return true
+	default:
+		return false
+	}
+}
+
 func providerForDoctor(cfg config.Config) (config.ProviderEndpointConfig, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Model.Provider)) {
 	case "openai":
@@ -692,8 +702,15 @@ func providerForDoctor(cfg config.Config) (config.ProviderEndpointConfig, error)
 
 func handleSetup(args []string) int {
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
 	force := fs.Bool("force", false, "overwrite existing config")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintln(os.Stderr, "unexpected setup arguments:", strings.Join(fs.Args(), " "))
+		return 2
+	}
 
 	eng, err := runtime.NewEngine(".")
 	if err != nil {
@@ -718,8 +735,17 @@ func handleSetup(args []string) int {
 	fmt.Println("Get your API key at: https://z.ai/subscribe")
 	fmt.Println("Press Enter to accept defaults.")
 
-	cfg.Model.Provider = prompt(in, "Provider (zai=GLM-4.7 Coding Plan)", cfg.Model.Provider)
-	cfg.Model.Name = prompt(in, "Model name", cfg.Model.Name)
+	cfg.Model.Provider = strings.ToLower(strings.TrimSpace(prompt(in, "Provider (zai=GLM-4.7 Coding Plan)", cfg.Model.Provider)))
+	if !isSupportedProvider(cfg.Model.Provider) {
+		fmt.Fprintln(os.Stderr, "unsupported provider:", cfg.Model.Provider)
+		fmt.Fprintln(os.Stderr, "supported providers: openai, openrouter, requesty, zai, generic")
+		return 1
+	}
+	cfg.Model.Name = strings.TrimSpace(prompt(in, "Model name", cfg.Model.Name))
+	if cfg.Model.Name == "" {
+		fmt.Fprintln(os.Stderr, "model name cannot be empty")
+		return 1
+	}
 
 	apiKey := prompt(in, "Provider API key (stored encrypted; optional if env used)", "")
 
@@ -902,14 +928,17 @@ func ensureSelfSigned(certPath, keyPath string) error {
 	if err != nil {
 		return err
 	}
-	serial, _ := rand.Int(rand.Reader, big.NewInt(1<<62))
+	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
+	if err != nil {
+		return err
+	}
 	tmpl := x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: "openclawssy.local"},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
 		DNSNames:     []string{"localhost"},
-		IPAddresses:  nil,
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
 		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
