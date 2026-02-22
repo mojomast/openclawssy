@@ -268,6 +268,13 @@ export function createLayout({ root, routes, store, router, apiClient, inspector
           layoutPrefs.rightWidth = PANE_LIMITS.right.max;
           layoutPrefs.inspectorCollapsed = false;
         }
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        if (paneKey === "left") {
+          layoutPrefs.navCollapsed = !layoutPrefs.navCollapsed;
+        } else {
+          layoutPrefs.inspectorCollapsed = !layoutPrefs.inspectorCollapsed;
+        }
       } else {
         return;
       }

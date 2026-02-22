@@ -8,6 +8,7 @@ const schedulerState = {
   notice: "",
   noticeKind: "",
   pending: new Set(),
+  deleteConfirm: null,
   addForm: {
     id: "",
     agentID: "",
@@ -163,6 +164,7 @@ async function setJobEnabled(jobID, enabled) {
 }
 
 async function deleteJob(jobID) {
+  schedulerState.deleteConfirm = null;
   await runAction(`delete:${jobID}`, async () => {
     try {
       await schedulerState.apiClient.delete(`/api/admin/scheduler/jobs/${encodeURIComponent(jobID)}`);
@@ -455,9 +457,24 @@ function createJobsTable() {
     deleteButton.type = "button";
     deleteButton.className = "layout-toggle";
     deleteButton.disabled = schedulerState.pending.has(deleteKey);
-    deleteButton.textContent = schedulerState.pending.has(deleteKey) ? "Deleting..." : "Delete";
+
+    const isConfirming = schedulerState.deleteConfirm === job.id;
+    if (isConfirming) {
+      deleteButton.textContent = "Confirm delete";
+      deleteButton.style.color = "var(--Destructive)";
+      deleteButton.style.borderColor = "var(--Destructive)";
+      deleteButton.style.background = "var(--Destructive-bg)";
+    } else {
+      deleteButton.textContent = schedulerState.pending.has(deleteKey) ? "Deleting..." : "Delete";
+    }
+
     deleteButton.addEventListener("click", () => {
-      void deleteJob(job.id);
+      if (isConfirming) {
+        void deleteJob(job.id);
+      } else {
+        schedulerState.deleteConfirm = job.id;
+        rerender();
+      }
     });
 
     actionWrap.append(toggleButton, deleteButton);
