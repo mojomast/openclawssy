@@ -104,12 +104,23 @@ Chat behavior and controls:
 
 ## HTTP APIs
 
-Core APIs (Bearer token required):
+Core APIs:
 
-- `POST /v1/runs`
-- `GET /v1/runs`
-- `GET /v1/runs/{id}`
-- `POST /v1/chat/messages`
+- `GET /v1/healthz` (no bearer token required for GET/HEAD)
+- `POST /v1/runs` (Bearer token)
+- `GET /v1/runs` (Bearer token)
+- `GET /v1/runs/{id}` (Bearer token)
+- `POST /v1/chat/messages` (Bearer token)
+
+Run list filters (`GET /v1/runs`):
+- `status=<queued|running|completed|failed|cancelled>`
+- `agent_id=<agent>`
+- `sort=created_desc|created_asc`
+- `limit`, `offset`
+
+HTTP input hardening:
+- JSON payloads for run/chat endpoints reject unknown fields.
+- Oversized request bodies return `413`.
 
 Admin APIs (dashboard/backend control):
 

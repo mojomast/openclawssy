@@ -22,7 +22,8 @@ This model maps known threats to mandatory invariants and concrete abuse tests.
 | Config is human-controlled only | Prompt injection attempting config or permission mutation |
 | Writes limited to workspace | Path traversal, symlink escape, host file overwrite |
 | No sandbox means no `shell.exec` | Arbitrary command execution on host |
-| Network off by default | Data exfiltration and untrusted remote control |
+| Network off by default + private/local targets denied unless explicitly allowed | Data exfiltration, SSRF into loopback/private services, untrusted remote control |
+| HTTP API enforces auth, strict JSON parsing, request body caps, and defensive timeouts | Slowloris/resource exhaustion, parser ambiguity, malformed input abuse |
 | All tool calls audited + redacted | Stealth abuse, secret leakage, weak forensics |
 | Historical tool messages excluded from model context | Tool replay from stale chat history |
 | Repeated identical tool calls reuse prior success | Loop amplification and unnecessary repeated side effects |
@@ -59,6 +60,8 @@ This model maps known threats to mandatory invariants and concrete abuse tests.
 - Sandbox-gating test for `shell.exec`.
 - Audit redaction test with token-like inputs.
 - HTTP auth test for missing/invalid token.
+- HTTP strict-body tests (unknown JSON fields, oversized payload rejection, timeout config coverage).
+- SSRF resolution tests for loopback/private/link-local targets.
 - Docker: `validateContainerPath` unit tests covering null bytes, `..`, Windows paths, absolute non-workspace paths.
 - Docker: container env inspection shows no secrets.
 - Docker: agentID injection test (`sanitizeDockerName`).
