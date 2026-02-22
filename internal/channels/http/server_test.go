@@ -75,6 +75,27 @@ func TestServer_InvalidTokenRejected(t *testing.T) {
 	}
 }
 
+func TestServer_HealthzReturnsOKPayload(t *testing.T) {
+	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore()})
+	req := httptest.NewRequest(http.MethodGet, "/v1/healthz", nil)
+	rr := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rr.Code)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode health payload: %v", err)
+	}
+	if payload["status"] != "ok" {
+		t.Fatalf("expected status=ok, got %#v", payload["status"])
+	}
+	if _, ok := payload["ts"]; !ok {
+		t.Fatalf("expected ts in payload, got %#v", payload)
+	}
+}
+
 func TestServer_PostAndGetRun(t *testing.T) {
 	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore(), Executor: NopExecutor{}})
 
@@ -154,9 +175,87 @@ func TestServer_ListRunsSupportsPaginationAndStatusFilter(t *testing.T) {
 	}
 }
 
+func TestServer_ListRunsSupportsAgentFilterAndSort(t *testing.T) {
+	store := NewInMemoryRunStore()
+	now := time.Now().UTC()
+	for _, run := range []Run{
+		{ID: "run-a1", AgentID: "agent-a", Message: "m1", Status: "completed", CreatedAt: now.Add(-3 * time.Minute), UpdatedAt: now.Add(-3 * time.Minute)},
+		{ID: "run-a2", AgentID: "agent-a", Message: "m2", Status: "completed", CreatedAt: now.Add(-1 * time.Minute), UpdatedAt: now.Add(-1 * time.Minute)},
+		{ID: "run-b1", AgentID: "agent-b", Message: "m3", Status: "completed", CreatedAt: now.Add(-2 * time.Minute), UpdatedAt: now.Add(-2 * time.Minute)},
+	} {
+		if _, err := store.Create(context.Background(), run); err != nil {
+			t.Fatalf("create run %s: %v", run.ID, err)
+		}
+	}
+
+	s := NewServer(Config{BearerToken: "secret", Store: store, Executor: NopExecutor{}})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/runs?agent_id=agent-a", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rr.Code)
+	}
+	var payload struct {
+		Runs    []Run  `json:"runs"`
+		Sort    string `json:"sort"`
+		AgentID string `json:"agent_id"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Sort != listSortCreatedDesc {
+		t.Fatalf("expected default sort %q, got %q", listSortCreatedDesc, payload.Sort)
+	}
+	if payload.AgentID != "agent-a" {
+		t.Fatalf("expected echoed agent filter, got %q", payload.AgentID)
+	}
+	if len(payload.Runs) != 2 || payload.Runs[0].ID != "run-a2" || payload.Runs[1].ID != "run-a1" {
+		t.Fatalf("unexpected default-desc agent-filtered order: %+v", payload.Runs)
+	}
+
+	reqAsc := httptest.NewRequest(http.MethodGet, "/v1/runs?agent_id=agent-a&sort=created_asc", nil)
+	reqAsc.Header.Set("Authorization", "Bearer secret")
+	rrAsc := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rrAsc, reqAsc)
+	if rrAsc.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rrAsc.Code)
+	}
+	var payloadAsc struct {
+		Runs []Run `json:"runs"`
+	}
+	if err := json.Unmarshal(rrAsc.Body.Bytes(), &payloadAsc); err != nil {
+		t.Fatalf("decode asc response: %v", err)
+	}
+	if len(payloadAsc.Runs) != 2 || payloadAsc.Runs[0].ID != "run-a1" || payloadAsc.Runs[1].ID != "run-a2" {
+		t.Fatalf("unexpected asc order: %+v", payloadAsc.Runs)
+	}
+}
+
 func TestServer_ListRunsRejectsInvalidPagination(t *testing.T) {
 	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore(), Executor: NopExecutor{}})
 	req := httptest.NewRequest(http.MethodGet, "/v1/runs?limit=0", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rr := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d", http.StatusBadRequest, rr.Code)
+	}
+
+	var resp errorResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if resp.Error.Code != "request.invalid_input" {
+		t.Fatalf("unexpected error code: %#v", resp)
+	}
+}
+
+func TestServer_ListRunsRejectsInvalidSort(t *testing.T) {
+	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore(), Executor: NopExecutor{}})
+	req := httptest.NewRequest(http.MethodGet, "/v1/runs?sort=weird", nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	rr := httptest.NewRecorder()
 
@@ -528,7 +627,7 @@ func TestServer_RunEventsLateSubscriberGetsTerminalReplay(t *testing.T) {
 	}
 }
 
-func TestServer_AuthAllowsOnlyDashboardGetHeadPathsWithoutToken(t *testing.T) {
+func TestServer_AuthAllowsOnlyDashboardAndHealthGetHeadPathsWithoutToken(t *testing.T) {
 	s := NewServer(Config{
 		BearerToken: "secret",
 		Store:       NewInMemoryRunStore(),
@@ -545,6 +644,9 @@ func TestServer_AuthAllowsOnlyDashboardGetHeadPathsWithoutToken(t *testing.T) {
 		path   string
 		want   int
 	}{
+		{name: "health get allowed", method: http.MethodGet, path: "/v1/healthz", want: http.StatusOK},
+		{name: "health head allowed", method: http.MethodHead, path: "/v1/healthz", want: http.StatusOK},
+		{name: "health post blocked", method: http.MethodPost, path: "/v1/healthz", want: http.StatusUnauthorized},
 		{name: "dashboard get allowed", method: http.MethodGet, path: "/dashboard", want: http.StatusOK},
 		{name: "dashboard head allowed", method: http.MethodHead, path: "/dashboard", want: http.StatusOK},
 		{name: "dashboard legacy get allowed", method: http.MethodGet, path: "/dashboard-legacy", want: http.StatusOK},
@@ -566,5 +668,82 @@ func TestServer_AuthAllowsOnlyDashboardGetHeadPathsWithoutToken(t *testing.T) {
 				t.Fatalf("expected %d, got %d", tc.want, rr.Code)
 			}
 		})
+	}
+}
+
+func TestServer_ConfiguresDefensiveTimeouts(t *testing.T) {
+	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore()})
+	if s.httpServer.ReadHeaderTimeout != defaultHTTPReadHeaderTimeout {
+		t.Fatalf("expected read header timeout %s, got %s", defaultHTTPReadHeaderTimeout, s.httpServer.ReadHeaderTimeout)
+	}
+	if s.httpServer.ReadTimeout != defaultHTTPReadTimeout {
+		t.Fatalf("expected read timeout %s, got %s", defaultHTTPReadTimeout, s.httpServer.ReadTimeout)
+	}
+	if s.httpServer.WriteTimeout != defaultHTTPWriteTimeout {
+		t.Fatalf("expected write timeout %s, got %s", defaultHTTPWriteTimeout, s.httpServer.WriteTimeout)
+	}
+	if s.httpServer.IdleTimeout != defaultHTTPIdleTimeout {
+		t.Fatalf("expected idle timeout %s, got %s", defaultHTTPIdleTimeout, s.httpServer.IdleTimeout)
+	}
+}
+
+func TestServer_PostRunRejectsUnknownJSONFields(t *testing.T) {
+	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore(), Executor: NopExecutor{}})
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs", bytes.NewBufferString(`{"agent_id":"agent-1","message":"hello","extra":"nope"}`))
+	req.Header.Set("Authorization", "Bearer secret")
+	rr := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d", http.StatusBadRequest, rr.Code)
+	}
+
+	var resp errorResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if resp.Error.Code != "request.invalid_json" {
+		t.Fatalf("unexpected error code: %+v", resp)
+	}
+}
+
+func TestServer_PostRunRejectsOversizedJSONBody(t *testing.T) {
+	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore(), Executor: NopExecutor{}})
+	payload := `{"agent_id":"agent-1","message":"` + strings.Repeat("x", maxRunRequestBodyBytes+128) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs", bytes.NewBufferString(payload))
+	req.Header.Set("Authorization", "Bearer secret")
+	rr := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected %d, got %d", http.StatusRequestEntityTooLarge, rr.Code)
+	}
+
+	var resp errorResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if resp.Error.Code != "request.body_too_large" {
+		t.Fatalf("unexpected error code: %+v", resp)
+	}
+}
+
+func TestServer_ChatRejectsUnknownJSONFields(t *testing.T) {
+	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore(), Executor: NopExecutor{}, Chat: testChatConnector{}})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/messages", bytes.NewBufferString(`{"user_id":"u1","message":"hello","extra":"nope"}`))
+	req.Header.Set("Authorization", "Bearer secret")
+	rr := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d", http.StatusBadRequest, rr.Code)
+	}
+
+	var resp errorResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if resp.Error.Code != "request.invalid_json" {
+		t.Fatalf("unexpected error code: %+v", resp)
 	}
 }
