@@ -12,3 +12,8 @@
 **Vulnerability:** The `isProtectedControlPath` function only checked if sensitive files (like `master.key`) were inside the specific `.openclawssy` control directory. This allowed an agent to read or overwrite the master key if it was accidentally placed in the workspace root by a user.
 **Learning:** Relying solely on directory location for security policies is fragile against user misconfiguration. Critical secrets should be protected by their filename regardless of location within the workspace.
 **Prevention:** Enforce protection for critical filenames (e.g., `master.key`) globally across the entire workspace using `filepath.Base` checks before applying directory-specific logic.
+
+## 2026-02-21 - DNS Rebinding SSRF
+**Vulnerability:** The `http.request` tool checked `isLocalhostHost` on the input hostname string but did not resolve it to an IP. This allowed attackers to use a domain resolving to 127.0.0.1 (e.g., `127.0.0.1.nip.io`) to bypass the `AllowLocalhosts=false` restriction and access internal services.
+**Learning:** String-based hostname validation is insufficient for SSRF protection because DNS can map arbitrary names to private IPs.
+**Prevention:** Always resolve the hostname to an IP address and check the IP against restricted ranges (loopback, private) before connecting. Use a custom `DialContext` to ensure the checked IP is the one actually dialed, preventing TOCTOU (DNS Rebinding) attacks.

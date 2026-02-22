@@ -112,7 +112,8 @@ func prepareRequest(ctx context.Context, req Request, configuredPath string) (*p
 	}
 
 	httpClient := &http.Client{
-		Timeout: timeout,
+		Timeout:   timeout,
+		Transport: createSafeTransport(cfg.Network),
 		CheckRedirect: func(redirectReq *http.Request, via []*http.Request) error {
 			if len(via) >= maxHTTPRedirects {
 				return errors.New("stopped after too many redirects")
