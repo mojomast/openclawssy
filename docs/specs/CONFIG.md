@@ -34,7 +34,9 @@ Provider API key env defaults:
 {
   "network": {
     "enabled": false,
-    "allowed_domains": []
+    "allowed_domains": [],
+    "allow_localhosts": false,
+    "allow_private_networks": false
   },
   "shell": {
     "enable_exec": false,
@@ -153,7 +155,9 @@ Provider API key env defaults:
 - `shell.exec` is enabled only when sandbox is active and provider is not `none`.
 - `shell.allowed_commands` entries must be non-empty when provided.
 - Supported sandbox providers are `none` and `local`.
-- HTTP APIs require bearer token.
+- HTTP APIs require bearer token (except unauthenticated `GET|HEAD /v1/healthz`).
+- HTTP run/chat JSON payloads are strict (unknown fields rejected) and body-size capped.
+- Network tool traffic is deny-by-default and blocks localhost/private targets unless explicitly enabled via `network.allow_localhosts` / `network.allow_private_networks`.
 - Chat queue accepts allowlisted senders only and enforces rate limits.
 - Discord queue accepts allowlisted senders/channels/guilds and enforces rate limits.
 - Secret values are write-only at API/UI surface; only key names are listed.

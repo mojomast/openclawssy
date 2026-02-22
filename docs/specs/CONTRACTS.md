@@ -165,6 +165,7 @@ Request:
 Request notes:
 - `thinking_mode` is optional and must be one of `never|on_error|always`.
 - When omitted, runtime uses `output.thinking_mode` from config.
+- JSON input is strict (unknown fields rejected) and request body is capped (413 on oversized payload).
 
 Response `202`:
 
@@ -178,6 +179,8 @@ Response `202`:
 ### GET `/v1/runs`
 Query params:
 - `status` (optional exact status filter)
+- `agent_id` (optional exact agent filter)
+- `sort` (optional: `created_desc` default, or `created_asc`)
 - `limit` (optional, default `50`, max `500`)
 - `offset` (optional, default `0`)
 
@@ -188,7 +191,9 @@ Response `200`:
   "runs": [],
   "total": 0,
   "limit": 50,
-  "offset": 0
+  "offset": 0,
+  "sort": "created_desc",
+  "agent_id": ""
 }
 ```
 
@@ -264,6 +269,7 @@ Notes:
 - `session_id` is included when the request is associated with a persisted chat session.
 - Command-style chat requests (for example `/new`, `/resume`) may return `200` with an immediate `response` message and optional `session_id` instead of queueing a run.
 - `thinking_mode` is optional and validated with the same modes as run creation.
+- JSON input is strict (unknown fields rejected) and request body is capped (413 on oversized payload).
 
 Rate-limit response example for `POST /v1/chat/messages`:
 
@@ -306,12 +312,16 @@ Session truncation rules before model invocation:
 - `GET /api/admin/chat/sessions` -> list chat sessions for an agent/user/room/channel filter, optional `limit`/`offset`
 - `GET /api/admin/chat/sessions/{session_id}/messages` -> ordered session messages including tool metadata (`tool_name`, `tool_call_id`, `run_id`)
 
-### GET `/healthz`
+### GET `/v1/healthz`
 Response `200`:
 
 ```json
-{"ok": true}
+{"status": "ok", "ts": "2026-02-22T10:35:00Z"}
 ```
+
+Notes:
+- `GET` and `HEAD` are allowed without bearer token.
+- Useful for local liveness probes and reverse-proxy health checks.
 
 Error response shape for HTTP endpoints:
 

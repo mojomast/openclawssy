@@ -217,7 +217,7 @@ All tools are deny-by-default through capability policy, and all tool inputs are
 ### `http.request`
 - Required: `url`
 - Optional: `method`, `headers`, `body`, `timeout_ms`, `max_response_bytes`
-- Notes: requires `network.enabled=true`; enforces `http/https`, domain allowlist, localhost policy, redirect re-check, and response size caps.
+- Notes: requires `network.enabled=true`; enforces `http/https`, domain allowlist, localhost/private-network policy, DNS re-resolution checks, redirect re-check, and response size caps.
 
 ## Utility and Shell
 
