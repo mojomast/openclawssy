@@ -153,14 +153,4 @@ func openChatStore(workspace, configuredPath string) (*chatstore.Store, error) {
 	return chatstore.NewStore(path)
 }
 
-func valueString(args map[string]any, key string) string {
-	raw, ok := args[key]
-	if !ok || raw == nil {
-		return ""
-	}
-	value, ok := raw.(string)
-	if !ok {
-		return ""
-	}
-	return value
-}
+

@@ -661,6 +661,7 @@ func isProcessExitStatusError(err error) bool {
 	return strings.HasPrefix(text, "exit status ")
 }
 
+
 func listFiles(root string, maxFiles int) ([]string, error) {
 	if maxFiles <= 0 {
 		maxFiles = defaultSearchMaxFiles
@@ -913,42 +914,6 @@ func splitContentLines(content string) ([]string, bool) {
 	return strings.Split(content, "\n"), hadTrailingNewline
 }
 
-func getString(args map[string]any, key string) (string, error) {
-	v, ok := args[key]
-	if !ok {
-		return "", fmt.Errorf("missing argument: %s", key)
-	}
-	s, ok := v.(string)
-	if !ok {
-		return "", fmt.Errorf("argument must be string: %s", key)
-	}
-	return s, nil
-}
-
-func getIntArg(args map[string]any, key string, fallback int) int {
-	v, ok := args[key]
-	if !ok {
-		return fallback
-	}
-	s := fmt.Sprintf("%v", v)
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return fallback
-	}
-	return n
-}
-
-func getBoolArg(args map[string]any, key string, fallback bool) bool {
-	v, ok := args[key]
-	if !ok {
-		return fallback
-	}
-	b, ok := v.(bool)
-	if !ok {
-		return fallback
-	}
-	return b
-}
 
 func guardWorkspaceControlPlaneFilename(workspace, targetAbs, agentID string) error {
 	base := strings.ToUpper(filepath.Base(targetAbs))
