@@ -100,6 +100,8 @@ func (s *Store) List() []Job {
 
 // ListUnsorted returns a list of jobs without sorting.
 // This is faster than List() and should be used when order doesn't matter.
+//
+// Deprecated: Use Iterate instead to avoid allocations.
 func (s *Store) ListUnsorted() []Job {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -110,6 +112,19 @@ func (s *Store) ListUnsorted() []Job {
 		jobs = append(jobs, job)
 	}
 	return jobs
+}
+
+// Iterate iterates over all jobs in the store without sorting or allocating a slice.
+// This is the most efficient way to process all jobs.
+// The callback is executed while holding the store lock, so it must be fast and not call other store methods.
+func (s *Store) Iterate(fn func(Job)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = s.reloadLocked()
+
+	for _, job := range s.jobs {
+		fn(job)
+	}
 }
 
 func (s *Store) Remove(id string) error {
@@ -356,26 +371,33 @@ func (e *Executor) check(now time.Time) {
 	}
 	isFirstCheck := e.firstCheck
 	e.firstCheck = false
-	jobs := e.store.ListUnsorted()
+
 	type dueJob struct {
 		job             Job
 		disableAfterRun bool
 	}
-	dueJobs := make([]dueJob, 0, len(jobs))
-	for _, job := range jobs {
+	var dueJobs []dueJob
+	var missedUpdates []jobUpdate
+
+	e.store.Iterate(func(job Job) {
 		if !job.Enabled {
-			continue
+			return
 		}
 		due, disableAfterRun, err := nextDue(job, now)
 		if err != nil || !due {
-			continue
+			return
 		}
 		if isFirstCheck && !e.catchUp && isMissedRun(job, now) {
-			_ = e.store.updateAfterRun(job, now, disableAfterRun)
-			continue
+			missedUpdates = append(missedUpdates, jobUpdate{JobID: job.ID, RunAt: now, Disable: disableAfterRun})
+			return
 		}
 		dueJobs = append(dueJobs, dueJob{job: job, disableAfterRun: disableAfterRun})
+	})
+
+	if len(missedUpdates) > 0 {
+		_ = e.store.batchUpdateAfterRun(missedUpdates)
 	}
+
 	if len(dueJobs) == 0 {
 		return
 	}
