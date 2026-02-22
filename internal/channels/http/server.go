@@ -2,9 +2,11 @@ package httpchannel
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"path"
 	"sort"
@@ -15,7 +17,17 @@ import (
 	"openclawssy/internal/config"
 )
 
-const defaultAddr = "127.0.0.1:8080"
+const (
+	defaultAddr                    = "127.0.0.1:8080"
+	maxRunRequestBodyBytes         = 256 * 1024
+	maxChatMessageRequestBodyBytes = 64 * 1024
+	defaultHTTPReadHeaderTimeout   = 5 * time.Second
+	defaultHTTPReadTimeout         = 15 * time.Second
+	defaultHTTPWriteTimeout        = 60 * time.Second
+	defaultHTTPIdleTimeout         = 120 * time.Second
+	listSortCreatedDesc            = "created_desc"
+	listSortCreatedAsc             = "created_asc"
+)
 
 var sseHeartbeatInterval = 15 * time.Second
 
@@ -126,6 +138,7 @@ func NewServer(cfg Config) *Server {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/healthz", s.handleHealthz)
 	mux.HandleFunc("/v1/runs/events/", s.handleRunEvents)
 	mux.HandleFunc("/v1/runs", s.handleRuns)
 	mux.HandleFunc("/v1/runs/", s.handleRunByID)
@@ -135,8 +148,12 @@ func NewServer(cfg Config) *Server {
 	}
 
 	s.httpServer = &http.Server{
-		Addr:    addr,
-		Handler: s.authMiddleware(mux),
+		Addr:              addr,
+		Handler:           s.authMiddleware(mux),
+		ReadHeaderTimeout: defaultHTTPReadHeaderTimeout,
+		ReadTimeout:       defaultHTTPReadTimeout,
+		WriteTimeout:      defaultHTTPWriteTimeout,
+		IdleTimeout:       defaultHTTPIdleTimeout,
 	}
 
 	return s
@@ -153,22 +170,23 @@ func (s *Server) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req ChatMessage
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "request.invalid_json", "invalid json body", 0)
+	if err := decodeJSONRequest(w, r, &req, maxChatMessageRequestBodyBytes); err != nil {
+		writeJSONDecodeError(w, err, maxChatMessageRequestBodyBytes)
 		return
 	}
+
+	req.UserID = strings.TrimSpace(req.UserID)
+	req.Message = strings.TrimSpace(req.Message)
 	if req.UserID == "" || req.Message == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "request.invalid_input", "user_id and message are required", 0)
 		return
 	}
-	if strings.TrimSpace(req.ThinkingMode) != "" {
-		normalized := config.NormalizeThinkingMode(req.ThinkingMode)
-		if !config.IsValidThinkingMode(normalized) {
-			writeErrorJSON(w, http.StatusBadRequest, "request.invalid_thinking_mode", "thinking_mode must be one of never|on_error|always", 0)
-			return
-		}
-		req.ThinkingMode = normalized
+	thinkingMode, err := normalizeThinkingModeFromRequest(req.ThinkingMode)
+	if err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "request.invalid_thinking_mode", err.Error(), 0)
+		return
 	}
+	req.ThinkingMode = thinkingMode
 
 	req.RoomID = strings.TrimSpace(req.RoomID)
 	if req.RoomID == "" {
@@ -248,6 +266,19 @@ func (s *Server) Addr() string {
 	return s.addr
 }
 
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "ts": time.Now().UTC()})
+}
+
 func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
@@ -262,22 +293,23 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePostRun(w http.ResponseWriter, r *http.Request) {
 
 	var req postRunRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "request.invalid_json", "invalid json body", 0)
+	if err := decodeJSONRequest(w, r, &req, maxRunRequestBodyBytes); err != nil {
+		writeJSONDecodeError(w, err, maxRunRequestBodyBytes)
 		return
 	}
+
+	req.AgentID = strings.TrimSpace(req.AgentID)
+	req.Message = strings.TrimSpace(req.Message)
 	if req.AgentID == "" || req.Message == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "request.invalid_input", "agent_id and message are required", 0)
 		return
 	}
-	if strings.TrimSpace(req.ThinkingMode) != "" {
-		normalized := config.NormalizeThinkingMode(req.ThinkingMode)
-		if !config.IsValidThinkingMode(normalized) {
-			writeErrorJSON(w, http.StatusBadRequest, "request.invalid_thinking_mode", "thinking_mode must be one of never|on_error|always", 0)
-			return
-		}
-		req.ThinkingMode = normalized
+	thinkingMode, err := normalizeThinkingModeFromRequest(req.ThinkingMode)
+	if err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "request.invalid_thinking_mode", err.Error(), 0)
+		return
 	}
+	req.ThinkingMode = thinkingMode
 
 	created, err := QueueRunWithOptions(
 		r.Context(),
@@ -306,7 +338,13 @@ func (s *Server) handlePostRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	statusFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
+	agentFilter := strings.TrimSpace(r.URL.Query().Get("agent_id"))
 	limit, offset, err := parseListPagination(r, 50, 500)
+	if err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "request.invalid_input", err.Error(), 0)
+		return
+	}
+	sortOrder, err := parseListSortOrder(r.URL.Query().Get("sort"))
 	if err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, "request.invalid_input", err.Error(), 0)
 		return
@@ -323,14 +361,12 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 		if statusFilter != "" && strings.ToLower(strings.TrimSpace(run.Status)) != statusFilter {
 			continue
 		}
+		if agentFilter != "" && !strings.EqualFold(strings.TrimSpace(run.AgentID), agentFilter) {
+			continue
+		}
 		filtered = append(filtered, run)
 	}
-	sort.Slice(filtered, func(i, j int) bool {
-		if filtered[i].CreatedAt.Equal(filtered[j].CreatedAt) {
-			return filtered[i].ID < filtered[j].ID
-		}
-		return filtered[i].CreatedAt.Before(filtered[j].CreatedAt)
-	})
+	sortRunsByCreated(filtered, sortOrder)
 
 	total := len(filtered)
 	if offset > total {
@@ -344,10 +380,12 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"runs":   page,
-		"total":  total,
-		"limit":  limit,
-		"offset": offset,
+		"runs":     page,
+		"total":    total,
+		"limit":    limit,
+		"offset":   offset,
+		"sort":     sortOrder,
+		"agent_id": agentFilter,
 	})
 }
 
@@ -369,6 +407,69 @@ func parseListPagination(r *http.Request, defaultLimit, maxLimit int) (int, int,
 		offset = parsed
 	}
 	return limit, offset, nil
+}
+
+func parseListSortOrder(raw string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return listSortCreatedDesc, nil
+	}
+	switch value {
+	case listSortCreatedDesc, listSortCreatedAsc:
+		return value, nil
+	default:
+		return "", fmt.Errorf("sort must be one of %s|%s", listSortCreatedDesc, listSortCreatedAsc)
+	}
+}
+
+func sortRunsByCreated(runs []Run, sortOrder string) {
+	sort.Slice(runs, func(i, j int) bool {
+		if runs[i].CreatedAt.Equal(runs[j].CreatedAt) {
+			return runs[i].ID < runs[j].ID
+		}
+		if sortOrder == listSortCreatedAsc {
+			return runs[i].CreatedAt.Before(runs[j].CreatedAt)
+		}
+		return runs[i].CreatedAt.After(runs[j].CreatedAt)
+	})
+}
+
+func normalizeThinkingModeFromRequest(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", nil
+	}
+	normalized := config.NormalizeThinkingMode(value)
+	if !config.IsValidThinkingMode(normalized) {
+		return "", errors.New("thinking_mode must be one of never|on_error|always")
+	}
+	return normalized, nil
+}
+
+func decodeJSONRequest(w http.ResponseWriter, r *http.Request, target any, maxBytes int) error {
+	reader := r.Body
+	if maxBytes > 0 {
+		reader = http.MaxBytesReader(w, r.Body, int64(maxBytes))
+	}
+
+	decoder := json.NewDecoder(reader)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return errors.New("json body must contain exactly one object")
+	}
+	return nil
+}
+
+func writeJSONDecodeError(w http.ResponseWriter, err error, maxBytes int) {
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		writeErrorJSON(w, http.StatusRequestEntityTooLarge, "request.body_too_large", fmt.Sprintf("request body exceeds %d bytes", maxBytes), 0)
+		return
+	}
+	writeErrorJSON(w, http.StatusBadRequest, "request.invalid_json", "invalid json body", 0)
 }
 
 func writeErrorJSON(w http.ResponseWriter, status int, code, message string, retryAfter time.Duration) {
@@ -557,7 +658,7 @@ func isValidRunID(value string) bool {
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isUnauthenticatedDashboardRoute(r.Method, r.URL.Path) {
+		if isUnauthenticatedRoute(r.Method, r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -575,7 +676,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 
 		token := strings.TrimSpace(parts[1])
-		if token == "" || token != s.bearerToken {
+		if token == "" || !secureTokenEquals(token, s.bearerToken) {
 			http.Error(w, "invalid bearer token", http.StatusUnauthorized)
 			return
 		}
@@ -584,9 +685,19 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func isUnauthenticatedDashboardRoute(method, requestPath string) bool {
+func secureTokenEquals(got, expected string) bool {
+	if len(got) != len(expected) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1
+}
+
+func isUnauthenticatedRoute(method, requestPath string) bool {
 	if method != http.MethodGet && method != http.MethodHead {
 		return false
+	}
+	if requestPath == "/v1/healthz" {
+		return true
 	}
 	if requestPath == "/dashboard" || requestPath == "/dashboard-legacy" {
 		return true
