@@ -34,7 +34,7 @@ test-race:
 
 test-security:
 	@if [ -n "$(PKGS)" ]; then \
-		go test ./internal/channels/http ./internal/policy ./internal/tools -run 'Security|SSRF|Traversal|Symlink|Protected|Auth|Redact|Sandbox|PathTraversal'; \
+		go test ./internal/channels/http ./internal/policy ./internal/tools -run 'Security|SSRF|Traversal|Symlink|Protected|Auth|Redact|Sandbox|PathTraversal|Strict|Body|Timeout|RestrictedIP'; \
 	else \
 		printf "no packages to test\n"; \
 	fi

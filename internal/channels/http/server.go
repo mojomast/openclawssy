@@ -686,10 +686,22 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 }
 
 func secureTokenEquals(got, expected string) bool {
-	if len(got) != len(expected) {
-		return false
+	gotLen := len(got)
+	expectedLen := len(expected)
+
+	lenEqual := subtle.ConstantTimeEq(int32(gotLen), int32(expectedLen))
+
+	maxLen := gotLen
+	if expectedLen > maxLen {
+		maxLen = expectedLen
 	}
-	return subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1
+	gotBuf := make([]byte, maxLen)
+	expectedBuf := make([]byte, maxLen)
+	copy(gotBuf, got)
+	copy(expectedBuf, expected)
+
+	contentEqual := subtle.ConstantTimeCompare(gotBuf, expectedBuf)
+	return (lenEqual & contentEqual) == 1
 }
 
 func isUnauthenticatedRoute(method, requestPath string) bool {

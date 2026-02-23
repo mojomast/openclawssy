@@ -329,7 +329,10 @@ func httpRequestBody(args map[string]any) ([]byte, error) {
 
 func createSafeTransport(cfg config.NetworkConfig) *http.Transport {
 	return &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
+		// Do not honor environment proxy settings for http.request. We validate the
+		// resolved destination IPs directly and want those checks to apply to the
+		// final host, not just an intermediary proxy endpoint.
+		Proxy: nil,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(addr)
 			if err != nil {
@@ -341,25 +344,31 @@ func createSafeTransport(cfg config.NetworkConfig) *http.Transport {
 				return nil, err
 			}
 
-			var safeIP net.IP
-			for _, ip := range ips {
-				if isRestrictedIP(ip, cfg) {
-					return nil, fmt.Errorf("blocked: host %q resolves to restricted loopback/private IP %s", host, ip)
-				}
-				if safeIP == nil {
-					safeIP = ip
-				}
-			}
-
-			if safeIP == nil {
-				return nil, fmt.Errorf("blocked: host %q resolves to no allowed IPs", host)
+			allowedIPs, blockedIPs := filterAllowedIPs(ips, cfg)
+			if len(allowedIPs) == 0 {
+				return nil, fmt.Errorf("blocked: host %q resolves to no allowed IPs (blocked=%v)", host, ipStrings(blockedIPs))
 			}
 
 			d := net.Dialer{
 				Timeout:   30 * time.Second,
 				KeepAlive: 30 * time.Second,
 			}
-			return d.DialContext(ctx, network, net.JoinHostPort(safeIP.String(), port))
+
+			var lastErr error
+			for _, ip := range allowedIPs {
+				conn, err := d.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+				if err == nil {
+					return conn, nil
+				}
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				lastErr = err
+			}
+			if lastErr == nil {
+				lastErr = fmt.Errorf("failed to connect to any allowed IPs for host %q", host)
+			}
+			return nil, lastErr
 		},
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
@@ -369,19 +378,52 @@ func createSafeTransport(cfg config.NetworkConfig) *http.Transport {
 	}
 }
 
+func filterAllowedIPs(ips []net.IP, cfg config.NetworkConfig) (allowed []net.IP, blocked []net.IP) {
+	for _, ip := range ips {
+		if isRestrictedIP(ip, cfg) {
+			blocked = append(blocked, ip)
+			continue
+		}
+		allowed = append(allowed, ip)
+	}
+	return allowed, blocked
+}
+
+func ipStrings(ips []net.IP) []string {
+	if len(ips) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		out = append(out, ip.String())
+	}
+	return out
+}
+
 func isRestrictedIP(ip net.IP, cfg config.NetworkConfig) bool {
 	if ip == nil {
 		return true
 	}
-	if ip.IsUnspecified() || ip.IsMulticast() {
-		return true
-	}
+
 	if ip.IsLoopback() {
 		return !cfg.AllowLocalhosts
 	}
-	if ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+
+	if ip.IsPrivate() || ip.IsLinkLocalUnicast() {
 		return !cfg.AllowPrivateNetworks
 	}
+
+	// Multicast and unspecified addresses are never valid destinations for
+	// outbound tool traffic, regardless of localhost/private overrides.
+	if ip.IsMulticast() || ip.IsUnspecified() || ip.IsLinkLocalMulticast() {
+		return true
+	}
+
+	// Block broadcast and other non-global-unicast addresses.
+	if !ip.IsGlobalUnicast() {
+		return true
+	}
+
 	return false
 }
 

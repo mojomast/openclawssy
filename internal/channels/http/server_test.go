@@ -747,3 +747,25 @@ func TestServer_ChatRejectsUnknownJSONFields(t *testing.T) {
 		t.Fatalf("unexpected error code: %+v", resp)
 	}
 }
+
+func TestSecureTokenEquals(t *testing.T) {
+	tests := []struct {
+		name     string
+		got      string
+		expected string
+		want     bool
+	}{
+		{name: "exact match", got: "token-123", expected: "token-123", want: true},
+		{name: "different content", got: "token-124", expected: "token-123", want: false},
+		{name: "different length", got: "token-12", expected: "token-123", want: false},
+		{name: "empty", got: "", expected: "", want: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := secureTokenEquals(tc.got, tc.expected); got != tc.want {
+				t.Fatalf("secureTokenEquals(%q, %q)=%t, want %t", tc.got, tc.expected, got, tc.want)
+			}
+		})
+	}
+}
