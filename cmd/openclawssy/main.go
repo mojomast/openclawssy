@@ -103,9 +103,10 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 	if serveCfg.SandboxProvider != "" {
 		runtimeCfg.Sandbox.Provider = serveCfg.SandboxProvider
 	}
-	// When sandbox is active but provider is still "none", default to docker.
+	// When sandbox is active but provider is still "none", default to local.
+	// Use "docker" only when explicitly requested (native host deployments).
 	if runtimeCfg.Sandbox.Active && runtimeCfg.Sandbox.Provider == "none" {
-		runtimeCfg.Sandbox.Provider = "docker"
+		runtimeCfg.Sandbox.Provider = "local"
 	}
 	runtimeCfg.ApplyDefaults()
 	if err := runtimeCfg.Validate(); err != nil {
@@ -742,13 +743,14 @@ func handleSetup(args []string) int {
 		}
 	}
 
-	sandboxEnabled := prompt(in, "Enable Docker sandbox for isolated agent runs? (recommended) [Y/n]", "Y")
+	sandboxEnabled := prompt(in, "Enable sandbox for isolated agent runs? (recommended) [Y/n]", "Y")
 	if !strings.EqualFold(sandboxEnabled, "n") {
 		cfg.Sandbox.Active = true
-		cfg.Sandbox.Provider = "docker"
+		cfg.Sandbox.Provider = "local"
 		cfg.Shell.EnableExec = true
-		fmt.Println("Docker sandbox enabled. Agent runs will execute inside isolated containers.")
-		fmt.Println("Ensure Docker is installed and /var/run/docker.sock is accessible.")
+		fmt.Println("Sandbox enabled. Agent runs will execute with filesystem isolation.")
+		fmt.Println("For Docker deployment, the container itself is the sandbox.")
+		fmt.Println("For native host deployment, use --sandbox-provider docker to run agents in Docker containers.")
 	}
 
 	if apiKey != "" {
@@ -777,6 +779,8 @@ func handleSetup(args []string) int {
 	fmt.Println("1) openclawssy doctor -v")
 	if cfg.Sandbox.Active && cfg.Sandbox.Provider == "docker" {
 		fmt.Println("2) openclawssy serve --token <token> --sandbox-active --sandbox-provider docker")
+	} else if cfg.Sandbox.Active {
+		fmt.Println("2) openclawssy serve --token <token> --sandbox-active")
 		fmt.Println("   Or use Docker: docker-compose up")
 	} else {
 		fmt.Println("2) openclawssy serve --token <token>")

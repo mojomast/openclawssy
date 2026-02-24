@@ -1085,16 +1085,16 @@ summary{cursor:pointer;color:#9db2d4}
 <div class="field">
 <label for="cfgSandboxProvider">Sandbox provider</label>
 <select id="cfgSandboxProvider" onchange="updateRawPreview()">
-<option value="docker">docker (recommended)</option>
-<option value="local">local</option>
+<option value="local">local (recommended)</option>
+<option value="docker">docker</option>
 <option value="none">none</option>
 </select>
 </div>
 <div class="field full">
 <label>Sandbox notes</label>
 <div style="font-size:0.85em;color:#9db2d4;line-height:1.4">
-Use <code>docker</code> for fully isolated agent runs inside per-agent containers (recommended).<br/>
-Use <code>local</code> for shell access in this machine environment (including tools like <code>docker</code> if they are installed).<br/>
+Use <code>local</code> for isolated agent runs (recommended for Docker deployments — the container is the sandbox).<br/>
+Use <code>docker</code> for native host deployments where agents should run in separate Docker containers (requires Docker).<br/>
 Use <code>none</code> to disable sandbox execution tools.
 </div>
 </div>
@@ -1328,7 +1328,7 @@ function onSandboxActiveChange(){
 const isActive=!!byId('cfgSandboxActive').checked;
 const providerInput=byId('cfgSandboxProvider');
 if(!providerInput)return;
-if(isActive&&providerInput.value==='none')providerInput.value='docker';
+if(isActive&&providerInput.value==='none')providerInput.value='local';
 updateRawPreview();
 }
 
@@ -1356,7 +1356,7 @@ const sandboxProvider=(cfg.sandbox.provider||'none').toLowerCase();
 if(sandboxProvider==='local'||sandboxProvider==='none'||sandboxProvider==='docker'){
 byId('cfgSandboxProvider').value=sandboxProvider;
 }else{
-byId('cfgSandboxProvider').value='docker';
+byId('cfgSandboxProvider').value='local';
 }
 byId('cfgShellExecEnabled').checked=!!cfg.shell.enable_exec;
 byId('cfgChatUsers').value=listToText(cfg.chat.allow_users);

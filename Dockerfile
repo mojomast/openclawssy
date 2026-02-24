@@ -28,7 +28,6 @@ RUN apk add --no-cache \
     ca-certificates \
     coreutils \
     curl \
-    docker-cli \
     findutils \
     gawk \
     git \

@@ -2,22 +2,18 @@
 
 ## Quick Start
 
-Run Openclawssy with Docker sandbox isolation in a single command:
+Run Openclawssy with sandbox isolation in a single command:
 
 ```bash
 docker run \
   -e ZAI_API_KEY=<your_key> \
-  -v openclawssy_ws_default:/workspace \
   -v ~/.openclawssy:/app/.openclawssy \
-  -v /var/run/docker.sock:/var/run/docker.sock \
   -p 8080:8080 \
   ghcr.io/mojomast/openclawssy:latest \
-  serve --token change-me --sandbox-active --sandbox-provider docker
+  serve --token change-me --sandbox-active --sandbox-provider local
 ```
 
-This starts the server on port 8080 with the Docker sandbox provider enabled. Each agent runs commands inside an isolated container — no host filesystem mounts leak into the agent environment.
-
-> **Docker socket is required.** The `-v /var/run/docker.sock:/var/run/docker.sock` mount is not optional. The Openclawssy process needs access to the Docker daemon so it can spawn child containers for each agent's sandbox. Without it, the Docker sandbox provider cannot create or manage agent containers.
+The container itself IS the sandbox. Agent commands run inside the container with filesystem isolation enforced by the `local` provider -- no Docker socket, no child containers, no Docker-in-Docker. The container boundary provides the isolation.
 
 ## Quick Start with ZAI Coding Plan
 
@@ -46,7 +42,7 @@ Openclawssy is pre-configured to use **ZAI's GLM-4.7 Coding Plan** as the defaul
    docker-compose up --build
    ```
 
-   The `docker-compose.yml` enables the Docker sandbox provider by default. Agent commands run inside isolated child containers rather than on the host.
+   The container provides sandbox isolation by default. Agent commands run inside the container -- not on the host, not in nested child containers.
 
 4. **Access the dashboard:**
    - Local: http://localhost:8081/dashboard
@@ -58,52 +54,55 @@ Openclawssy is pre-configured to use **ZAI's GLM-4.7 Coding Plan** as the defaul
 
 - **Chat Interface**: Built-in chat UI in the dashboard
 - **ZAI Integration**: Pre-configured for GLM-4.7 Coding Plan
-- **Docker Sandbox**: Agent commands run in isolated per-agent containers
+- **Container Sandbox**: The Docker container IS the sandbox -- no Docker-in-Docker
 - **Secure Setup**: API key validation on startup
-- **Persistent Storage**: Configuration stored in named Docker volumes
+- **Persistent Storage**: Configuration stored in host-mounted volume
 - **Shell-ready runtime image**: Includes `bash`, `python3`/`pip`, `node`/`npm`, `git`, `curl`, `wget`, `jq`, and common GNU utilities
 - **Network diagnostics included**: `nmap`, `dig`/`nslookup`, `ip`, `ss`, `netstat`, `traceroute`, `tcpdump`, `mtr`, `nc`, `socat`, and related tools
 - **Installer-script compatibility**: Includes `openrc` tools (`rc-update`) so common curl-piped installers on Alpine fail less often
 - **Long-run progress UX**: Dashboard chat keeps polling with elapsed time + tool progress instead of stalling on manual refresh prompts
 - **Failure escalation flow**: After repeated tool failures, the agent shifts to recovery mode and then asks for user guidance with attempted steps/errors/output
 
-## Docker Sandbox
+## Sandbox Architecture
 
-The Docker sandbox provider runs each agent's commands inside an isolated container. This is the recommended (and default) execution mode.
+### Container-as-Sandbox (Docker Deployment)
 
-### How It Works
+When you deploy Openclawssy via Docker, the container itself provides the isolation:
 
-- **Isolated containers**: Each agent gets its own container based on the configured sandbox image (default: `ubuntu:24.04`). Commands execute inside the container, not on the host.
-- **Named volumes**: Workspace data is stored in named Docker volumes following the pattern `openclawssy_ws_<agentId>`. For example, the default agent uses `openclawssy_ws_default`. These volumes are managed by Docker and persist across container restarts.
-- **Network disabled by default**: Agent containers have networking disabled for security. This prevents agent code from making outbound connections or accessing internal services. Enable it only when the agent genuinely needs network access.
-- **Resource limits**: CPU and memory limits are configurable per agent container. Defaults are 1.0 CPU and 2048 MB of memory. Adjust these based on your workload.
-- **No host filesystem exposure**: The agent environment never mounts host directories. All file operations happen inside the named volume, which the host cannot accidentally leak into.
+- **No Docker socket mount** -- the container cannot access the host Docker daemon
+- **No child containers** -- there is no Docker-in-Docker or sibling container spawning
+- **No `docker-cli`** -- the runtime image does not include Docker CLI tools
+- The `local` sandbox provider runs agent commands directly inside the container
+- Filesystem operations are confined to the container's workspace
+- The container boundary (namespaces, cgroups) is the isolation boundary
+
+This is the simplest and most secure Docker deployment model.
+
+### Docker Provider (Native Host Deployment)
+
+If you run the openclawssy binary directly on your host (not in a container), you can use the `docker` sandbox provider to run agent commands inside isolated Docker containers:
+
+```bash
+./bin/openclawssy serve --token change-me --sandbox-active --sandbox-provider docker
+```
+
+This requires Docker to be installed on the host. The binary communicates with the Docker daemon to create per-agent sandbox containers. This is the correct use case for the `docker` provider.
 
 ### Configuration
-
-All sandbox settings can be controlled via environment variables or CLI flags:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SANDBOX_ACTIVE` | `true` | Enable sandbox isolation |
-| `SANDBOX_PROVIDER` | `docker` | Sandbox provider (`docker` or `local`) |
-| `SANDBOX_IMAGE` | `ubuntu:24.04` | Base image for agent containers |
-| `SANDBOX_CPU_LIMIT` | `1.0` | CPU limit per agent container |
-| `SANDBOX_MEMORY_LIMIT_MB` | `2048` | Memory limit in MB per agent container |
-| `SANDBOX_NETWORK_ENABLED` | `false` | Enable network access in sandbox containers |
+| `SANDBOX_PROVIDER` | `local` | Sandbox provider (`local` for Docker deployment, `docker` for native host) |
 
-### Legacy Local Sandbox
+Docker-specific settings (only relevant when using `--sandbox-provider docker` on native host):
 
-Users who still need direct host filesystem access can pass `--sandbox-provider local` to bypass container isolation. **This is not recommended** — the local provider runs agent commands directly on the host with no resource limits and no filesystem isolation. Use it only for debugging or in trusted single-user environments where you accept the risk.
-
-```bash
-docker run \
-  -e ZAI_API_KEY=<your_key> \
-  -v ~/.openclawssy:/app/.openclawssy \
-  -p 8080:8080 \
-  ghcr.io/mojomast/openclawssy:latest \
-  serve --token change-me --sandbox-provider local
-```
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `sandbox.docker.image` | `ubuntu:24.04` | Base image for agent containers |
+| `sandbox.docker.cpu_limit` | `1.0` | CPU limit per agent container |
+| `sandbox.docker.memory_limit_mb` | `2048` | Memory limit in MB per agent container |
+| `sandbox.docker.network_enabled` | `false` | Enable network access in sandbox containers |
 
 ## Environment Variables
 
@@ -112,12 +111,6 @@ docker run \
 | `ZAI_API_KEY` | Yes | - | Your Z.AI API key for GLM-4.7 |
 | `OPENCLAWSSY_TOKEN` | No | `change-me` | Bearer token for API/dashboard access |
 | `DISCORD_BOT_TOKEN` | No | - | Optional Discord bot integration |
-| `SANDBOX_ACTIVE` | No | `true` | Enable sandbox isolation |
-| `SANDBOX_PROVIDER` | No | `docker` | Sandbox provider (`docker` or `local`) |
-| `SANDBOX_IMAGE` | No | `ubuntu:24.04` | Base image for agent containers |
-| `SANDBOX_CPU_LIMIT` | No | `1.0` | CPU limit per agent container |
-| `SANDBOX_MEMORY_LIMIT_MB` | No | `2048` | Memory limit in MB per agent container |
-| `SANDBOX_NETWORK_ENABLED` | No | `false` | Enable network access in sandbox containers |
 
 For deeper network diagnostics in the container (for example `tcpdump`/advanced `nmap` modes), you may also need extra capabilities:
 
@@ -181,12 +174,6 @@ Openclawssy is configured to be accessible over Tailscale for secure remote acce
 - Rebuild with the updated image: `docker-compose build --no-cache openclawssy`
 - Restart the service: `docker-compose up -d`
 - Verify tools are present: `docker-compose exec openclawssy sh -lc 'bash --version && python3 --version && node --version'`
-
-**Sandbox containers not starting:**
-- Verify the Docker socket is mounted: check that `-v /var/run/docker.sock:/var/run/docker.sock` is present in your run command or `docker-compose.yml`
-- Check Docker daemon is running: `docker info`
-- Review sandbox logs: `docker-compose logs -f openclawssy | grep sandbox`
-- List sandbox volumes: `docker volume ls | grep openclawssy_ws_`
 
 **Tool calls keep failing in loops:**
 - The runner now auto-enters recovery mode after repeated failures and escalates with a guidance request after additional failures.

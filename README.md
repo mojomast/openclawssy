@@ -58,14 +58,14 @@ Come chat about Openclawssy and other Ussyverse projects.
 
 ### Option A: Docker (Recommended)
 
-Docker is the fastest way to get started. Agents run in isolated containers with no host access by default.
+Docker is the fastest way to get started. The container itself IS the sandbox -- no Docker-in-Docker, no socket mounts, no child containers.
 
 ```bash
 docker run -d \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v openclawssy-data:/data \
+  -v openclawssy-data:/app/.openclawssy \
   -p 8080:8080 \
-  -e AUTH_TOKEN=change-me \
+  -e ZAI_API_KEY=your-key-here \
+  -e OPENCLAWSSY_TOKEN=change-me \
   ghcr.io/openclawssy/openclawssy:latest
 ```
 
@@ -75,7 +75,7 @@ Or use `docker-compose`:
 docker compose up -d
 ```
 
-The Docker sandbox provider is enabled by default in the container image. See [`DOCKER.md`](DOCKER.md) for full configuration options, environment variables, and volume details.
+See [`DOCKER.md`](DOCKER.md) for full configuration options, environment variables, and volume details.
 
 ### Option B: Build from Source
 

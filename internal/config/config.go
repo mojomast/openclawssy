@@ -303,7 +303,7 @@ func (c *Config) ApplyDefaults() {
 	d := Default()
 	if c.Sandbox.Provider == "" {
 		if c.Sandbox.Active {
-			c.Sandbox.Provider = "docker"
+			c.Sandbox.Provider = "local"
 		} else {
 			c.Sandbox.Provider = d.Sandbox.Provider
 		}

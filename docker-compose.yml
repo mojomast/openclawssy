@@ -16,27 +16,16 @@ services:
       
       # Optional: Discord bot token for Discord integration
       # - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
-
-      # Docker sandbox configuration
-      - SANDBOX_ACTIVE=${SANDBOX_ACTIVE:-true}
-      - SANDBOX_PROVIDER=${SANDBOX_PROVIDER:-docker}
-      - SANDBOX_IMAGE=${SANDBOX_IMAGE:-ubuntu:24.04}
-      - SANDBOX_CPU_LIMIT=${SANDBOX_CPU_LIMIT:-1.0}
-      - SANDBOX_MEMORY_LIMIT_MB=${SANDBOX_MEMORY_LIMIT_MB:-2048}
-      - SANDBOX_NETWORK_ENABLED=${SANDBOX_NETWORK_ENABLED:-false}
     volumes:
       # Persist configuration and secrets across runs
       - ./.openclawssy:/app/.openclawssy
-      # Mount Docker socket so the sandbox provider can spawn child containers
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Named volume for the default agent workspace (inside parent container)
-      - openclawssy_ws_default:/workspace
     # Optional: enable advanced network diagnostics (tcpdump, some nmap modes)
     # cap_add:
     #   - NET_ADMIN
     #   - NET_RAW
-    # The entrypoint script handles initial setup and enables Docker sandbox
-    command: ["serve", "--token", "${OPENCLAWSSY_TOKEN:-change-me}", "--addr", "0.0.0.0:8080", "--sandbox-active", "--sandbox-provider", "docker"]
+    # The container IS the sandbox — no Docker socket or child containers needed.
+    # The local provider runs agent commands directly inside this container.
+    command: ["serve", "--token", "${OPENCLAWSSY_TOKEN:-change-me}", "--addr", "0.0.0.0:8080", "--sandbox-active", "--sandbox-provider", "local"]
     
     # Health check
     healthcheck:
@@ -45,6 +34,3 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-
-volumes:
-  openclawssy_ws_default:
