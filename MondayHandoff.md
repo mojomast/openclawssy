@@ -103,7 +103,7 @@ OPENCLAWSSY_TOKEN=your-secure-token
 ### Start the Server
 ```bash
 cd ~/projects/openclawssy
-sudo docker-compose up --build -d
+sudo docker compose up --build -d
 ```
 
 ### Access Dashboard

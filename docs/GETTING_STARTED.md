@@ -50,7 +50,7 @@ Setup precedence is: env var value, then existing config value/default via promp
 > **Docker sandbox:** If you chose the Docker sandbox provider, you have two
 > options:
 >
-> - **Docker deployment (simplest):** Run Openclawssy via `docker-compose` —
+> - **Docker deployment (simplest):** Run Openclawssy via `docker compose` —
 >   see [DOCKER.md](../DOCKER.md). The backend spawns a separate sandbox
 >   container for each agent's workspace via the mounted Docker socket.
 > - **Native host:** Run the binary directly with

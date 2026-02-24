@@ -47,7 +47,7 @@ Openclawssy is pre-configured to use **ZAI's GLM-4.7 Coding Plan** as the defaul
 
 3. **Build and run:**
    ```bash
-   docker-compose up --build
+   docker compose up --build
    ```
 
 4. **Access the dashboard:**
@@ -233,26 +233,26 @@ Openclawssy is configured to be accessible over Tailscale for secure remote acce
 
 **Container exits immediately:**
 - Check that `ZAI_API_KEY` is set in your `.env` file
-- Run `docker-compose logs` to see error messages
+- Run `docker compose logs` to see error messages
 
 **Can't access dashboard:**
-- Verify the container is running: `docker-compose ps`
+- Verify the container is running: `docker compose ps`
 - Check the token matches what you set in `.env`
-- View logs: `docker-compose logs -f`
+- View logs: `docker compose logs -f`
 
 **API errors:**
 - Verify your ZAI API key is valid at https://z.ai
-- Check network connectivity: `docker-compose exec openclawssy ping api.z.ai`
+- Check network connectivity: `docker compose exec openclawssy ping api.z.ai`
 
 **Shell commands fail with `bash`/`python` not found:**
-- Rebuild with the updated image: `docker-compose build --no-cache openclawssy`
-- Restart the service: `docker-compose up -d`
-- Verify tools are present: `docker-compose exec openclawssy sh -lc 'bash --version && python3 --version && node --version'`
+- Rebuild with the updated image: `docker compose build --no-cache openclawssy`
+- Restart the service: `docker compose up -d`
+- Verify tools are present: `docker compose exec openclawssy sh -lc 'bash --version && python3 --version && node --version'`
 
 **Sandbox containers not starting:**
 - Verify the Docker socket is mounted: check that `-v /var/run/docker.sock:/var/run/docker.sock` is present
 - Check Docker daemon is running: `docker info`
-- Review sandbox logs: `docker-compose logs -f openclawssy | grep sandbox`
+- Review sandbox logs: `docker compose logs -f openclawssy | grep sandbox`
 - List sandbox volumes: `docker volume ls | grep openclawssy_ws_`
 
 **"permission denied" on Docker socket:**
@@ -264,4 +264,4 @@ Openclawssy is configured to be accessible over Tailscale for secure remote acce
 - Review the returned attempted steps/errors/output, then provide a corrective instruction.
 
 **Verify network diagnostic tools are present:**
-- `docker-compose exec openclawssy sh -lc 'nmap --version && dig +short example.com && ip -br a && ss -tulpen | head -n 5'`
+- `docker compose exec openclawssy sh -lc 'nmap --version && dig +short example.com && ip -br a && ss -tulpen | head -n 5'`
