@@ -36,25 +36,30 @@ Input -> ExecuteWithInput
 
 ## Sandbox Provider Architecture
 
-All agent filesystem and shell operations are routed through a `sandbox.Provider` interface. Three implementations exist:
+All agent filesystem and shell operations are routed through a `sandbox.Provider` interface. Docker is the recommended provider when sandboxing is enabled. Three implementations exist:
 
-| Provider | Workspace | shell.exec | Use case |
-|----------|-----------|------------|----------|
-| `none`   | disabled  | denied     | No sandbox |
-| `local`  | host/container path | allowed | Docker deployment (container is the sandbox) or native host |
-| `docker` | `/workspace` inside container | runs via `docker exec` | Native host deployment only |
+| Provider | Workspace | shell.exec |
+|----------|-----------|------------|
+| `none`   | disabled  | denied     |
+| `local`  | host/container path | allowed |
+| `docker` | `/workspace` inside sandbox container | runs via `docker exec` |
 
-### Container-as-Sandbox (Docker Deployment)
+### Docker Provider: Two-Container Model
 
-When Openclawssy runs inside a Docker container (via `docker-compose` or `docker run`), the container itself IS the sandbox. The `local` provider is used because the container boundary already provides isolation:
-- No Docker socket is mounted
-- No child containers are spawned
-- No Docker-in-Docker of any kind
-- Agent commands execute directly inside the container
+The backend (API/engine) runs in one container. Each agent's workspace runs in a **separate sandbox container**. The backend talks to the host Docker daemon via the mounted Unix socket (`/var/run/docker.sock`) to create and manage sandbox containers.
 
-### Docker Provider Flow (Native Host Only)
+```text
+Backend container                    Sandbox container (per agent)
+┌─────────────────┐                 ┌──────────────────────┐
+│ Engine/API      │  docker exec    │ /workspace           │
+│                 │ ──────────────► │ network=none         │
+│ docker CLI      │  docker cp      │ cpu/memory limits    │
+│ /var/run/docker │                 │ sleep infinity       │
+│   .sock (mount) │                 │ named volume backing │
+└─────────────────┘                 └──────────────────────┘
+```
 
-When running the binary directly on a host (not in a container), the `docker` provider spawns isolated containers per agent:
+### Docker Provider Flow
 ```text
 Tool call (fs.write / shell.exec)
   -> engine: dockerResolvePath() enforces /workspace prefix
@@ -91,4 +96,4 @@ All endpoints require bearer auth (same token as the rest of the API).
 - Audit: `.openclawssy/agents/<agent>/audit/YYYY-MM-DD.jsonl` (buffered writes, periodic flush, run-end sync).
 - Chat sessions: persisted chat store files (session metadata + messages).
 - Scheduler: persisted jobs/state file with backup/restore safeguards.
-- Docker workspace: named volume `openclawssy_ws_<agent_id>` on Docker host (when provider=docker on native host).
+- Docker workspace: named volume `openclawssy_ws_<agent_id>` on Docker host (when provider=docker).

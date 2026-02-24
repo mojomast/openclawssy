@@ -19,13 +19,15 @@ services:
     volumes:
       # Persist configuration and secrets across runs
       - ./.openclawssy:/app/.openclawssy
+      # Docker socket — required so the backend can spawn sandbox containers.
+      # This is a Unix socket mount, not HTTP. The docker CLI inside the
+      # container talks to the host daemon directly through this socket.
+      - /var/run/docker.sock:/var/run/docker.sock
     # Optional: enable advanced network diagnostics (tcpdump, some nmap modes)
     # cap_add:
     #   - NET_ADMIN
     #   - NET_RAW
-    # The container IS the sandbox — no Docker socket or child containers needed.
-    # The local provider runs agent commands directly inside this container.
-    command: ["serve", "--token", "${OPENCLAWSSY_TOKEN:-change-me}", "--addr", "0.0.0.0:8080", "--sandbox-active", "--sandbox-provider", "local"]
+    command: ["serve", "--token", "${OPENCLAWSSY_TOKEN:-change-me}", "--addr", "0.0.0.0:8080", "--sandbox-active", "--sandbox-provider", "docker"]
     
     # Health check
     healthcheck:
