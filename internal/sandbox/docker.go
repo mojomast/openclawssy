@@ -59,11 +59,14 @@ type DockerProvider struct {
 	agentID       string
 	containerID   string // actual full ID once created
 	image         string
+	dockerHost    string
 	volumeName    string
 	containerName string
 	networkMode   string  // "none" by default
 	cpuLimit      float64 // 0 = no limit
 	memoryMB      int     // 0 = no limit
+	hardened      bool
+	pidsLimit     int
 	extraEnv      []string
 	pullPolicy    string // "always", "if-not-present", "never"
 
@@ -96,17 +99,38 @@ func NewDockerProvider(agentID string, cfg config.DockerSandboxConfig) (*DockerP
 		networkMode = "bridge"
 	}
 
+	dockerHost := strings.TrimSpace(cfg.Host)
+	if cfg.RequireDedicatedDaemon {
+		if dockerHost == "" {
+			return nil, errors.New("sandbox: docker: dedicated daemon required but sandbox.docker.host is empty")
+		}
+		if dockerHost == "unix:///var/run/docker.sock" {
+			return nil, errors.New("sandbox: docker: dedicated daemon required but sandbox.docker.host points to default host socket")
+		}
+	}
+	if len(cfg.AllowedImages) > 0 && !imageAllowed(image, cfg.AllowedImages) {
+		return nil, fmt.Errorf("sandbox: docker: image %q is not in sandbox.docker.allowed_images", image)
+	}
+
+	pidsLimit := cfg.PidsLimit
+	if cfg.Hardened && pidsLimit <= 0 {
+		pidsLimit = 256
+	}
+
 	// Defense-in-depth: warn if Docker socket is pointed somewhere unusual.
-	warnDockerSocketExposure()
+	warnDockerSocketExposure(dockerHost)
 
 	return &DockerProvider{
 		agentID:       agentID,
 		image:         image,
+		dockerHost:    dockerHost,
 		volumeName:    "openclawssy_ws_" + sanitized,
 		containerName: "openclawssy_agent_" + sanitized,
 		networkMode:   networkMode,
 		cpuLimit:      cfg.CPULimit,
 		memoryMB:      cfg.MemoryLimitMB,
+		hardened:      cfg.Hardened,
+		pidsLimit:     pidsLimit,
 		// extraEnv are non-secret environment variables from config.
 		// Secrets MUST NOT be placed here — they are managed by the secrets store
 		// and injected only at the API call layer, never into the container.
@@ -118,10 +142,40 @@ func NewDockerProvider(agentID string, cfg config.DockerSandboxConfig) (*DockerP
 // warnDockerSocketExposure logs a warning if DOCKER_HOST is set to a
 // non-standard value.  This is a defense-in-depth signal only — it does not
 // prevent operation, but alerts operators to unexpected configurations.
-func warnDockerSocketExposure() {
-	if host := os.Getenv("DOCKER_HOST"); host != "" && host != "unix:///var/run/docker.sock" {
-		log.Printf("warning: DOCKER_HOST is set to %q — ensure this is intentional", host)
+func warnDockerSocketExposure(configuredHost string) {
+	host := strings.TrimSpace(configuredHost)
+	if host == "" {
+		host = os.Getenv("DOCKER_HOST")
 	}
+	if host != "" && host != "unix:///var/run/docker.sock" {
+		log.Printf("warning: Docker daemon endpoint is %q — ensure this is intentional", host)
+	}
+}
+
+func imageAllowed(image string, allowed []string) bool {
+	needle := strings.TrimSpace(image)
+	for _, item := range allowed {
+		if strings.TrimSpace(item) == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *DockerProvider) dockerCommand(args ...string) *exec.Cmd {
+	cmd := exec.Command("docker", args...)
+	if p.dockerHost != "" {
+		cmd.Env = append(os.Environ(), "DOCKER_HOST="+p.dockerHost)
+	}
+	return cmd
+}
+
+func (p *DockerProvider) dockerCommandContext(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	if p.dockerHost != "" {
+		cmd.Env = append(os.Environ(), "DOCKER_HOST="+p.dockerHost)
+	}
+	return cmd
 }
 
 // validateContainerPath ensures a path passed to container file operations is
@@ -245,10 +299,10 @@ func (p *DockerProvider) Reset(ctx context.Context) error {
 	p.mu.Unlock()
 
 	// Stop (ignore errors if not running).
-	_ = exec.CommandContext(ctx, "docker", "stop", "-t", "5", containerName).Run()
+	_ = p.dockerCommandContext(ctx, "stop", "-t", "5", containerName).Run()
 
 	// Remove.
-	out, err := exec.CommandContext(ctx, "docker", "rm", "-f", containerName).CombinedOutput()
+	out, err := p.dockerCommandContext(ctx, "rm", "-f", containerName).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("sandbox: docker rm failed: %s: %w", strings.TrimSpace(string(out)), err)
 	}
@@ -257,7 +311,7 @@ func (p *DockerProvider) Reset(ctx context.Context) error {
 
 // ContainerStatus returns "running", "exited", or "not_found".
 func (p *DockerProvider) ContainerStatus(ctx context.Context) string {
-	out, err := exec.CommandContext(ctx, "docker", "inspect",
+	out, err := p.dockerCommandContext(ctx, "inspect",
 		"--format", "{{.State.Status}}", p.containerName).CombinedOutput()
 	if err != nil {
 		return "not_found"
@@ -301,7 +355,7 @@ func (p *DockerProvider) Exec(cmd Command) (Result, error) {
 	}
 
 	args := append([]string{"exec", containerName, cmd.Name}, cmd.Args...)
-	proc := exec.CommandContext(runCtx, "docker", args...)
+	proc := p.dockerCommandContext(runCtx, args...)
 
 	var stdout, stderr bytes.Buffer
 	proc.Stdout = &stdout
@@ -347,7 +401,7 @@ func (p *DockerProvider) ReadFile(ctx context.Context, path string) ([]byte, err
 	// Always remove the temp file, even on error — the path must never persist.
 	defer os.Remove(tmpPath)
 
-	out, err := exec.CommandContext(ctx, "docker", "cp",
+	out, err := p.dockerCommandContext(ctx, "cp",
 		containerName+":"+path, tmpPath).CombinedOutput()
 	if err != nil {
 		// Do not include tmpPath in the error — only report the container-side path.
@@ -394,7 +448,7 @@ func (p *DockerProvider) WriteFile(ctx context.Context, path string, data []byte
 
 	// docker cp host-file container:container-path
 	// The host temp path is not included in any error message returned to callers.
-	out, err := exec.CommandContext(ctx, "docker", "cp",
+	out, err := p.dockerCommandContext(ctx, "cp",
 		tmp.Name(), containerName+":"+path).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("sandbox: docker cp to %s: %s: %w",
@@ -428,7 +482,7 @@ func (p *DockerProvider) ListDir(ctx context.Context, path string) ([]FileInfo, 
 		"find %s -maxdepth 1 -mindepth 1 -printf '%%y\\t%%s\\t%%f\\n' 2>/dev/null || true",
 		shellescape(path),
 	)
-	out, err := exec.CommandContext(ctx, "docker", "exec", containerName,
+	out, err := p.dockerCommandContext(ctx, "exec", containerName,
 		"sh", "-c", cmd).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("sandbox: docker ListDir %s: %s: %w",
@@ -526,7 +580,7 @@ func (p *DockerProvider) Lstat(ctx context.Context, path string) (FileInfo, bool
 		"stat %s --printf '%%F\\t%%s\\t%%n\\n' 2>/dev/null || echo NOTEXIST",
 		shellescape(path),
 	)
-	out, err := exec.CommandContext(ctx, "docker", "exec", containerName,
+	out, err := p.dockerCommandContext(ctx, "exec", containerName,
 		"sh", "-c", cmd).CombinedOutput()
 	if err != nil {
 		return FileInfo{}, false, fmt.Errorf("sandbox: docker Lstat %s: %w", path, err)
@@ -566,7 +620,7 @@ func (p *DockerProvider) EvalSymlinks(ctx context.Context, path string) (string,
 	}
 
 	cmd := fmt.Sprintf("readlink -f %s 2>/dev/null || echo NOTEXIST", shellescape(path))
-	out, err := exec.CommandContext(ctx, "docker", "exec", containerName,
+	out, err := p.dockerCommandContext(ctx, "exec", containerName,
 		"sh", "-c", cmd).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("sandbox: docker EvalSymlinks %s: %w", path, err)
@@ -588,13 +642,13 @@ func (p *DockerProvider) pullImage() error {
 		return nil
 	case "if-not-present":
 		// Check if image is already present locally.
-		out, err := exec.Command("docker", "image", "inspect", p.image).CombinedOutput()
+		out, err := p.dockerCommand("image", "inspect", p.image).CombinedOutput()
 		if err == nil && len(out) > 2 {
 			return nil // image exists
 		}
 		fallthrough
 	case "always":
-		out, err := exec.Command("docker", "pull", p.image).CombinedOutput()
+		out, err := p.dockerCommand("pull", p.image).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("docker pull %s failed: %s: %w",
 				p.image, strings.TrimSpace(string(out)), err)
@@ -607,11 +661,11 @@ func (p *DockerProvider) pullImage() error {
 
 // ensureVolume creates the Docker volume if it does not exist.
 func (p *DockerProvider) ensureVolume() error {
-	out, err := exec.Command("docker", "volume", "inspect", p.volumeName).CombinedOutput()
+	out, err := p.dockerCommand("volume", "inspect", p.volumeName).CombinedOutput()
 	if err == nil && len(out) > 2 {
 		return nil // already exists
 	}
-	out, err = exec.Command("docker", "volume", "create", p.volumeName).CombinedOutput()
+	out, err = p.dockerCommand("volume", "create", p.volumeName).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("docker volume create failed: %s: %w",
 			strings.TrimSpace(string(out)), err)
@@ -623,7 +677,7 @@ func (p *DockerProvider) ensureVolume() error {
 // Returns the container ID (full 64-char SHA or the container name).
 func (p *DockerProvider) ensureContainer() (string, error) {
 	// Check if container already exists.
-	out, err := exec.Command("docker", "inspect", "--format", "{{.Id}}",
+	out, err := p.dockerCommand("inspect", "--format", "{{.Id}}",
 		p.containerName).CombinedOutput()
 	if err == nil {
 		id := strings.TrimSpace(string(out))
@@ -643,6 +697,19 @@ func (p *DockerProvider) ensureContainer() (string, error) {
 		"--network", p.networkMode,
 		"--restart", "no",
 	}
+	if p.hardened {
+		args = append(args,
+			"--security-opt", "no-new-privileges:true",
+			"--cap-drop", "ALL",
+			"--read-only",
+			"--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m",
+			"--tmpfs", "/run:rw,noexec,nosuid,nodev,size=16m",
+			"--tmpfs", "/var/tmp:rw,noexec,nosuid,nodev,size=32m",
+		)
+		if p.pidsLimit > 0 {
+			args = append(args, "--pids-limit", strconv.Itoa(p.pidsLimit))
+		}
+	}
 
 	// Resource limits.
 	if p.cpuLimit > 0 {
@@ -660,7 +727,7 @@ func (p *DockerProvider) ensureContainer() (string, error) {
 	// Image + infinite-sleep keep-alive.
 	args = append(args, p.image, "sleep", "infinity")
 
-	out, err = exec.Command("docker", args...).CombinedOutput()
+	out, err = p.dockerCommand(args...).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("docker create failed: %s: %w",
 			strings.TrimSpace(string(out)), err)
@@ -670,13 +737,13 @@ func (p *DockerProvider) ensureContainer() (string, error) {
 
 // startContainerIfNeeded starts the container if it is not already running.
 func (p *DockerProvider) startContainerIfNeeded(containerID string) error {
-	out, err := exec.Command("docker", "inspect", "--format",
+	out, err := p.dockerCommand("inspect", "--format",
 		"{{.State.Running}}", containerID).CombinedOutput()
 	if err == nil && strings.TrimSpace(string(out)) == "true" {
 		return nil // already running
 	}
 
-	startOut, startErr := exec.Command("docker", "start", containerID).CombinedOutput()
+	startOut, startErr := p.dockerCommand("start", containerID).CombinedOutput()
 	if startErr != nil {
 		return fmt.Errorf("docker start failed: %s: %w",
 			strings.TrimSpace(string(startOut)), startErr)
@@ -687,7 +754,7 @@ func (p *DockerProvider) startContainerIfNeeded(containerID string) error {
 // runInContainer runs cmd with args inside the container as the default user.
 func (p *DockerProvider) runInContainer(ctx context.Context, cmd string, args ...string) error {
 	fullArgs := append([]string{"exec", p.containerName, cmd}, args...)
-	out, err := exec.CommandContext(ctx, "docker", fullArgs...).CombinedOutput()
+	out, err := p.dockerCommandContext(ctx, fullArgs...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("sandbox: docker exec %s: %s: %w",
 			cmd, strings.TrimSpace(string(out)), err)
@@ -699,7 +766,7 @@ func (p *DockerProvider) runInContainer(ctx context.Context, cmd string, args ..
 // This is used for administrative operations like mkdir and chmod.
 func (p *DockerProvider) runAsRoot(ctx context.Context, cmd string, args ...string) error {
 	fullArgs := append([]string{"exec", "--user", "root", p.containerName, cmd}, args...)
-	out, err := exec.CommandContext(ctx, "docker", fullArgs...).CombinedOutput()
+	out, err := p.dockerCommandContext(ctx, fullArgs...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("sandbox: docker exec (root) %s: %s: %w",
 			cmd, strings.TrimSpace(string(out)), err)

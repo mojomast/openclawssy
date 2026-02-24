@@ -90,13 +90,18 @@ type DockerMountConfig struct {
 // DockerSandboxConfig holds Docker-specific sandbox parameters.
 // These are used by the Docker sandbox provider.
 type DockerSandboxConfig struct {
-	Image          string              `json:"image"`
-	NetworkEnabled bool                `json:"network_enabled"`
-	CPULimit       float64             `json:"cpu_limit,omitempty"`       // e.g. 0.5 = half CPU
-	MemoryLimitMB  int                 `json:"memory_limit_mb,omitempty"` // e.g. 512
-	ExtraEnv       []string            `json:"extra_env,omitempty"`
-	Mounts         []DockerMountConfig `json:"mounts,omitempty"`
-	PullPolicy     string              `json:"pull_policy,omitempty"` // "always", "if-not-present", "never"
+	Image                  string              `json:"image"`
+	Host                   string              `json:"host,omitempty"`
+	NetworkEnabled         bool                `json:"network_enabled"`
+	CPULimit               float64             `json:"cpu_limit,omitempty"`       // e.g. 0.5 = half CPU
+	MemoryLimitMB          int                 `json:"memory_limit_mb,omitempty"` // e.g. 512
+	Hardened               bool                `json:"hardened,omitempty"`
+	RequireDedicatedDaemon bool                `json:"require_dedicated_daemon,omitempty"`
+	AllowedImages          []string            `json:"allowed_images,omitempty"`
+	PidsLimit              int                 `json:"pids_limit,omitempty"`
+	ExtraEnv               []string            `json:"extra_env,omitempty"`
+	Mounts                 []DockerMountConfig `json:"mounts,omitempty"`
+	PullPolicy             string              `json:"pull_policy,omitempty"` // "always", "if-not-present", "never"
 }
 
 type SandboxConfig struct {
@@ -320,6 +325,9 @@ func (c *Config) ApplyDefaults() {
 	if c.Sandbox.Docker.MemoryLimitMB <= 0 {
 		c.Sandbox.Docker.MemoryLimitMB = d.Sandbox.Docker.MemoryLimitMB
 	}
+	if c.Sandbox.Docker.Hardened && c.Sandbox.Docker.PidsLimit <= 0 {
+		c.Sandbox.Docker.PidsLimit = 256
+	}
 	if c.Server.BindAddress == "" {
 		c.Server.BindAddress = d.Server.BindAddress
 	}
@@ -445,6 +453,29 @@ func (c Config) Validate() error {
 	}
 	if c.Sandbox.Active && sandboxProvider == "none" {
 		return errors.New("sandbox.provider must not be 'none' when sandbox.active is true")
+	}
+	if c.Sandbox.Docker.RequireDedicatedDaemon {
+		host := strings.TrimSpace(c.Sandbox.Docker.Host)
+		if host == "" {
+			return errors.New("sandbox.docker.require_dedicated_daemon=true requires sandbox.docker.host")
+		}
+		if host == "unix:///var/run/docker.sock" {
+			return errors.New("sandbox.docker.host must not use the default host socket when require_dedicated_daemon=true")
+		}
+	}
+	dockerHost := strings.TrimSpace(c.Sandbox.Docker.Host)
+	if dockerHost != "" {
+		if !strings.HasPrefix(dockerHost, "unix://") && !strings.HasPrefix(dockerHost, "tcp://") && !strings.HasPrefix(dockerHost, "ssh://") {
+			return errors.New("sandbox.docker.host must start with unix://, tcp://, or ssh://")
+		}
+	}
+	for _, img := range c.Sandbox.Docker.AllowedImages {
+		if strings.TrimSpace(img) == "" {
+			return errors.New("sandbox.docker.allowed_images cannot contain empty entries")
+		}
+	}
+	if c.Sandbox.Docker.PidsLimit < 0 {
+		return errors.New("sandbox.docker.pids_limit must be >= 0")
 	}
 	if !c.Sandbox.Active && c.Shell.EnableExec {
 		return errors.New("shell execution requires active sandbox")

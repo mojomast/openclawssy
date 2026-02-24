@@ -112,10 +112,46 @@ All sandbox settings are configurable in `config.json` under `sandbox.docker`:
 | `sandbox.active` | `true` | Enable sandbox isolation |
 | `sandbox.provider` | `docker` | Sandbox provider |
 | `sandbox.docker.image` | `ubuntu:24.04` | Base image for sandbox containers |
+| `sandbox.docker.host` | inherited | Optional Docker daemon endpoint (`unix://`, `tcp://`, `ssh://`) |
 | `sandbox.docker.cpu_limit` | `1.0` | CPU limit per sandbox container |
 | `sandbox.docker.memory_limit_mb` | `2048` | Memory limit in MB |
 | `sandbox.docker.network_enabled` | `false` | Enable network access in sandbox |
+| `sandbox.docker.hardened` | `false` | Opt-in stricter container flags (`cap-drop=ALL`, `no-new-privileges`, read-only rootfs, tmpfs, PID limit) |
+| `sandbox.docker.pids_limit` | `256` (when hardened) | Max process count per sandbox container |
+| `sandbox.docker.allowed_images` | empty | Optional image allowlist for sandbox containers |
+| `sandbox.docker.require_dedicated_daemon` | `false` | Require non-default Docker daemon endpoint |
 | `sandbox.docker.pull_policy` | `if-not-present` | Image pull policy |
+
+## Hardened mode (opt-in)
+
+By default, Openclawssy uses the current implementation (compatible and simple). If you want stronger isolation, enable hardened mode explicitly in `config.json`:
+
+```json
+{
+  "sandbox": {
+    "active": true,
+    "provider": "docker",
+    "docker": {
+      "hardened": true,
+      "image": "ubuntu:24.04",
+      "allowed_images": ["ubuntu:24.04"],
+      "pids_limit": 256,
+      "require_dedicated_daemon": true,
+      "host": "unix:///var/run/openclawssy-docker.sock"
+    }
+  }
+}
+```
+
+What hardened mode changes for sandbox containers:
+
+- adds `--security-opt no-new-privileges:true`
+- adds `--cap-drop ALL`
+- adds `--read-only` root filesystem
+- mounts tmpfs for `/tmp`, `/run`, and `/var/tmp`
+- applies `--pids-limit` (default `256` in hardened mode)
+
+This keeps default UX unchanged, while allowing operators to opt into stricter controls when security is the priority.
 
 ## Environment Variables
 
