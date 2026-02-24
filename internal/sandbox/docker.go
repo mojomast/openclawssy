@@ -5,8 +5,8 @@ MITIGATED:
   - Path traversal: validateContainerPath() enforces /workspace prefix on all
     file operations before any data reaches the container. dockerResolvePath()
     in engine.go provides a second enforcement layer at the tool/policy level.
-  - Host filesystem access: docker cp uses host-only temp files in os.TempDir();
-    the container only sees the /workspace volume — no host paths are mounted.
+  - Host filesystem access: CopyTo/CopyFrom use in-memory tar streams; no
+    workspace bind mount to host paths is required.
   - Container escape via path: dockerResolvePath() in engine.go enforces
     /workspace on the tool call layer; validateContainerPath() re-enforces at
     the Provider method layer so that a rogue caller cannot bypass either guard.
@@ -31,17 +31,26 @@ ACCEPTED RISKS / OUT OF SCOPE:
 package sandbox
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/volume"
+	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
+	"github.com/docker/docker/pkg/stdcopy"
 
 	"openclawssy/internal/config"
 )
@@ -50,7 +59,7 @@ import (
 // persistent Docker container backed by a named Docker volume.
 //
 // The container is created once (in Start) and persists across Stop/Start
-// cycles so that the volume contents survive agent reruns.  The container is
+// cycles so that the volume contents survive agent reruns. The container is
 // NOT removed on Stop — call Reset to tear it down explicitly.
 //
 // All file-system methods route I/O through the container, so no workspace
@@ -71,6 +80,7 @@ type DockerProvider struct {
 	started bool
 	runCtx  context.Context //nolint:containedctx
 	cancel  context.CancelFunc
+	cli     *client.Client
 }
 
 // NewDockerProvider creates a DockerProvider for the given agentID.
@@ -81,9 +91,9 @@ func NewDockerProvider(agentID string, cfg config.DockerSandboxConfig) (*DockerP
 	}
 	sanitized := sanitizeDockerName(agentID)
 
-	image := cfg.Image
-	if image == "" {
-		image = "ubuntu:24.04"
+	imageName := cfg.Image
+	if imageName == "" {
+		imageName = "ubuntu:24.04"
 	}
 
 	pullPolicy := cfg.PullPolicy
@@ -101,7 +111,7 @@ func NewDockerProvider(agentID string, cfg config.DockerSandboxConfig) (*DockerP
 
 	return &DockerProvider{
 		agentID:       agentID,
-		image:         image,
+		image:         imageName,
 		volumeName:    "openclawssy_ws_" + sanitized,
 		containerName: "openclawssy_agent_" + sanitized,
 		networkMode:   networkMode,
@@ -116,7 +126,7 @@ func NewDockerProvider(agentID string, cfg config.DockerSandboxConfig) (*DockerP
 }
 
 // warnDockerSocketExposure logs a warning if DOCKER_HOST is set to a
-// non-standard value.  This is a defense-in-depth signal only — it does not
+// non-standard value. This is a defense-in-depth signal only — it does not
 // prevent operation, but alerts operators to unexpected configurations.
 func warnDockerSocketExposure() {
 	if host := os.Getenv("DOCKER_HOST"); host != "" && host != "unix:///var/run/docker.sock" {
@@ -124,9 +134,23 @@ func warnDockerSocketExposure() {
 	}
 }
 
+func (p *DockerProvider) dockerClient() (*client.Client, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.cli != nil {
+		return p.cli, nil
+	}
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, fmt.Errorf("sandbox: docker client init: %w", err)
+	}
+	p.cli = cli
+	return p.cli, nil
+}
+
 // validateContainerPath ensures a path passed to container file operations is
 // absolute, within /workspace, and contains no traversal sequences or null
-// bytes.  All DockerProvider file-operation methods call this before executing.
+// bytes. All DockerProvider file-operation methods call this before executing.
 func validateContainerPath(path string) error {
 	// Strip null bytes first — they can truncate C-string comparisons.
 	path = strings.ReplaceAll(path, "\x00", "")
@@ -183,48 +207,49 @@ func (p *DockerProvider) Start(runCtx context.Context) error {
 		runCtx = context.Background()
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	p.runCtx, p.cancel = context.WithCancel(runCtx)
+	ctx := p.runCtx
+	p.mu.Unlock()
 
-	// 1. Pull image if needed.
-	if err := p.pullImage(); err != nil {
+	cli, err := p.dockerClient()
+	if err != nil {
+		return err
+	}
+
+	if err := p.pullImage(cli, ctx); err != nil {
 		return fmt.Errorf("sandbox: docker pull image: %w", err)
 	}
 
-	// 2. Ensure the named volume exists.
-	if err := p.ensureVolume(); err != nil {
+	if err := p.ensureVolume(cli, ctx); err != nil {
 		return fmt.Errorf("sandbox: docker ensure volume: %w", err)
 	}
 
-	// 3. Create or reuse the container.
-	containerID, err := p.ensureContainer()
+	containerID, err := p.ensureContainer(cli, ctx)
 	if err != nil {
 		return fmt.Errorf("sandbox: docker ensure container: %w", err)
 	}
-	p.containerID = containerID
 
-	// 4. Start the container if it is not already running.
-	if err := p.startContainerIfNeeded(containerID); err != nil {
+	if err := p.startContainerIfNeeded(cli, ctx, containerID); err != nil {
 		return fmt.Errorf("sandbox: docker start container: %w", err)
 	}
 
-	// 5. Make sure /workspace exists with open permissions.
-	// Use root for mkdir/chmod because the container runs "sleep infinity" as
-	// whatever the image default user is; we override the exec user explicitly.
-	if err := p.runAsRoot(p.runCtx, "mkdir", "-p", "/workspace"); err != nil {
+	if err := p.runAsRoot(ctx, "mkdir", "-p", "/workspace"); err != nil {
 		return fmt.Errorf("sandbox: docker mkdir workspace: %w", err)
 	}
-	if err := p.runAsRoot(p.runCtx, "chmod", "777", "/workspace"); err != nil {
+	if err := p.runAsRoot(ctx, "chmod", "777", "/workspace"); err != nil {
 		return fmt.Errorf("sandbox: docker chmod workspace: %w", err)
 	}
 
+	p.mu.Lock()
+	p.containerID = containerID
 	p.started = true
+	p.mu.Unlock()
+
 	return nil
 }
 
 // Stop cancels the context for this run but does NOT stop or remove the container.
-// The container and volume persist for reuse across runs.  Call Reset to destroy.
+// The container and volume persist for reuse across runs. Call Reset to destroy.
 func (p *DockerProvider) Stop() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -234,35 +259,45 @@ func (p *DockerProvider) Stop() error {
 	p.runCtx = nil
 	p.cancel = nil
 	p.started = false
+	if p.cli != nil {
+		_ = p.cli.Close()
+		p.cli = nil
+	}
 	return nil
 }
 
 // Reset stops and removes the container but keeps the volume.
 // The next Start() call will recreate the container fresh.
 func (p *DockerProvider) Reset(ctx context.Context) error {
-	p.mu.Lock()
-	containerName := p.containerName
-	p.mu.Unlock()
-
-	// Stop (ignore errors if not running).
-	_ = exec.CommandContext(ctx, "docker", "stop", "-t", "5", containerName).Run()
-
-	// Remove.
-	out, err := exec.CommandContext(ctx, "docker", "rm", "-f", containerName).CombinedOutput()
+	cli, err := p.dockerClient()
 	if err != nil {
-		return fmt.Errorf("sandbox: docker rm failed: %s: %w", strings.TrimSpace(string(out)), err)
+		return err
+	}
+
+	p.mu.RLock()
+	containerName := p.containerName
+	p.mu.RUnlock()
+
+	timeout := 5
+	_ = cli.ContainerStop(ctx, containerName, container.StopOptions{Timeout: &timeout})
+	err = cli.ContainerRemove(ctx, containerName, container.RemoveOptions{Force: true})
+	if err != nil && !errdefs.IsNotFound(err) {
+		return fmt.Errorf("sandbox: docker rm failed: %w", err)
 	}
 	return nil
 }
 
 // ContainerStatus returns "running", "exited", or "not_found".
 func (p *DockerProvider) ContainerStatus(ctx context.Context) string {
-	out, err := exec.CommandContext(ctx, "docker", "inspect",
-		"--format", "{{.State.Status}}", p.containerName).CombinedOutput()
+	cli, err := p.dockerClient()
 	if err != nil {
 		return "not_found"
 	}
-	return strings.TrimSpace(string(out))
+	inspected, err := cli.ContainerInspect(ctx, p.containerName)
+	if err != nil {
+		return "not_found"
+	}
+	return strings.TrimSpace(inspected.State.Status)
 }
 
 // ContainerName returns the container name used by this provider.
@@ -300,32 +335,16 @@ func (p *DockerProvider) Exec(cmd Command) (Result, error) {
 		return Result{}, errors.New("sandbox: command name is required")
 	}
 
-	args := append([]string{"exec", containerName, cmd.Name}, cmd.Args...)
-	proc := exec.CommandContext(runCtx, "docker", args...)
-
-	var stdout, stderr bytes.Buffer
-	proc.Stdout = &stdout
-	proc.Stderr = &stderr
-
-	err := proc.Run()
-	result := Result{Stdout: stdout.String(), Stderr: stderr.String(), ExitCode: 0}
-	if err == nil {
-		return result, nil
-	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		result.ExitCode = exitErr.ExitCode()
+	stdout, stderr, exitCode, err := p.execInContainer(runCtx, containerName, "", append([]string{cmd.Name}, cmd.Args...))
+	result := Result{Stdout: stdout, Stderr: stderr, ExitCode: exitCode}
+	if err != nil {
 		return result, err
 	}
-	result.ExitCode = -1
-	return result, err
+	return result, nil
 }
 
 // ---- File operations --------------------------------------------------------
 
-// ReadFile copies the file from the container to a temp file on the host,
-// reads it, then deletes the temp file.
-// The temp file path is never returned to callers — only file content is.
 func (p *DockerProvider) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	if err := validateContainerPath(path); err != nil {
 		return nil, err
@@ -338,29 +357,42 @@ func (p *DockerProvider) ReadFile(ctx context.Context, path string) ([]byte, err
 		return nil, ErrNotStarted
 	}
 
-	tmp, err := os.CreateTemp("", "openclawssy_docker_read_*")
+	cli, err := p.dockerClient()
 	if err != nil {
-		return nil, fmt.Errorf("sandbox: ReadFile tmp: %w", err)
-	}
-	tmpPath := tmp.Name()
-	tmp.Close()
-	// Always remove the temp file, even on error — the path must never persist.
-	defer os.Remove(tmpPath)
-
-	out, err := exec.CommandContext(ctx, "docker", "cp",
-		containerName+":"+path, tmpPath).CombinedOutput()
-	if err != nil {
-		// Do not include tmpPath in the error — only report the container-side path.
-		return nil, fmt.Errorf("sandbox: docker cp from %s: %s: %w",
-			path, strings.TrimSpace(string(out)), err)
+		return nil, err
 	}
 
-	return os.ReadFile(tmpPath)
+	r, _, err := cli.CopyFromContainer(ctx, containerName, path)
+	if err != nil {
+		return nil, fmt.Errorf("sandbox: docker cp from %s: %w", path, err)
+	}
+	defer r.Close()
+
+	tr := tar.NewReader(r)
+	for {
+		hdr, nextErr := tr.Next()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			return nil, fmt.Errorf("sandbox: read docker archive for %s: %w", path, nextErr)
+		}
+		if hdr == nil {
+			continue
+		}
+		if hdr.FileInfo().IsDir() {
+			continue
+		}
+		data, readErr := io.ReadAll(tr)
+		if readErr != nil {
+			return nil, fmt.Errorf("sandbox: read docker file data for %s: %w", path, readErr)
+		}
+		return data, nil
+	}
+
+	return nil, fmt.Errorf("sandbox: docker file not found in archive: %s", path)
 }
 
-// WriteFile writes data to a temp file on the host, then docker-cp's it into
-// the container at the given path with the requested permissions.
-// The temp file is created in os.TempDir() and always removed via defer.
 func (p *DockerProvider) WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error {
 	if err := validateContainerPath(path); err != nil {
 		return err
@@ -373,35 +405,25 @@ func (p *DockerProvider) WriteFile(ctx context.Context, path string, data []byte
 		return ErrNotStarted
 	}
 
-	// Write to a temp file on the host (in os.TempDir(), never in workspace).
-	tmp, err := os.CreateTemp("", "openclawssy_docker_write_*")
+	cli, err := p.dockerClient()
 	if err != nil {
-		return fmt.Errorf("sandbox: WriteFile tmp: %w", err)
+		return err
 	}
-	// Always remove — ensures host temp files are not left behind on any error.
-	defer os.Remove(tmp.Name())
 
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return fmt.Errorf("sandbox: WriteFile tmp write: %w", err)
-	}
-	tmp.Close()
-
-	// Ensure parent directory exists inside the container.
 	if dir := filepath.Dir(path); dir != "" && dir != "." && dir != "/" {
 		_ = p.runAsRoot(ctx, "mkdir", "-p", dir)
 	}
 
-	// docker cp host-file container:container-path
-	// The host temp path is not included in any error message returned to callers.
-	out, err := exec.CommandContext(ctx, "docker", "cp",
-		tmp.Name(), containerName+":"+path).CombinedOutput()
+	tf, err := tarSingleFile(filepath.Base(path), data, perm)
 	if err != nil {
-		return fmt.Errorf("sandbox: docker cp to %s: %s: %w",
-			path, strings.TrimSpace(string(out)), err)
+		return err
 	}
 
-	// Apply requested permissions.
+	err = cli.CopyToContainer(ctx, containerName, filepath.Dir(path), tf, container.CopyToContainerOptions{AllowOverwriteDirWithFile: true})
+	if err != nil {
+		return fmt.Errorf("sandbox: docker cp to %s: %w", path, err)
+	}
+
 	if perm != 0 {
 		_ = p.runAsRoot(ctx, "chmod", fmt.Sprintf("%o", perm), path)
 	}
@@ -409,34 +431,25 @@ func (p *DockerProvider) WriteFile(ctx context.Context, path string, data []byte
 	return nil
 }
 
-// ListDir returns the entries (non-recursive) of a directory inside the container.
 func (p *DockerProvider) ListDir(ctx context.Context, path string) ([]FileInfo, error) {
 	if err := validateContainerPath(path); err != nil {
 		return nil, err
 	}
 	p.mu.RLock()
 	started := p.started
-	containerName := p.containerName
 	p.mu.RUnlock()
 	if !started {
 		return nil, ErrNotStarted
 	}
 
-	// Use `find -maxdepth 1 -mindepth 1 -printf` to get type, size, and name.
-	// %y = file type char (d=dir, f=file, l=symlink, …), %s = size, %f = filename
-	cmd := fmt.Sprintf(
-		"find %s -maxdepth 1 -mindepth 1 -printf '%%y\\t%%s\\t%%f\\n' 2>/dev/null || true",
-		shellescape(path),
-	)
-	out, err := exec.CommandContext(ctx, "docker", "exec", containerName,
-		"sh", "-c", cmd).CombinedOutput()
+	cmd := fmt.Sprintf("find %s -maxdepth 1 -mindepth 1 -printf '%%y\t%%s\t%%f\n' 2>/dev/null || true", shellescape(path))
+	stdout, stderr, _, err := p.execAsRoot(ctx, "sh", "-c", cmd)
 	if err != nil {
-		return nil, fmt.Errorf("sandbox: docker ListDir %s: %s: %w",
-			path, strings.TrimSpace(string(out)), err)
+		return nil, fmt.Errorf("sandbox: docker ListDir %s: %s: %w", path, strings.TrimSpace(stderr), err)
 	}
 
 	var entries []FileInfo
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -458,7 +471,6 @@ func (p *DockerProvider) ListDir(ctx context.Context, path string) ([]FileInfo, 
 	return entries, nil
 }
 
-// MkdirAll creates the directory tree inside the container.
 func (p *DockerProvider) MkdirAll(ctx context.Context, path string, _ os.FileMode) error {
 	if err := validateContainerPath(path); err != nil {
 		return err
@@ -472,7 +484,6 @@ func (p *DockerProvider) MkdirAll(ctx context.Context, path string, _ os.FileMod
 	return p.runAsRoot(ctx, "mkdir", "-p", path)
 }
 
-// Remove removes a file or directory inside the container.
 func (p *DockerProvider) Remove(ctx context.Context, path string, recursive bool) error {
 	if err := validateContainerPath(path); err != nil {
 		return err
@@ -489,7 +500,6 @@ func (p *DockerProvider) Remove(ctx context.Context, path string, recursive bool
 	return p.runInContainer(ctx, "rm", "-f", path)
 }
 
-// Rename moves src to dst inside the container.
 func (p *DockerProvider) Rename(ctx context.Context, src, dst string) error {
 	if err := validateContainerPath(src); err != nil {
 		return err
@@ -506,8 +516,6 @@ func (p *DockerProvider) Rename(ctx context.Context, src, dst string) error {
 	return p.runInContainer(ctx, "mv", src, dst)
 }
 
-// Lstat returns file info for path inside the container.
-// Returns (FileInfo{}, false, nil) when the path does not exist.
 func (p *DockerProvider) Lstat(ctx context.Context, path string) (FileInfo, bool, error) {
 	if err := validateContainerPath(path); err != nil {
 		return FileInfo{}, false, err
@@ -520,59 +528,44 @@ func (p *DockerProvider) Lstat(ctx context.Context, path string) (FileInfo, bool
 		return FileInfo{}, false, ErrNotStarted
 	}
 
-	// Use stat --printf so that \t is interpreted as a real tab character.
-	// If the path does not exist, the command exits non-zero and we print NOTEXIST.
-	cmd := fmt.Sprintf(
-		"stat %s --printf '%%F\\t%%s\\t%%n\\n' 2>/dev/null || echo NOTEXIST",
-		shellescape(path),
-	)
-	out, err := exec.CommandContext(ctx, "docker", "exec", containerName,
-		"sh", "-c", cmd).CombinedOutput()
+	cli, err := p.dockerClient()
 	if err != nil {
+		return FileInfo{}, false, err
+	}
+
+	stat, err := cli.ContainerStatPath(ctx, containerName, path)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return FileInfo{}, false, nil
+		}
 		return FileInfo{}, false, fmt.Errorf("sandbox: docker Lstat %s: %w", path, err)
 	}
 
-	result := strings.TrimSpace(string(out))
-	if result == "NOTEXIST" || result == "" {
-		return FileInfo{}, false, nil
-	}
-
-	// Split on the actual tab character that stat --printf produces.
-	parts := strings.SplitN(result, "\t", 3)
-	if len(parts) < 3 {
-		return FileInfo{}, false, fmt.Errorf("sandbox: docker Lstat unexpected output: %q", result)
-	}
-
-	typeStr := parts[0]
-	sizeStr := parts[1]
-	name := filepath.Base(path)
-	isDir := strings.Contains(typeStr, "directory")
-	size, _ := strconv.ParseInt(sizeStr, 10, 64)
-
-	return FileInfo{Name: name, IsDir: isDir, Size: size}, true, nil
+	fm := os.FileMode(stat.Mode)
+	return FileInfo{
+		Name:  filepath.Base(path),
+		IsDir: fm.IsDir(),
+		Size:  stat.Size,
+	}, true, nil
 }
 
-// EvalSymlinks resolves symlinks inside the container.
 func (p *DockerProvider) EvalSymlinks(ctx context.Context, path string) (string, error) {
 	if err := validateContainerPath(path); err != nil {
 		return "", err
 	}
 	p.mu.RLock()
 	started := p.started
-	containerName := p.containerName
 	p.mu.RUnlock()
 	if !started {
 		return "", ErrNotStarted
 	}
 
-	cmd := fmt.Sprintf("readlink -f %s 2>/dev/null || echo NOTEXIST", shellescape(path))
-	out, err := exec.CommandContext(ctx, "docker", "exec", containerName,
-		"sh", "-c", cmd).CombinedOutput()
+	stdout, stderr, _, err := p.runInContainerWithResult(ctx, "sh", "-c", fmt.Sprintf("readlink -f %s 2>/dev/null || echo NOTEXIST", shellescape(path)))
 	if err != nil {
-		return "", fmt.Errorf("sandbox: docker EvalSymlinks %s: %w", path, err)
+		return "", fmt.Errorf("sandbox: docker EvalSymlinks %s: %s: %w", path, strings.TrimSpace(stderr), err)
 	}
 
-	result := strings.TrimSpace(string(out))
+	result := strings.TrimSpace(stdout)
 	if result == "NOTEXIST" || result == "" {
 		return "", fmt.Errorf("sandbox: path does not exist: %s", path)
 	}
@@ -581,130 +574,204 @@ func (p *DockerProvider) EvalSymlinks(ctx context.Context, path string) (string,
 
 // ---- Internal helpers -------------------------------------------------------
 
-// pullImage pulls the container image according to the pullPolicy.
-func (p *DockerProvider) pullImage() error {
+func (p *DockerProvider) pullImage(cli *client.Client, ctx context.Context) error {
 	switch p.pullPolicy {
 	case "never":
 		return nil
 	case "if-not-present":
-		// Check if image is already present locally.
-		out, err := exec.Command("docker", "image", "inspect", p.image).CombinedOutput()
-		if err == nil && len(out) > 2 {
-			return nil // image exists
+		_, _, err := cli.ImageInspectWithRaw(ctx, p.image)
+		if err == nil {
+			return nil
+		}
+		if !errdefs.IsNotFound(err) {
+			return fmt.Errorf("docker image inspect %s failed: %w", p.image, err)
 		}
 		fallthrough
 	case "always":
-		out, err := exec.Command("docker", "pull", p.image).CombinedOutput()
+		reader, err := cli.ImagePull(ctx, p.image, image.PullOptions{})
 		if err != nil {
-			return fmt.Errorf("docker pull %s failed: %s: %w",
-				p.image, strings.TrimSpace(string(out)), err)
+			return fmt.Errorf("docker pull %s failed: %w", p.image, err)
 		}
+		defer reader.Close()
+		_, _ = io.Copy(io.Discard, reader)
 		return nil
 	default:
 		return nil
 	}
 }
 
-// ensureVolume creates the Docker volume if it does not exist.
-func (p *DockerProvider) ensureVolume() error {
-	out, err := exec.Command("docker", "volume", "inspect", p.volumeName).CombinedOutput()
-	if err == nil && len(out) > 2 {
-		return nil // already exists
+func (p *DockerProvider) ensureVolume(cli *client.Client, ctx context.Context) error {
+	_, err := cli.VolumeInspect(ctx, p.volumeName)
+	if err == nil {
+		return nil
 	}
-	out, err = exec.Command("docker", "volume", "create", p.volumeName).CombinedOutput()
+	if !errdefs.IsNotFound(err) {
+		return fmt.Errorf("docker volume inspect failed: %w", err)
+	}
+	_, err = cli.VolumeCreate(ctx, volume.CreateOptions{Name: p.volumeName})
 	if err != nil {
-		return fmt.Errorf("docker volume create failed: %s: %w",
-			strings.TrimSpace(string(out)), err)
+		return fmt.Errorf("docker volume create failed: %w", err)
 	}
 	return nil
 }
 
-// ensureContainer creates the container if it does not already exist.
-// Returns the container ID (full 64-char SHA or the container name).
-func (p *DockerProvider) ensureContainer() (string, error) {
-	// Check if container already exists.
-	out, err := exec.Command("docker", "inspect", "--format", "{{.Id}}",
-		p.containerName).CombinedOutput()
-	if err == nil {
-		id := strings.TrimSpace(string(out))
-		if id != "" {
-			return id, nil
-		}
+func (p *DockerProvider) ensureContainer(cli *client.Client, ctx context.Context) (string, error) {
+	inspected, err := cli.ContainerInspect(ctx, p.containerName)
+	if err == nil && strings.TrimSpace(inspected.ID) != "" {
+		return strings.TrimSpace(inspected.ID), nil
+	}
+	if err != nil && !errdefs.IsNotFound(err) {
+		return "", fmt.Errorf("docker inspect %s failed: %w", p.containerName, err)
 	}
 
-	// Build docker create args.
-	args := []string{
-		"create",
-		"--name", p.containerName,
-		"--label", "openclawssy=true",
-		"--label", "agent_id=" + p.agentID,
-		"--volume", p.volumeName + ":/workspace",
-		"--workdir", "/workspace",
-		"--network", p.networkMode,
-		"--restart", "no",
+	hostConfig := &container.HostConfig{
+		Mounts: []mount.Mount{{
+			Type:   mount.TypeVolume,
+			Source: p.volumeName,
+			Target: "/workspace",
+		}},
+		NetworkMode: container.NetworkMode(p.networkMode),
+		RestartPolicy: container.RestartPolicy{
+			Name: "no",
+		},
 	}
 
-	// Resource limits.
 	if p.cpuLimit > 0 {
-		args = append(args, "--cpus", fmt.Sprintf("%.2f", p.cpuLimit))
+		hostConfig.Resources.NanoCPUs = int64(p.cpuLimit * 1_000_000_000)
 	}
 	if p.memoryMB > 0 {
-		args = append(args, "--memory", fmt.Sprintf("%dm", p.memoryMB))
+		hostConfig.Resources.Memory = int64(p.memoryMB) * 1024 * 1024
 	}
 
-	// Extra environment variables.
-	for _, env := range p.extraEnv {
-		args = append(args, "-e", env)
-	}
-
-	// Image + infinite-sleep keep-alive.
-	args = append(args, p.image, "sleep", "infinity")
-
-	out, err = exec.Command("docker", args...).CombinedOutput()
+	resp, err := cli.ContainerCreate(ctx,
+		&container.Config{
+			Image:      p.image,
+			WorkingDir: "/workspace",
+			Env:        p.extraEnv,
+			Labels: map[string]string{
+				"openclawssy": "true",
+				"agent_id":    p.agentID,
+			},
+			Cmd: []string{"sleep", "infinity"},
+		},
+		hostConfig,
+		nil,
+		nil,
+		p.containerName,
+	)
 	if err != nil {
-		return "", fmt.Errorf("docker create failed: %s: %w",
-			strings.TrimSpace(string(out)), err)
+		return "", fmt.Errorf("docker create failed: %w", err)
 	}
-	return strings.TrimSpace(string(out)), nil
+	return strings.TrimSpace(resp.ID), nil
 }
 
-// startContainerIfNeeded starts the container if it is not already running.
-func (p *DockerProvider) startContainerIfNeeded(containerID string) error {
-	out, err := exec.Command("docker", "inspect", "--format",
-		"{{.State.Running}}", containerID).CombinedOutput()
-	if err == nil && strings.TrimSpace(string(out)) == "true" {
-		return nil // already running
+func (p *DockerProvider) startContainerIfNeeded(cli *client.Client, ctx context.Context, containerID string) error {
+	inspected, err := cli.ContainerInspect(ctx, containerID)
+	if err == nil && inspected.State != nil && inspected.State.Running {
+		return nil
 	}
-
-	startOut, startErr := exec.Command("docker", "start", containerID).CombinedOutput()
-	if startErr != nil {
-		return fmt.Errorf("docker start failed: %s: %w",
-			strings.TrimSpace(string(startOut)), startErr)
+	if err != nil && !errdefs.IsNotFound(err) {
+		return fmt.Errorf("docker inspect state failed: %w", err)
+	}
+	if err := cli.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+		return fmt.Errorf("docker start failed: %w", err)
 	}
 	return nil
 }
 
-// runInContainer runs cmd with args inside the container as the default user.
 func (p *DockerProvider) runInContainer(ctx context.Context, cmd string, args ...string) error {
-	fullArgs := append([]string{"exec", p.containerName, cmd}, args...)
-	out, err := exec.CommandContext(ctx, "docker", fullArgs...).CombinedOutput()
+	_, stderr, _, err := p.runInContainerWithResult(ctx, append([]string{cmd}, args...)...)
 	if err != nil {
-		return fmt.Errorf("sandbox: docker exec %s: %s: %w",
-			cmd, strings.TrimSpace(string(out)), err)
+		return fmt.Errorf("sandbox: docker exec %s: %s: %w", cmd, strings.TrimSpace(stderr), err)
 	}
 	return nil
 }
 
-// runAsRoot runs cmd with args inside the container as root (uid 0).
-// This is used for administrative operations like mkdir and chmod.
+func (p *DockerProvider) runInContainerWithResult(ctx context.Context, argv ...string) (string, string, int, error) {
+	p.mu.RLock()
+	containerName := p.containerName
+	p.mu.RUnlock()
+	return p.execInContainer(ctx, containerName, "", argv)
+}
+
 func (p *DockerProvider) runAsRoot(ctx context.Context, cmd string, args ...string) error {
-	fullArgs := append([]string{"exec", "--user", "root", p.containerName, cmd}, args...)
-	out, err := exec.CommandContext(ctx, "docker", fullArgs...).CombinedOutput()
+	_, stderr, _, err := p.execAsRoot(ctx, append([]string{cmd}, args...)...)
 	if err != nil {
-		return fmt.Errorf("sandbox: docker exec (root) %s: %s: %w",
-			cmd, strings.TrimSpace(string(out)), err)
+		return fmt.Errorf("sandbox: docker exec (root) %s: %s: %w", cmd, strings.TrimSpace(stderr), err)
 	}
 	return nil
+}
+
+func (p *DockerProvider) execAsRoot(ctx context.Context, argv ...string) (string, string, int, error) {
+	p.mu.RLock()
+	containerName := p.containerName
+	p.mu.RUnlock()
+	return p.execInContainer(ctx, containerName, "0", argv)
+}
+
+func (p *DockerProvider) execInContainer(ctx context.Context, containerName, user string, argv []string) (string, string, int, error) {
+	cli, err := p.dockerClient()
+	if err != nil {
+		return "", "", -1, err
+	}
+
+	createResp, err := cli.ContainerExecCreate(ctx, containerName, container.ExecOptions{
+		User:         user,
+		AttachStdout: true,
+		AttachStderr: true,
+		Cmd:          argv,
+	})
+	if err != nil {
+		return "", "", -1, err
+	}
+
+	attachResp, err := cli.ContainerExecAttach(ctx, createResp.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return "", "", -1, err
+	}
+	defer attachResp.Close()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, attachResp.Reader); err != nil {
+		return "", "", -1, err
+	}
+
+	inspectResp, err := cli.ContainerExecInspect(ctx, createResp.ID)
+	if err != nil {
+		return stdout.String(), stderr.String(), -1, err
+	}
+
+	exitCode := inspectResp.ExitCode
+	if exitCode != 0 {
+		return stdout.String(), stderr.String(), exitCode, fmt.Errorf("exit status %d", exitCode)
+	}
+
+	return stdout.String(), stderr.String(), exitCode, nil
+}
+
+func tarSingleFile(name string, data []byte, perm os.FileMode) (io.Reader, error) {
+	if perm == 0 {
+		perm = 0o644
+	}
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	hdr := &tar.Header{
+		Name: filepath.Base(name),
+		Mode: int64(perm.Perm()),
+		Size: int64(len(data)),
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		return nil, fmt.Errorf("sandbox: write tar header: %w", err)
+	}
+	if _, err := tw.Write(data); err != nil {
+		return nil, fmt.Errorf("sandbox: write tar file content: %w", err)
+	}
+	if err := tw.Close(); err != nil {
+		return nil, fmt.Errorf("sandbox: finalize tar stream: %w", err)
+	}
+	return bytes.NewReader(buf.Bytes()), nil
 }
 
 // shellescape wraps s in single quotes, escaping any embedded single quotes,
