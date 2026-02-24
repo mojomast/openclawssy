@@ -1373,6 +1373,9 @@ func TestToolNameHelpersAndAllowlist(t *testing.T) {
 	if !isToolAllowed("agent.switch", []string{"agent.switch"}) {
 		t.Fatal("expected agent.switch to be allowed when explicitly granted")
 	}
+	if !isToolAllowed("agent.identity.set", []string{"agent.identity.set"}) {
+		t.Fatal("expected agent.identity.set to be allowed when explicitly granted")
+	}
 	if !isToolAllowed("policy.grant", []string{"policy.grant"}) {
 		t.Fatal("expected policy.grant to be allowed when explicitly granted")
 	}
@@ -1421,6 +1424,9 @@ func TestToolNameHelpersAndAllowlist(t *testing.T) {
 	}
 	if canonical, ok := canonicalToolName("agent.switch"); !ok || canonical != "agent.switch" {
 		t.Fatalf("expected agent.switch canonical mapping, got ok=%v canonical=%q", ok, canonical)
+	}
+	if canonical, ok := canonicalToolName("agent.identity.set"); !ok || canonical != "agent.identity.set" {
+		t.Fatalf("expected agent.identity.set canonical mapping, got ok=%v canonical=%q", ok, canonical)
 	}
 	if canonical, ok := canonicalToolName("policy.revoke"); !ok || canonical != "policy.revoke" {
 		t.Fatalf("expected policy.revoke canonical mapping, got ok=%v canonical=%q", ok, canonical)

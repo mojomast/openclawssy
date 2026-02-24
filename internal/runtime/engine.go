@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"openclawssy/internal/agent"
+	"openclawssy/internal/agentdocs"
 	"openclawssy/internal/artifacts"
 	"openclawssy/internal/audit"
 	"openclawssy/internal/chatstore"
@@ -129,34 +130,8 @@ func (e *Engine) Init(agentID string, force bool) error {
 	}
 
 	agentRoot := filepath.Join(e.agentsDir, agentID)
-	if err := os.MkdirAll(filepath.Join(agentRoot, "memory"), 0o755); err != nil {
-		return fmt.Errorf("runtime: create memory dir: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Join(agentRoot, "audit"), 0o755); err != nil {
-		return fmt.Errorf("runtime: create audit dir: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Join(agentRoot, "runs"), 0o755); err != nil {
-		return fmt.Errorf("runtime: create runs dir: %w", err)
-	}
-
-	files := map[string]string{
-		"SOUL.md":     "# SOUL\n\nYou are Openclawssy, a high-accountability software engineering agent.\n\n## Mission\n- Deliver correct, verifiable outcomes with minimal user friction.\n- Prefer concrete execution and evidence over speculation.\n- Keep users informed with concise, actionable updates.\n\n## Quality Bar\n- Validate assumptions against repository context before making changes.\n- Preserve user intent and existing architecture unless directed otherwise.\n- When uncertain, pick the safest reasonable default and explain tradeoffs.\n",
-		"RULES.md":    "# RULES\n\n- Follow workspace-only write policy and capability boundaries.\n- Never expose secrets in plain text output.\n- Keep responses concise, factual, and directly tied to user goals.\n- Run targeted verification for non-trivial changes whenever feasible.\n- If blocked by missing credentials or irreversible choices, ask one precise question with a recommended default.\n",
-		"TOOLS.md":    "# TOOLS\n\nEnabled core tools: fs.read, fs.list, fs.write, fs.append, fs.delete, fs.move, fs.edit, code.search, config.get, config.set, secrets.get, secrets.set, secrets.list, skill.list, skill.read, scheduler.list, scheduler.add, scheduler.remove, scheduler.pause, scheduler.resume, session.list, session.close, agent.list, agent.create, agent.switch, agent.profile.get, agent.profile.set, agent.message.send, agent.message.inbox, agent.run, agent.prompt.read, agent.prompt.update, agent.prompt.suggest, policy.list, policy.grant, policy.revoke, run.list, run.get, run.cancel, metrics.get, memory.search, memory.write, memory.update, memory.forget, memory.health, memory.checkpoint, memory.maintenance, decision.log, http.request, time.now.\n",
-		"SPECPLAN.md": "# SPECPLAN\n\nDescribe specs and acceptance requirements before coding.\n",
-		"DEVPLAN.md":  "# DEVPLAN\n\n- [ ] Implement task\n- [ ] Add tests\n- [ ] Update handoff\n",
-		"HANDOFF.md":  "# HANDOFF\n\nStatus: initialized\n\nNext:\n- Define first run objective.\n",
-	}
-	for name, body := range files {
-		path := filepath.Join(agentRoot, name)
-		if !force {
-			if _, err := os.Stat(path); err == nil {
-				continue
-			}
-		}
-		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-			return fmt.Errorf("runtime: write %s: %w", name, err)
-		}
+	if _, err := agentdocs.SeedAgentScaffold(agentRoot, force); err != nil {
+		return fmt.Errorf("runtime: scaffold agent: %w", err)
 	}
 
 	cfgPath := filepath.Join(e.rootDir, ".openclawssy", "config.json")
@@ -1015,6 +990,8 @@ func appendToolCallMessage(store *chatstore.Store, sessionID, runID string, rec 
 func (e *Engine) loadPromptDocs(agentID string) ([]agent.ArtifactDoc, error) {
 	agentRoot := filepath.Join(e.agentsDir, agentID)
 	docs := make([]agent.ArtifactDoc, 0, len(promptDocOrder)+2)
+	soulContent := ""
+	hasSoulDoc := false
 	for _, name := range promptDocOrder {
 		path := filepath.Join(agentRoot, name)
 		data, err := os.ReadFile(path)
@@ -1024,11 +1001,30 @@ func (e *Engine) loadPromptDocs(agentID string) ([]agent.ArtifactDoc, error) {
 			}
 			return nil, fmt.Errorf("runtime: read %s: %w", name, err)
 		}
-		docs = append(docs, agent.ArtifactDoc{Name: name, Content: string(data)})
+		content := string(data)
+		docs = append(docs, agent.ArtifactDoc{Name: name, Content: content})
+		if name == "SOUL.md" {
+			soulContent = content
+			hasSoulDoc = true
+		}
+	}
+	if !hasSoulDoc || agentdocs.SoulNeedsBootstrap(soulContent) {
+		docs = append(docs, agent.ArtifactDoc{Name: "IDENTITY_BOOTSTRAP.md", Content: identityBootstrapDoc()})
 	}
 	docs = append(docs, agent.ArtifactDoc{Name: "RUNTIME_CONTEXT.md", Content: runtimeContextDoc(e.workspaceDir)})
 	docs = append(docs, agent.ArtifactDoc{Name: "TOOL_CALLING_BEST_PRACTICES.md", Content: toolCallingBestPracticesDocWithAgentTools()})
 	return docs, nil
+}
+
+func identityBootstrapDoc() string {
+	return "# IDENTITY_BOOTSTRAP\n\n" +
+		"SOUL.md is empty or uninitialized. Run identity hatch before normal task work.\n\n" +
+		"## Required flow\n" +
+		"- Ask at most one question per response until both names are known.\n" +
+		"- Collect exactly two values: user preferred name and assistant name.\n" +
+		"- When both are known, call `agent.identity.set` with `user_name` and `assistant_name`.\n" +
+		"- After the tool succeeds, confirm the names and continue with the user's latest request.\n" +
+		"- Do not call `agent.prompt.update` for this bootstrap flow.\n"
 }
 
 func runtimeContextDoc(workspaceDir string) string {
@@ -1038,7 +1034,7 @@ func runtimeContextDoc(workspaceDir string) string {
 	)
 	doc = strings.Replace(doc,
 		"- Run tools (run.list/run.get) retrieve run traces and summaries from the run store; use filtering and pagination for large result sets.",
-		"- Agent tools (agent.list/agent.create/agent.switch) manage per-agent control-plane directories and update default chat/discord routing in config.\n- Run tools (run.list/run.get/run.cancel) retrieve run traces and summaries from the run store and can cancel tracked in-flight runs.",
+		"- Agent tools (agent.list/agent.create/agent.switch/agent.identity.set) manage per-agent control-plane directories and update default chat/discord routing in config.\n- Run tools (run.list/run.get/run.cancel) retrieve run traces and summaries from the run store and can cancel tracked in-flight runs.",
 		1,
 	)
 	doc = strings.Replace(doc,
@@ -1115,6 +1111,9 @@ func toolCallingBestPracticesDocWithAgentTools() string {
 		"- Use agent.list to inspect available agents, agent.create to scaffold missing agents, and agent.switch to update chat/discord defaults safely.\n- Use agent.profile.get/agent.profile.set for per-agent activation and model/provider controls.\n- Use agent.message.send/agent.message.inbox for structured inter-agent collaboration and agent.run for direct subagent execution.\n- Use agent.prompt.read/agent.prompt.suggest for prompt governance, and use agent.prompt.update only when self-improvement controls allow it.\n- Use policy.list/policy.grant/policy.revoke for capability governance; only agents with policy.admin should mutate grants.\n- Use run.list to enumerate runs with filtering (agent_id, status), use run.get for details, and use run.cancel to stop a running task when needed.\n- Use metrics.get to inspect run-level and per-tool duration/error trends.",
 		1,
 	)
+	doc += "\n- Use agent.identity.set to bootstrap SOUL identity fields when SOUL.md is empty; provide assistant_name and user_name."
+	doc += "\n- Tool success pattern: successful calls return structured JSON result objects (often including flags like updated/created/deleted and identifying fields); treat this as completion evidence and continue the task instead of re-calling the same tool without new inputs."
+	doc += "\n- Tool failure pattern: failed calls return coded errors (for example tool.input_invalid, policy.denied, timeout, internal.error); read the error, adjust arguments/strategy, and avoid blind retries with identical inputs."
 	return doc
 }
 
@@ -1312,7 +1311,7 @@ func normalizeToolArgs(toolName string, args map[string]any) map[string]any {
 				}
 			}
 		}
-	case "agent.create", "agent.switch", "agent.run", "agent.prompt.read", "agent.prompt.update", "agent.prompt.suggest", "agent.profile.get", "agent.profile.set":
+	case "agent.create", "agent.switch", "agent.run", "agent.prompt.read", "agent.prompt.update", "agent.prompt.suggest", "agent.profile.get", "agent.profile.set", "agent.identity.set":
 		if getStringArg(args, "agent_id") == "" {
 			for _, key := range []string{"id", "agent", "name", "agentId"} {
 				if value := getStringArg(args, key); value != "" {
@@ -1457,7 +1456,7 @@ func sanitizePathArg(path string) string {
 }
 
 func (e *Engine) allowedTools(cfg config.Config) []string {
-	toolsList := []string{"fs.read", "fs.list", "fs.write", "fs.append", "fs.delete", "fs.move", "fs.edit", "code.search", "config.get", "config.set", "secrets.get", "secrets.set", "secrets.list", "skill.list", "skill.read", "scheduler.list", "scheduler.add", "scheduler.remove", "scheduler.pause", "scheduler.resume", "session.list", "session.close", "agent.list", "agent.create", "agent.switch", "agent.profile.get", "agent.profile.set", "agent.message.send", "agent.message.inbox", "agent.run", "agent.prompt.read", "agent.prompt.update", "agent.prompt.suggest", "policy.list", "policy.grant", "policy.revoke", "run.list", "run.get", "run.cancel", "metrics.get", "memory.search", "memory.write", "memory.update", "memory.forget", "memory.health", "memory.checkpoint", "memory.maintenance", "decision.log", "time.now"}
+	toolsList := []string{"fs.read", "fs.list", "fs.write", "fs.append", "fs.delete", "fs.move", "fs.edit", "code.search", "config.get", "config.set", "secrets.get", "secrets.set", "secrets.list", "skill.list", "skill.read", "scheduler.list", "scheduler.add", "scheduler.remove", "scheduler.pause", "scheduler.resume", "session.list", "session.close", "agent.list", "agent.create", "agent.switch", "agent.profile.get", "agent.profile.set", "agent.message.send", "agent.message.inbox", "agent.run", "agent.prompt.read", "agent.prompt.update", "agent.prompt.suggest", "agent.identity.set", "policy.list", "policy.grant", "policy.revoke", "run.list", "run.get", "run.cancel", "metrics.get", "memory.search", "memory.write", "memory.update", "memory.forget", "memory.health", "memory.checkpoint", "memory.maintenance", "decision.log", "time.now"}
 	if cfg.Network.Enabled {
 		toolsList = append(toolsList, "http.request")
 	}

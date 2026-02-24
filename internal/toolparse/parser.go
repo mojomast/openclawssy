@@ -46,6 +46,7 @@ var toolAliases = map[string]string{
 	"agent.prompt.read":    "agent.prompt.read",
 	"agent.prompt.update":  "agent.prompt.update",
 	"agent.prompt.suggest": "agent.prompt.suggest",
+	"agent.identity.set":   "agent.identity.set",
 	"policy.list":          "policy.list",
 	"policy.grant":         "policy.grant",
 	"policy.revoke":        "policy.revoke",
