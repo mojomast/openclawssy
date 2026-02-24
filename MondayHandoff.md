@@ -146,7 +146,7 @@ http://<tailscale-ip>:8081/dashboard?token=change-me
 **Solution:** Add `?token=change-me` to URL or set `OPENCLAWSSY_TOKEN` in `.env`
 
 ### Issue: "Chat sender is not allowlisted"
-**Solution:** Clear `chat.allow_users` and `chat.allow_rooms` in config (set to empty arrays `[]`)
+**Solution:** Ensure `chat.allow_users` includes `dashboard_user` (and any additional approved senders)
 
 ### Issue: Port already allocated
 **Solution:** Change port in `docker-compose.yml` (e.g., `8082:8080`)

@@ -612,11 +612,15 @@ func buildDashboardChatConnector(cfg config.Config, connector *chat.Connector) h
 	if !cfg.Chat.Enabled || connector == nil {
 		return nil
 	}
+	allowUsers := append([]string(nil), cfg.Chat.AllowUsers...)
+	if len(allowUsers) == 0 {
+		allowUsers = []string{"dashboard_user"}
+	}
 	return scopedChatAdapter{
 		connector:      connector,
 		source:         "dashboard",
 		defaultAgentID: cfg.Chat.DefaultAgentID,
-		allow:          chat.NewAllowlist(cfg.Chat.AllowUsers, cfg.Chat.AllowRooms),
+		allow:          chat.NewAllowlist(allowUsers, cfg.Chat.AllowRooms),
 		limiter:        chat.NewRateLimiter(cfg.Chat.RateLimitPerMin, time.Minute),
 	}
 }

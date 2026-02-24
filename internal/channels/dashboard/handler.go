@@ -1103,7 +1103,7 @@ Use <code>none</code> to disable sandbox execution tools.
 <div class="section-title">Allowlists</div>
 <div class="form-grid">
 <div class="field">
-<label for="cfgChatUsers">Chat users</label>
+<label for="cfgChatUsers">Chat senders</label>
 <textarea id="cfgChatUsers" placeholder="one entry per line"></textarea>
 </div>
 <div class="field">
@@ -1305,7 +1305,7 @@ return items.join('\n');
 
 function textToList(value){
 if(!value)return [];
-return value.split(/\n|,/).map(function(v){return v.trim();}).filter(function(v){return v.length>0;});
+return value.split(/[\s,;]+/).map(function(v){return v.trim();}).filter(function(v){return v.length>0;});
 }
 
 function providerSecretKey(provider){
@@ -1896,7 +1896,7 @@ const result=await j('/v1/chat/messages',{method:'POST',body:JSON.stringify({use
 if(result.error){
 let errorText=String(result.error||'request failed');
 if(result.status===403&&errorText.toLowerCase().indexOf('not allowlisted')!==-1){
-errorText+=' (add "dashboard_user" to chat.allow_users in config)';
+errorText+=' (add "dashboard_user" to chat.allow_users)';
 }
 chatMessages[thinkingIdx]={role:'assistant',content:'Error: '+errorText};
 }else if(result.id){

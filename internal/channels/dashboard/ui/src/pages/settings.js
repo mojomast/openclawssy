@@ -77,7 +77,7 @@ function toLineList(value) {
 
 function parseLineList(value) {
   return asString(value)
-    .split(/\n|,/) 
+    .split(/[\s,;]+/)
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
 }
@@ -896,9 +896,9 @@ function buildChatCategory(panel, fieldErrors) {
   appendListField({
     parent: panel,
     query,
-    title: "Allowed chat users",
+    title: "Allowed chat senders",
     path: "chat.allow_users",
-    helpText: "Optional allowlist of user ids.",
+    helpText: "Allowlist of sender/user ids. Include dashboard_user for dashboard chat access.",
     placeholder: "alice\nbob",
     fieldErrors,
   });

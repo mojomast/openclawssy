@@ -276,6 +276,7 @@ func Default() Config {
 		Chat: ChatConfig{
 			Enabled:               true,
 			DefaultAgentID:        "default",
+			AllowUsers:            []string{"dashboard_user"},
 			RateLimitPerMin:       20,
 			GlobalRateLimitPerMin: 120,
 		},

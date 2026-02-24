@@ -159,6 +159,27 @@ func TestScopedChatAdapterRateLimitIncludesCooldown(t *testing.T) {
 	}
 }
 
+func TestBuildDashboardChatConnectorDefaultsAllowUsersToDashboardUser(t *testing.T) {
+	cfg := config.Default()
+	cfg.Chat.AllowUsers = nil
+	connector := &chat.Connector{}
+
+	built := buildDashboardChatConnector(cfg, connector)
+	adapter, ok := built.(scopedChatAdapter)
+	if !ok {
+		t.Fatalf("expected scopedChatAdapter, got %T", built)
+	}
+	if adapter.allow == nil {
+		t.Fatal("expected non-nil allowlist")
+	}
+	if !adapter.allow.MessageAllowed("dashboard_user", "dashboard") {
+		t.Fatal("expected dashboard_user to be allowlisted by default")
+	}
+	if adapter.allow.MessageAllowed("someone_else", "dashboard") {
+		t.Fatal("expected non-dashboard users to be denied by default")
+	}
+}
+
 func TestResolveScheduledJobSessionUsesActivePointer(t *testing.T) {
 	store, err := chatstore.NewStore(filepath.Join(t.TempDir(), ".openclawssy", "agents"))
 	if err != nil {
