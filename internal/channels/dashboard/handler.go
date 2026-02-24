@@ -290,7 +290,8 @@ func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request) {
 			"provider": cfg.Model.Provider,
 			"name":     cfg.Model.Name,
 		},
-		"discord_enabled": cfg.Discord.Enabled,
+		"discord_enabled":  cfg.Discord.Enabled,
+		"telegram_enabled": cfg.Telegram.Enabled,
 	}
 	writeJSON(w, out)
 }
@@ -1077,6 +1078,7 @@ summary{cursor:pointer;color:#9db2d4}
 <div class="toggles">
 <label class="toggle"><input id="cfgChatEnabled" type="checkbox"/>Chat enabled</label>
 <label class="toggle"><input id="cfgDiscordEnabled" type="checkbox"/>Discord enabled</label>
+<label class="toggle"><input id="cfgTelegramEnabled" type="checkbox"/>Telegram enabled</label>
 <label class="toggle"><input id="cfgSandboxActive" type="checkbox" onchange="onSandboxActiveChange()"/>Sandbox active</label>
 <label class="toggle"><input id="cfgShellExecEnabled" type="checkbox"/>Shell exec enabled</label>
 </div>
@@ -1122,6 +1124,14 @@ Use <code>none</code> to disable sandbox execution tools.
 <label for="cfgDiscordGuilds">Discord guilds</label>
 <textarea id="cfgDiscordGuilds" placeholder="one entry per line"></textarea>
 </div>
+<div class="field">
+<label for="cfgTelegramUsers">Telegram users</label>
+<textarea id="cfgTelegramUsers" placeholder="one entry per line"></textarea>
+</div>
+<div class="field">
+<label for="cfgTelegramChats">Telegram chats</label>
+<textarea id="cfgTelegramChats" placeholder="one entry per line"></textarea>
+</div>
 </div>
 
 <details>
@@ -1148,6 +1158,14 @@ Use <code>none</code> to disable sandbox execution tools.
 <div class="button-row">
 <input id="discordTokenValue" type="password" placeholder="discord bot token" style="flex:1;min-width:230px;background:#0b1020;color:#e8eefc;border:1px solid #333;padding:8px;border-radius:4px"/>
 <button onclick="storeDiscordToken()">Store discord bot token</button>
+</div>
+</div>
+
+<div class="helper-box">
+<div class="helper-label">Telegram helper</div>
+<div class="button-row">
+<input id="telegramTokenValue" type="password" placeholder="telegram bot token" style="flex:1;min-width:230px;background:#0b1020;color:#e8eefc;border:1px solid #333;padding:8px;border-radius:4px"/>
+<button onclick="storeTelegramToken()">Store telegram bot token</button>
 </div>
 </div>
 
@@ -1338,6 +1356,7 @@ if(!cfg.providers)cfg.providers={};
 if(!cfg.providers.generic)cfg.providers.generic={};
 if(!cfg.chat)cfg.chat={};
 if(!cfg.discord)cfg.discord={};
+if(!cfg.telegram)cfg.telegram={};
 if(!cfg.sandbox)cfg.sandbox={};
 if(!cfg.shell)cfg.shell={};
 if(!cfg.sandbox.provider)cfg.sandbox.provider='none';
@@ -1351,6 +1370,7 @@ byId('cfgTemperature').value=(typeof cfg.model.temperature==='number')?String(cf
 byId('cfgGenericBaseURL').value=(cfg.providers.generic&&cfg.providers.generic.base_url)||'';
 byId('cfgChatEnabled').checked=!!cfg.chat.enabled;
 byId('cfgDiscordEnabled').checked=!!cfg.discord.enabled;
+byId('cfgTelegramEnabled').checked=!!cfg.telegram.enabled;
 byId('cfgSandboxActive').checked=!!cfg.sandbox.active;
 const sandboxProvider=(cfg.sandbox.provider||'none').toLowerCase();
 if(sandboxProvider==='local'||sandboxProvider==='none'||sandboxProvider==='docker'){
@@ -1364,6 +1384,8 @@ byId('cfgChatRooms').value=listToText(cfg.chat.allow_rooms);
 byId('cfgDiscordUsers').value=listToText(cfg.discord.allow_users);
 byId('cfgDiscordChannels').value=listToText(cfg.discord.allow_channels);
 byId('cfgDiscordGuilds').value=listToText(cfg.discord.allow_guilds);
+byId('cfgTelegramUsers').value=listToText(cfg.telegram.allow_users);
+byId('cfgTelegramChats').value=listToText(cfg.telegram.allow_chats);
 onProviderChange();
 }
 
@@ -1386,6 +1408,7 @@ cfg.model.temperature=Number(tempRaw);
 }
 cfg.chat.enabled=byId('cfgChatEnabled').checked;
 cfg.discord.enabled=byId('cfgDiscordEnabled').checked;
+cfg.telegram.enabled=byId('cfgTelegramEnabled').checked;
 cfg.sandbox.active=byId('cfgSandboxActive').checked;
 cfg.sandbox.provider=byId('cfgSandboxProvider').value.trim().toLowerCase();
 cfg.shell.enable_exec=byId('cfgShellExecEnabled').checked;
@@ -1394,6 +1417,8 @@ cfg.chat.allow_rooms=textToList(byId('cfgChatRooms').value);
 cfg.discord.allow_users=textToList(byId('cfgDiscordUsers').value);
 cfg.discord.allow_channels=textToList(byId('cfgDiscordChannels').value);
 cfg.discord.allow_guilds=textToList(byId('cfgDiscordGuilds').value);
+cfg.telegram.allow_users=textToList(byId('cfgTelegramUsers').value);
+cfg.telegram.allow_chats=textToList(byId('cfgTelegramChats').value);
 if(provider==='generic'){
 cfg.providers.generic.base_url=byId('cfgGenericBaseURL').value.trim();
 }
@@ -1497,6 +1522,14 @@ if(!value){alert('Discord token value required');return;}
 const result=await storeSecret('discord/bot_token',value);
 byId('secrets').textContent=JSON.stringify(result,null,2);
 if(result.ok)byId('discordTokenValue').value='';
+}
+
+async function storeTelegramToken(){
+const value=byId('telegramTokenValue').value;
+if(!value){alert('Telegram token value required');return;}
+const result=await storeSecret('telegram/bot_token',value);
+byId('secrets').textContent=JSON.stringify(result,null,2);
+if(result.ok)byId('telegramTokenValue').value='';
 }
 
 async function listSecrets(){
@@ -1934,7 +1967,7 @@ renderChat();
 }
 
 function wireFormPreviewUpdates(){
-['cfgProvider','cfgModelName','cfgTemperature','cfgGenericBaseURL','cfgChatEnabled','cfgDiscordEnabled','cfgSandboxActive','cfgShellExecEnabled','cfgChatUsers','cfgChatRooms','cfgDiscordUsers','cfgDiscordChannels','cfgDiscordGuilds'].forEach(function(id){
+['cfgProvider','cfgModelName','cfgTemperature','cfgGenericBaseURL','cfgChatEnabled','cfgDiscordEnabled','cfgTelegramEnabled','cfgSandboxActive','cfgShellExecEnabled','cfgChatUsers','cfgChatRooms','cfgDiscordUsers','cfgDiscordChannels','cfgDiscordGuilds','cfgTelegramUsers','cfgTelegramChats'].forEach(function(id){
 const el=byId(id);
 if(!el)return;
 el.addEventListener('input',updateRawPreview);

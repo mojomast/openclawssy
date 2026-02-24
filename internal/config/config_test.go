@@ -185,6 +185,7 @@ func TestRedactedClearsSensitiveFieldsOnly(t *testing.T) {
 	cfg.Providers.ZAI.APIKey = "zai-key"
 	cfg.Providers.Generic.APIKey = "generic-key"
 	cfg.Discord.Token = "discord-token"
+	cfg.Telegram.Token = "telegram-token"
 	cfg.Model.Name = "kept-model"
 
 	redacted := cfg.Redacted()
@@ -195,8 +196,19 @@ func TestRedactedClearsSensitiveFieldsOnly(t *testing.T) {
 	if redacted.Discord.Token != "" {
 		t.Fatalf("expected discord token redacted, got %q", redacted.Discord.Token)
 	}
+	if redacted.Telegram.Token != "" {
+		t.Fatalf("expected telegram token redacted, got %q", redacted.Telegram.Token)
+	}
 	if redacted.Model.Name != "kept-model" {
 		t.Fatalf("expected non-sensitive model name preserved, got %q", redacted.Model.Name)
+	}
+}
+
+func TestValidateRejectsTelegramRateLimitUnderOne(t *testing.T) {
+	cfg := Default()
+	cfg.Telegram.RateLimitPerMin = 0
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for telegram.rate_limit_per_min")
 	}
 }
 

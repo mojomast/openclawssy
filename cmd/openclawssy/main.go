@@ -23,6 +23,7 @@ import (
 	"openclawssy/internal/channels/dashboard"
 	"openclawssy/internal/channels/discord"
 	httpchannel "openclawssy/internal/channels/http"
+	"openclawssy/internal/channels/telegram"
 	"openclawssy/internal/chatstore"
 	"openclawssy/internal/config"
 	"openclawssy/internal/runtime"
@@ -124,6 +125,9 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 		if token, ok, _ := secretStore.Get("discord/bot_token"); ok && strings.TrimSpace(token) != "" {
 			runtimeCfg.Discord.Token = token
 		}
+		if token, ok, _ := secretStore.Get("telegram/bot_token"); ok && strings.TrimSpace(token) != "" {
+			runtimeCfg.Telegram.Token = token
+		}
 	}
 
 	jobsStore, err := scheduler.NewStore(serveCfg.JobsFile)
@@ -138,7 +142,7 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 		fmt.Fprintln(os.Stderr, "scheduler setup warning:", err)
 	}
 	var schedulerChatStore *chatstore.Store
-	if runtimeCfg.Chat.Enabled || runtimeCfg.Discord.Enabled {
+	if runtimeCfg.Chat.Enabled || runtimeCfg.Discord.Enabled || runtimeCfg.Telegram.Enabled {
 		schedulerChatStore, err = chatstore.NewStore(filepath.Join(".openclawssy", "agents"))
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "failed to initialize scheduler chat delivery:", err)
@@ -200,6 +204,28 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 			fmt.Fprintln(os.Stderr, "discord start failed:", err)
 		} else {
 			defer dBot.Stop()
+		}
+	}
+
+	var tBot *telegram.Bot
+	if runtimeCfg.Telegram.Enabled {
+		tBot, err = telegram.New(
+			runtimeCfg,
+			buildTelegramMessageHandler(sharedChat, runtimeCfg.Telegram.DefaultAgentID),
+			func(ctx context.Context, runID string) (telegram.RunStatus, error) {
+				run, err := runStore.Get(ctx, runID)
+				if err != nil {
+					return telegram.RunStatus{}, err
+				}
+				return telegram.RunStatus{Status: run.Status, Output: run.Output, Error: run.Error, ArtifactPath: run.ArtifactPath, Trace: run.Trace}, nil
+			},
+		)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "telegram disabled:", err)
+		} else if err := tBot.Start(); err != nil {
+			fmt.Fprintln(os.Stderr, "telegram start failed:", err)
+		} else {
+			defer tBot.Stop()
 		}
 	}
 
@@ -569,7 +595,7 @@ func (e runtimeExecutor) Execute(ctx context.Context, input httpchannel.Executio
 }
 
 func buildSharedChatConnector(cfg config.Config, store httpchannel.RunStore, exec httpchannel.RunExecutor, eventBus *httpchannel.RunEventBus) (*chat.Connector, error) {
-	if !cfg.Chat.Enabled && !cfg.Discord.Enabled {
+	if !cfg.Chat.Enabled && !cfg.Discord.Enabled && !cfg.Telegram.Enabled {
 		return nil, nil
 	}
 	chatStore, err := chatstore.NewStore(filepath.Join(".openclawssy", "agents"))
@@ -579,6 +605,9 @@ func buildSharedChatConnector(cfg config.Config, store httpchannel.RunStore, exe
 	defaultAgentID := strings.TrimSpace(cfg.Chat.DefaultAgentID)
 	if defaultAgentID == "" {
 		defaultAgentID = strings.TrimSpace(cfg.Discord.DefaultAgentID)
+	}
+	if defaultAgentID == "" {
+		defaultAgentID = strings.TrimSpace(cfg.Telegram.DefaultAgentID)
 	}
 	if defaultAgentID == "" {
 		defaultAgentID = "default"
@@ -627,22 +656,36 @@ func buildDashboardChatConnector(cfg config.Config, connector *chat.Connector) h
 
 func buildDiscordMessageHandler(connector *chat.Connector, defaultAgentID string) discord.MessageHandler {
 	return func(ctx context.Context, msg discord.Message) (discord.Response, error) {
-		if connector == nil {
-			return discord.Response{}, errors.New("chat connector is disabled")
-		}
-		agentID := strings.TrimSpace(msg.AgentID)
-		if agentID == "" {
-			agentID = strings.TrimSpace(defaultAgentID)
-		}
-		if agentID == "" {
-			agentID = "default"
-		}
-		queued, err := connector.HandleMessage(ctx, chat.Message{UserID: msg.UserID, RoomID: msg.RoomID, AgentID: agentID, Source: "discord", Text: msg.Text, ThinkingMode: msg.ThinkingMode})
+		queued, err := queueChannelMessage(ctx, connector, defaultAgentID, "discord", msg.UserID, msg.RoomID, msg.AgentID, msg.Text, msg.ThinkingMode)
 		if err != nil {
 			return discord.Response{}, err
 		}
 		return discord.Response{ID: queued.ID, Status: queued.Status, Response: queued.Response}, nil
 	}
+}
+
+func buildTelegramMessageHandler(connector *chat.Connector, defaultAgentID string) telegram.MessageHandler {
+	return func(ctx context.Context, msg telegram.Message) (telegram.Response, error) {
+		queued, err := queueChannelMessage(ctx, connector, defaultAgentID, "telegram", msg.UserID, msg.RoomID, msg.AgentID, msg.Text, msg.ThinkingMode)
+		if err != nil {
+			return telegram.Response{}, err
+		}
+		return telegram.Response{ID: queued.ID, Status: queued.Status, Response: queued.Response}, nil
+	}
+}
+
+func queueChannelMessage(ctx context.Context, connector *chat.Connector, defaultAgentID, source, userID, roomID, requestedAgentID, text, thinkingMode string) (chat.Result, error) {
+	if connector == nil {
+		return chat.Result{}, errors.New("chat connector is disabled")
+	}
+	agentID := strings.TrimSpace(requestedAgentID)
+	if agentID == "" {
+		agentID = strings.TrimSpace(defaultAgentID)
+	}
+	if agentID == "" {
+		agentID = "default"
+	}
+	return connector.HandleMessage(ctx, chat.Message{UserID: userID, RoomID: roomID, AgentID: agentID, Source: source, Text: text, ThinkingMode: thinkingMode})
 }
 
 type scopedChatAdapter struct {
@@ -747,6 +790,28 @@ func handleSetup(args []string) int {
 				return 1
 			}
 			if err := store.Set("discord/bot_token", discordToken); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+		}
+	}
+
+	telegramEnabled := prompt(in, "Enable Telegram bot bridge? [y/N]", "N")
+	if strings.EqualFold(telegramEnabled, "y") {
+		cfg.Telegram.Enabled = true
+		telegramToken := prompt(in, "Telegram bot token (stored encrypted; optional if env used)", "")
+		if telegramToken != "" {
+			cfg.Telegram.Token = ""
+			if err := ensureMasterKey(cfg.Secrets.MasterKeyFile); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			store, err := secrets.NewStore(cfg)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := store.Set("telegram/bot_token", telegramToken); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}

@@ -24,6 +24,7 @@ type Config struct {
 	Agents    AgentsConfig    `json:"agents"`
 	Chat      ChatConfig      `json:"chat"`
 	Discord   DiscordConfig   `json:"discord"`
+	Telegram  TelegramConfig  `json:"telegram"`
 	Secrets   SecretsConfig   `json:"secrets"`
 	Memory    MemoryConfig    `json:"memory"`
 }
@@ -180,6 +181,17 @@ type DiscordConfig struct {
 	RateLimitPerMin int      `json:"rate_limit_per_min,omitempty"`
 }
 
+type TelegramConfig struct {
+	Enabled         bool     `json:"enabled"`
+	Token           string   `json:"token,omitempty"`
+	TokenEnv        string   `json:"token_env,omitempty"`
+	DefaultAgentID  string   `json:"default_agent_id"`
+	AllowChats      []string `json:"allow_chats,omitempty"`
+	AllowUsers      []string `json:"allow_users,omitempty"`
+	CommandPrefix   string   `json:"command_prefix,omitempty"`
+	RateLimitPerMin int      `json:"rate_limit_per_min,omitempty"`
+}
+
 type SecretsConfig struct {
 	StoreFile     string `json:"store_file"`
 	MasterKeyFile string `json:"master_key_file"`
@@ -287,6 +299,13 @@ func Default() Config {
 			CommandPrefix:   "!ask",
 			RateLimitPerMin: 20,
 		},
+		Telegram: TelegramConfig{
+			Enabled:         false,
+			TokenEnv:        "TELEGRAM_BOT_TOKEN",
+			DefaultAgentID:  "default",
+			CommandPrefix:   "/ask",
+			RateLimitPerMin: 20,
+		},
 		Secrets: SecretsConfig{
 			StoreFile:     ".openclawssy/secrets.enc",
 			MasterKeyFile: ".openclawssy/master.key",
@@ -390,6 +409,18 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.Discord.RateLimitPerMin == 0 {
 		c.Discord.RateLimitPerMin = d.Discord.RateLimitPerMin
+	}
+	if c.Telegram.TokenEnv == "" {
+		c.Telegram.TokenEnv = d.Telegram.TokenEnv
+	}
+	if c.Telegram.DefaultAgentID == "" {
+		c.Telegram.DefaultAgentID = d.Telegram.DefaultAgentID
+	}
+	if c.Telegram.CommandPrefix == "" {
+		c.Telegram.CommandPrefix = d.Telegram.CommandPrefix
+	}
+	if c.Telegram.RateLimitPerMin == 0 {
+		c.Telegram.RateLimitPerMin = d.Telegram.RateLimitPerMin
 	}
 	if c.Secrets.StoreFile == "" {
 		c.Secrets.StoreFile = d.Secrets.StoreFile
@@ -573,6 +604,9 @@ func (c Config) Validate() error {
 	if c.Discord.RateLimitPerMin < 1 {
 		return errors.New("discord.rate_limit_per_min must be >= 1")
 	}
+	if c.Telegram.RateLimitPerMin < 1 {
+		return errors.New("telegram.rate_limit_per_min must be >= 1")
+	}
 	if c.Server.TLSEnabled {
 		if strings.TrimSpace(c.Server.TLSCertFile) == "" || strings.TrimSpace(c.Server.TLSKeyFile) == "" {
 			return errors.New("tls requires server.tls_cert_file and server.tls_key_file")
@@ -621,6 +655,7 @@ func (c Config) Redacted() Config {
 	redacted.Providers.ZAI.APIKey = ""
 	redacted.Providers.Generic.APIKey = ""
 	redacted.Discord.Token = ""
+	redacted.Telegram.Token = ""
 	return redacted
 }
 
