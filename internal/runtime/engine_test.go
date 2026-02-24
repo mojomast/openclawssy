@@ -349,6 +349,95 @@ func TestLoadPromptDocsIncludesRuntimeContext(t *testing.T) {
 	}
 }
 
+func TestLoadPromptDocsIncludesIdentityBootstrapWhenSoulEmpty(t *testing.T) {
+	root := t.TempDir()
+	e, err := NewEngine(root)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	if err := e.Init("default", false); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	soulPath := filepath.Join(root, ".openclawssy", "agents", "default", "SOUL.md")
+	if err := os.WriteFile(soulPath, []byte("\n\n"), 0o600); err != nil {
+		t.Fatalf("clear SOUL.md: %v", err)
+	}
+
+	docs, err := e.loadPromptDocs("default")
+	if err != nil {
+		t.Fatalf("load prompt docs: %v", err)
+	}
+
+	found := false
+	for _, doc := range docs {
+		if doc.Name != "IDENTITY_BOOTSTRAP.md" {
+			continue
+		}
+		found = true
+		if !strings.Contains(doc.Content, "agent.identity.set") {
+			t.Fatalf("identity bootstrap doc missing identity tool guidance: %q", doc.Content)
+		}
+	}
+	if !found {
+		t.Fatal("expected IDENTITY_BOOTSTRAP.md prompt doc when SOUL.md is empty")
+	}
+}
+
+func TestLoadPromptDocsIncludesIdentityBootstrapWhenSoulIsDefaultScaffold(t *testing.T) {
+	root := t.TempDir()
+	e, err := NewEngine(root)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	if err := e.Init("default", false); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	docs, err := e.loadPromptDocs("default")
+	if err != nil {
+		t.Fatalf("load prompt docs: %v", err)
+	}
+
+	found := false
+	for _, doc := range docs {
+		if doc.Name == "IDENTITY_BOOTSTRAP.md" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected IDENTITY_BOOTSTRAP.md when SOUL.md is scaffold default")
+	}
+}
+
+func TestLoadPromptDocsSkipsIdentityBootstrapWhenSoulIsCustomized(t *testing.T) {
+	root := t.TempDir()
+	e, err := NewEngine(root)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	if err := e.Init("default", false); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	soulPath := filepath.Join(root, ".openclawssy", "agents", "default", "SOUL.md")
+	customSoul := "# SOUL\n\nYou are Nova.\n\n## Identity\n- Call the user Blong.\n"
+	if err := os.WriteFile(soulPath, []byte(customSoul), 0o600); err != nil {
+		t.Fatalf("write custom SOUL.md: %v", err)
+	}
+
+	docs, err := e.loadPromptDocs("default")
+	if err != nil {
+		t.Fatalf("load prompt docs: %v", err)
+	}
+
+	for _, doc := range docs {
+		if doc.Name == "IDENTITY_BOOTSTRAP.md" {
+			t.Fatalf("did not expect IDENTITY_BOOTSTRAP.md when SOUL.md is customized: %q", doc.Content)
+		}
+	}
+}
+
 func TestNormalizeToolArgsDefaultsListPath(t *testing.T) {
 	args := normalizeToolArgs("fs.list", map[string]any{})
 	if args["path"] != "." {
@@ -452,6 +541,7 @@ func TestAllowedToolsIncludesHTTPRequestWhenNetworkEnabled(t *testing.T) {
 	hasAgentList := false
 	hasAgentCreate := false
 	hasAgentSwitch := false
+	hasAgentIdentitySet := false
 	hasPolicyGrant := false
 	hasPolicyRevoke := false
 	hasMetricsGet := false
@@ -472,6 +562,9 @@ func TestAllowedToolsIncludesHTTPRequestWhenNetworkEnabled(t *testing.T) {
 		}
 		if name == "agent.switch" {
 			hasAgentSwitch = true
+		}
+		if name == "agent.identity.set" {
+			hasAgentIdentitySet = true
 		}
 		if name == "policy.grant" {
 			hasPolicyGrant = true
@@ -495,7 +588,7 @@ func TestAllowedToolsIncludesHTTPRequestWhenNetworkEnabled(t *testing.T) {
 	if !hasSessionList || !hasSessionClose {
 		t.Fatalf("expected session tools in allowed list, got %#v", tools)
 	}
-	if !hasAgentList || !hasAgentCreate || !hasAgentSwitch {
+	if !hasAgentList || !hasAgentCreate || !hasAgentSwitch || !hasAgentIdentitySet {
 		t.Fatalf("expected agent tools in allowed list, got %#v", tools)
 	}
 	if !hasPolicyGrant || !hasPolicyRevoke || !hasMetricsGet {
