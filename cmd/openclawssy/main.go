@@ -750,6 +750,20 @@ func handleSetup(args []string) int {
 		fmt.Println("Docker sandbox enabled. Agent workspace runs in a separate isolated container.")
 		fmt.Println("The backend talks to Docker via the Unix socket at /var/run/docker.sock.")
 		fmt.Println("Your user must be in the 'docker' group, or use sudo.")
+
+		hardened := prompt(in, "Enable hardened Docker sandbox mode? [y/N]", "N")
+		if strings.EqualFold(hardened, "y") {
+			cfg.Sandbox.Docker.Hardened = true
+			cfg.Sandbox.Docker.PidsLimit = 256
+			cfg.Sandbox.Docker.AllowedImages = []string{cfg.Sandbox.Docker.Image}
+			fmt.Println("Hardened mode enabled: drops all caps, enables no-new-privileges, read-only rootfs, tmpfs mounts, and PID limit.")
+
+			dedicated := prompt(in, "Require a dedicated Docker daemon endpoint? (recommended for hardened mode) [Y/n]", "Y")
+			if !strings.EqualFold(dedicated, "n") {
+				cfg.Sandbox.Docker.RequireDedicatedDaemon = true
+				cfg.Sandbox.Docker.Host = prompt(in, "Dedicated Docker host (unix://, tcp://, or ssh://)", "unix:///var/run/openclawssy-docker.sock")
+			}
+		}
 	}
 
 	if apiKey != "" {

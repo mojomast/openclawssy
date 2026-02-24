@@ -68,11 +68,14 @@ type DockerProvider struct {
 	agentID       string
 	containerID   string // actual full ID once created
 	image         string
+	dockerHost    string
 	volumeName    string
 	containerName string
 	networkMode   string  // "none" by default
 	cpuLimit      float64 // 0 = no limit
 	memoryMB      int     // 0 = no limit
+	hardened      bool
+	pidsLimit     int
 	extraEnv      []string
 	pullPolicy    string // "always", "if-not-present", "never"
 
@@ -95,6 +98,19 @@ func NewDockerProvider(agentID string, cfg config.DockerSandboxConfig) (*DockerP
 	if imageName == "" {
 		imageName = "ubuntu:24.04"
 	}
+	if !imageAllowed(imageName, cfg.AllowedImages) {
+		return nil, fmt.Errorf("sandbox: docker: image %q is not in sandbox.docker.allowed_images", imageName)
+	}
+
+	dockerHost := strings.TrimSpace(cfg.Host)
+	if cfg.RequireDedicatedDaemon {
+		if dockerHost == "" {
+			return nil, errors.New("sandbox: docker: dedicated daemon required but sandbox.docker.host is empty")
+		}
+		if dockerHost == "unix:///var/run/docker.sock" {
+			return nil, errors.New("sandbox: docker: dedicated daemon required but sandbox.docker.host points to default host socket")
+		}
+	}
 
 	pullPolicy := cfg.PullPolicy
 	if pullPolicy == "" {
@@ -105,18 +121,25 @@ func NewDockerProvider(agentID string, cfg config.DockerSandboxConfig) (*DockerP
 	if cfg.NetworkEnabled {
 		networkMode = "bridge"
 	}
+	pidsLimit := cfg.PidsLimit
+	if cfg.Hardened && pidsLimit <= 0 {
+		pidsLimit = 256
+	}
 
 	// Defense-in-depth: warn if Docker socket is pointed somewhere unusual.
-	warnDockerSocketExposure()
+	warnDockerSocketExposure(dockerHost)
 
 	return &DockerProvider{
 		agentID:       agentID,
 		image:         imageName,
+		dockerHost:    dockerHost,
 		volumeName:    "openclawssy_ws_" + sanitized,
 		containerName: "openclawssy_agent_" + sanitized,
 		networkMode:   networkMode,
 		cpuLimit:      cfg.CPULimit,
 		memoryMB:      cfg.MemoryLimitMB,
+		hardened:      cfg.Hardened,
+		pidsLimit:     pidsLimit,
 		// extraEnv are non-secret environment variables from config.
 		// Secrets MUST NOT be placed here — they are managed by the secrets store
 		// and injected only at the API call layer, never into the container.
@@ -128,10 +151,26 @@ func NewDockerProvider(agentID string, cfg config.DockerSandboxConfig) (*DockerP
 // warnDockerSocketExposure logs a warning if DOCKER_HOST is set to a
 // non-standard value. This is a defense-in-depth signal only — it does not
 // prevent operation, but alerts operators to unexpected configurations.
-func warnDockerSocketExposure() {
-	if host := os.Getenv("DOCKER_HOST"); host != "" && host != "unix:///var/run/docker.sock" {
+func warnDockerSocketExposure(configuredHost string) {
+	host := strings.TrimSpace(configuredHost)
+	if host == "" {
+		host = os.Getenv("DOCKER_HOST")
+	}
+	if host != "" && host != "unix:///var/run/docker.sock" {
 		log.Printf("warning: DOCKER_HOST is set to %q — ensure this is intentional", host)
 	}
+}
+
+func imageAllowed(image string, allowed []string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, item := range allowed {
+		if strings.TrimSpace(item) == image {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *DockerProvider) dockerClient() (*client.Client, error) {
@@ -140,7 +179,11 @@ func (p *DockerProvider) dockerClient() (*client.Client, error) {
 	if p.cli != nil {
 		return p.cli, nil
 	}
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	opts := []client.Opt{client.FromEnv, client.WithAPIVersionNegotiation()}
+	if strings.TrimSpace(p.dockerHost) != "" {
+		opts = append(opts, client.WithHost(strings.TrimSpace(p.dockerHost)))
+	}
+	cli, err := client.NewClientWithOpts(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox: docker client init: %w", err)
 	}
@@ -641,6 +684,14 @@ func (p *DockerProvider) ensureContainer(cli *client.Client, ctx context.Context
 	}
 	if p.memoryMB > 0 {
 		hostConfig.Resources.Memory = int64(p.memoryMB) * 1024 * 1024
+	}
+	if p.pidsLimit > 0 {
+		pids := int64(p.pidsLimit)
+		hostConfig.Resources.PidsLimit = &pids
+	}
+	if p.hardened {
+		hostConfig.SecurityOpt = append(hostConfig.SecurityOpt, "no-new-privileges:true")
+		hostConfig.CapDrop = append(hostConfig.CapDrop, "ALL")
 	}
 
 	resp, err := cli.ContainerCreate(ctx,

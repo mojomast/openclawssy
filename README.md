@@ -72,6 +72,8 @@ docker run -d \
 
 The socket mount (`-v /var/run/docker.sock:...`) lets the backend talk to Docker to create sandbox containers. This is a Unix socket, not HTTP.
 
+If you want stricter isolation controls without changing default UX, enable opt-in hardening via `sandbox.docker.hardened=true` and (recommended) `sandbox.docker.require_dedicated_daemon=true` with a non-default `sandbox.docker.host` endpoint.
+
 Or use `docker-compose`:
 
 ```bash

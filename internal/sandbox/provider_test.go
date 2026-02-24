@@ -384,6 +384,35 @@ func TestNewDockerProviderCustomImage(t *testing.T) {
 	}
 }
 
+func TestNewDockerProviderRejectsImageOutsideAllowlist(t *testing.T) {
+	_, err := NewDockerProvider("agent1", config.DockerSandboxConfig{
+		Image:         "debian:12",
+		AllowedImages: []string{"ubuntu:24.04"},
+	})
+	if err == nil {
+		t.Fatal("expected allowlist validation error")
+	}
+}
+
+func TestNewDockerProviderRequiresDedicatedDaemonHost(t *testing.T) {
+	_, err := NewDockerProvider("agent1", config.DockerSandboxConfig{
+		RequireDedicatedDaemon: true,
+	})
+	if err == nil {
+		t.Fatal("expected dedicated daemon configuration error")
+	}
+}
+
+func TestNewDockerProviderHardenedSetsDefaultPidsLimit(t *testing.T) {
+	p, err := NewDockerProvider("agent1", config.DockerSandboxConfig{Hardened: true})
+	if err != nil {
+		t.Fatalf("NewDockerProvider: %v", err)
+	}
+	if p.pidsLimit != 256 {
+		t.Fatalf("expected hardened default pidsLimit=256, got %d", p.pidsLimit)
+	}
+}
+
 func TestDockerProviderFileOpsRequireStart(t *testing.T) {
 	// Verify that file ops return ErrNotStarted before Start is called.
 	p, err := NewDockerProvider("unstartedagent", config.DockerSandboxConfig{})

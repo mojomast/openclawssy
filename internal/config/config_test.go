@@ -298,3 +298,39 @@ func TestValidateRejectsInvalidMemoryConfig(t *testing.T) {
 		t.Fatal("expected validation error for memory.embedding_model")
 	}
 }
+
+func TestApplyDefaultsSetsHardenedDockerPidsLimit(t *testing.T) {
+	cfg := Default()
+	cfg.Sandbox.Docker.Hardened = true
+	cfg.Sandbox.Docker.PidsLimit = 0
+	cfg.ApplyDefaults()
+	if cfg.Sandbox.Docker.PidsLimit != 256 {
+		t.Fatalf("expected hardened pids_limit default 256, got %d", cfg.Sandbox.Docker.PidsLimit)
+	}
+}
+
+func TestValidateRejectsDedicatedDaemonWithoutHost(t *testing.T) {
+	cfg := Default()
+	cfg.Sandbox.Docker.RequireDedicatedDaemon = true
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error when dedicated daemon is required without sandbox.docker.host")
+	}
+}
+
+func TestValidateRejectsDefaultSocketWhenDedicatedRequired(t *testing.T) {
+	cfg := Default()
+	cfg.Sandbox.Docker.RequireDedicatedDaemon = true
+	cfg.Sandbox.Docker.Host = "unix:///var/run/docker.sock"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error when dedicated daemon uses default host socket")
+	}
+}
+
+func TestValidateAcceptsDedicatedDaemonHost(t *testing.T) {
+	cfg := Default()
+	cfg.Sandbox.Docker.RequireDedicatedDaemon = true
+	cfg.Sandbox.Docker.Host = "unix:///var/run/openclawssy-docker.sock"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected dedicated daemon config to validate, got %v", err)
+	}
+}

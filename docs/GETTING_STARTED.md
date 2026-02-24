@@ -47,6 +47,10 @@ During setup you can:
 > - **Native host:** Run the binary directly with
 >   `--sandbox-active --sandbox-provider docker`. Requires Docker installed
 >   and your user in the `docker` group (or use sudo).
+>
+> Optional hardening: set `sandbox.docker.hardened=true` in `config.json` and,
+> for strongest isolation, set `sandbox.docker.require_dedicated_daemon=true`
+> with a non-default `sandbox.docker.host` endpoint.
 
 ## 5) Open dashboard
 
