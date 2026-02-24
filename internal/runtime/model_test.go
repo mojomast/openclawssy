@@ -802,6 +802,31 @@ func TestParseToolCallsFromResponseNormalizesAndDedupesEquivalentSecretsCalls(t 
 	}
 }
 
+func TestParseToolCallsFromResponseSupportsTaggedToolCallSyntax(t *testing.T) {
+	content := `<tool_call>code.search,{"path":"/app/workspace/ussyflow","pattern":"type.*Repository"}</arg_value><tool_call>fs.list,{"path":"/app/workspace/ussyflow"}`
+	calls, parseFailure, reason := parseToolCallsFromResponse(content, []string{"code.search", "fs.list"}, nil)
+	if parseFailure {
+		t.Fatalf("expected tagged calls to parse, got parse failure: %q", reason)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("expected two parsed tagged tool calls, got %d", len(calls))
+	}
+	if calls[0].Name != "code.search" {
+		t.Fatalf("expected first parsed call code.search, got %q", calls[0].Name)
+	}
+	if calls[1].Name != "fs.list" {
+		t.Fatalf("expected second parsed call fs.list, got %q", calls[1].Name)
+	}
+
+	args := map[string]any{}
+	if err := json.Unmarshal(calls[1].Arguments, &args); err != nil {
+		t.Fatalf("decode fs.list args: %v", err)
+	}
+	if args["path"] != "/app/workspace/ussyflow" {
+		t.Fatalf("expected parsed path arg, got %#v", args["path"])
+	}
+}
+
 func TestProviderModelRejectsShellExecWhenNotAllowed(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -177,6 +177,38 @@ func TestRunnerRepromptsWhenModelDefersWithoutToolCall(t *testing.T) {
 	}
 }
 
+func TestRunnerRepromptsAfterToolParseFailure(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{FinalText: "<tool_call>fs.list,{\"path\":\".\"}", ToolParseFailure: true},
+		{ToolCalls: []ToolCallRequest{{ID: "call-1", Name: "fs.list", Arguments: []byte(`{"path":"."}`)}}},
+		{FinalText: "done"},
+	}}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"call-1": {ID: "call-1", Output: `{"items":[]}`},
+	}}
+
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 8}
+	out, err := runner.Run(context.Background(), RunInput{
+		Message:      "list files",
+		AllowedTools: []string{"fs.list"},
+	})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(out.ToolCalls) != 1 {
+		t.Fatalf("expected one tool execution after parse recovery, got %d", len(out.ToolCalls))
+	}
+	if len(model.reqs) != 3 {
+		t.Fatalf("expected reprompt model call sequence, got %d", len(model.reqs))
+	}
+	if !strings.Contains(model.reqs[1].SystemPrompt, "TOOL_PARSE_RECOVERY_MODE") {
+		t.Fatalf("expected parse recovery directive in reprompt, got %q", model.reqs[1].SystemPrompt)
+	}
+}
+
 func TestRunnerReplacesRepeatedDeferralWithConcreteFallback(t *testing.T) {
 	model := &mockModel{responses: []ModelResponse{
 		{FinalText: "Let me check that right now."},
@@ -666,6 +698,34 @@ func TestRunnerBlocksRepeatedAgentMessageSendWithLegacyAliases(t *testing.T) {
 	}
 }
 
+func TestRunnerBlocksRepeatedAgentMessageSendForNormalizedTaskID(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "agent.message.send", Arguments: []byte(`{"to_agent_id":"ussyflow_builder","task_id":"A2","message":"do task"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "agent.message.send", Arguments: []byte(`{"to_agent_id":"ussyflow_builder","task_id":"A2-v2","message":"do task"}`)}}},
+		{FinalText: "done"},
+	}}
+
+	tools := &mockTools{}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "dispatch once"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected first dispatch only, got %d executions", len(tools.calls))
+	}
+	if len(out.ToolCalls) != 2 {
+		t.Fatalf("expected two tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[1].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on normalized task id retry, got %q", out.ToolCalls[1].Result.Error)
+	}
+}
+
 func TestRunnerBlocksThirdAgentInboxPollForSameAgent(t *testing.T) {
 	model := &mockModel{responses: []ModelResponse{
 		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "agent.message.inbox", Arguments: []byte(`{"agent_id":"default","limit":50}`)}}},
@@ -720,6 +780,34 @@ func TestRunnerBlocksRepeatedAgentRunForSameTask(t *testing.T) {
 	}
 	if !strings.Contains(out.ToolCalls[1].Result.Error, "repetition detected") {
 		t.Fatalf("expected repetition guard on second agent.run, got %q", out.ToolCalls[1].Result.Error)
+	}
+}
+
+func TestRunnerBlocksRepeatedAgentRunForNormalizedTaskID(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "agent.run", Arguments: []byte(`{"agent_id":"ussyflow_builder","task_id":"A2","message":"do a2"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "agent.run", Arguments: []byte(`{"agent_id":"ussyflow_builder","task_id":"A2-v2","message":"do a2"}`)}}},
+		{FinalText: "done"},
+	}}
+
+	tools := &mockTools{}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "run subagents"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected first agent.run only, got %d executions", len(tools.calls))
+	}
+	if len(out.ToolCalls) != 2 {
+		t.Fatalf("expected two tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[1].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on normalized task id retry, got %q", out.ToolCalls[1].Result.Error)
 	}
 }
 

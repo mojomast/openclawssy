@@ -992,6 +992,16 @@ func parseToolDirective(message string, allowedTools []string) (agent.ModelRespo
 
 func parseToolCallsFromResponse(content string, allowedTools []string, trace *runTraceCollector) ([]agent.ToolCallRequest, bool, string) {
 	parsedCalls, diag := toolparse.ParseToolCalls(content, allowedTools)
+	if len(parsedCalls) == 0 {
+		taggedCalls, taggedDiag := parseTaggedToolCalls(content, allowedTools)
+		if len(taggedDiag.Candidates) > 0 {
+			diag.Candidates = append(diag.Candidates, taggedDiag.Candidates...)
+			diag.Rejected = append(diag.Rejected, taggedDiag.Rejected...)
+		}
+		if len(taggedCalls) > 0 {
+			parsedCalls = taggedCalls
+		}
+	}
 	parsedCalls = normalizeParsedToolCalls(parsedCalls)
 	if len(parsedCalls) > maxToolCallsPerReply {
 		parsedCalls = parsedCalls[:maxToolCallsPerReply]
@@ -1003,6 +1013,155 @@ func parseToolCallsFromResponse(content string, allowedTools []string, trace *ru
 	}
 	parseFailure := len(parsedCalls) == 0 && len(diag.Rejected) > 0
 	return parsedCalls, parseFailure, summarizeParseFailureReasons(diag.Rejected)
+}
+
+func parseTaggedToolCalls(content string, allowedTools []string) ([]agent.ToolCallRequest, toolparse.ParseDiagnostics) {
+	const marker = "<tool_call>"
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return nil, toolparse.ParseDiagnostics{}
+	}
+
+	diag := toolparse.ParseDiagnostics{}
+	calls := make([]agent.ToolCallRequest, 0, 4)
+	text := content
+	lower := strings.ToLower(content)
+	searchFrom := 0
+	nextID := 1
+
+	for searchFrom < len(lower) {
+		rel := strings.Index(lower[searchFrom:], marker)
+		if rel < 0 {
+			break
+		}
+		start := searchFrom + rel
+		cursor := start + len(marker)
+		remaining := strings.TrimSpace(text[cursor:])
+		if remaining == "" {
+			entry := toolparse.Extraction{RawSnippet: strings.TrimSpace(text[start:]), Reason: "missing tool call body"}
+			diag.Candidates = append(diag.Candidates, entry)
+			diag.Rejected = append(diag.Rejected, entry)
+			break
+		}
+
+		commaIdx := strings.Index(remaining, ",")
+		if commaIdx <= 0 {
+			raw := strings.TrimSpace(text[start:])
+			entry := toolparse.Extraction{RawSnippet: raw, Reason: "missing comma after tool name"}
+			diag.Candidates = append(diag.Candidates, entry)
+			diag.Rejected = append(diag.Rejected, entry)
+			searchFrom = cursor
+			continue
+		}
+
+		rawToolName := strings.TrimSpace(remaining[:commaIdx])
+		argsPart := remaining[commaIdx+1:]
+		argsJSON, consumed, ok := extractJSONObjectPrefix(argsPart)
+		rawEnd := cursor + commaIdx + 1
+		if consumed > 0 {
+			rawEnd += consumed
+		}
+		if rawEnd > len(text) {
+			rawEnd = len(text)
+		}
+		rawSnippet := strings.TrimSpace(text[start:rawEnd])
+		entry := toolparse.Extraction{RawSnippet: rawSnippet}
+
+		toolName, toolOK := canonicalToolName(rawToolName)
+		if !toolOK || toolName == "" {
+			entry.ParsedToolName = strings.TrimSpace(rawToolName)
+			entry.Reason = "unsupported tool name"
+			diag.Candidates = append(diag.Candidates, entry)
+			diag.Rejected = append(diag.Rejected, entry)
+			searchFrom = rawEnd
+			continue
+		}
+		entry.ParsedToolName = toolName
+
+		if !isToolAllowed(toolName, allowedTools) {
+			entry.Reason = fmt.Sprintf("tool %q not allowed", toolName)
+			diag.Candidates = append(diag.Candidates, entry)
+			diag.Rejected = append(diag.Rejected, entry)
+			searchFrom = rawEnd
+			continue
+		}
+
+		if !ok || strings.TrimSpace(argsJSON) == "" {
+			entry.Reason = "invalid JSON arguments"
+			diag.Candidates = append(diag.Candidates, entry)
+			diag.Rejected = append(diag.Rejected, entry)
+			searchFrom = rawEnd
+			continue
+		}
+
+		args := map[string]any{}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			entry.Reason = fmt.Sprintf("invalid JSON arguments: %v", err)
+			diag.Candidates = append(diag.Candidates, entry)
+			diag.Rejected = append(diag.Rejected, entry)
+			searchFrom = rawEnd
+			continue
+		}
+		args = normalizeToolArgs(toolName, args)
+		argBytes, _ := json.Marshal(args)
+
+		entry.ParsedArguments = argBytes
+		entry.Accepted = true
+		diag.Candidates = append(diag.Candidates, entry)
+		calls = append(calls, agent.ToolCallRequest{
+			ID:        fmt.Sprintf("tool-tag-%d", nextID),
+			Name:      toolName,
+			Arguments: argBytes,
+		})
+		nextID++
+		searchFrom = rawEnd
+	}
+
+	return dedupeToolCalls(calls), diag
+}
+
+func extractJSONObjectPrefix(text string) (string, int, bool) {
+	start := strings.Index(text, "{")
+	if start < 0 {
+		return "", 0, false
+	}
+	segment := text[start:]
+	depth := 0
+	inString := false
+	escaped := false
+	for i := 0; i < len(segment); i++ {
+		ch := segment[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		if ch == '"' {
+			inString = true
+			continue
+		}
+		if ch == '{' {
+			depth++
+			continue
+		}
+		if ch == '}' {
+			depth--
+			if depth == 0 {
+				consumed := start + i + 1
+				return strings.TrimSpace(text[start:consumed]), consumed, true
+			}
+		}
+	}
+	return "", 0, false
 }
 
 func normalizeParsedToolCalls(calls []agent.ToolCallRequest) []agent.ToolCallRequest {

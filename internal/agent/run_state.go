@@ -22,6 +22,7 @@ const (
 	noChoicesRetryDelay         = 200 * time.Millisecond
 	transientModelRetryCap      = 2
 	transientModelRetryDelay    = 250 * time.Millisecond
+	toolParseRetryCap           = 2
 )
 
 // runState encapsulates the mutable state of a single agent run loop.
@@ -45,6 +46,7 @@ type runState struct {
 	latestThinking          string
 	thinkingPresent         bool
 	toolParseFailure        bool
+	toolParseReprompts      int
 	followThroughReprompts  int
 	toolCap                 int
 	// repetitionPrevention tracks tool calls to detect and prevent loops
@@ -134,6 +136,9 @@ func (s *runState) prepareSystemPrompt(ctx context.Context, input RunInput) stri
 	}
 	if s.followThroughReprompts > 0 {
 		systemPrompt = appendPromptDirective(systemPrompt, "# ACTION_EXECUTION_MODE\n- You previously replied with intent to act but did not execute.\n- In this turn, either call required tools now or provide a concrete final answer from existing evidence.\n- Do not defer with phrases like 'let me check' or promise future action without execution.")
+	}
+	if s.toolParseReprompts > 0 {
+		systemPrompt = appendPromptDirective(systemPrompt, "# TOOL_PARSE_RECOVERY_MODE\n- Your previous response attempted tool calls in an invalid format and no tool executed.\n- Output tool calls only as fenced JSON objects with this exact shape:\n```json\n{\"tool_name\":\"<tool.name>\",\"arguments\":{...}}\n```\n- Do not use pseudo-XML tags such as <tool_call> or <arg_value>.")
 	}
 	if input.SystemPromptExt != nil {
 		extended := input.SystemPromptExt(ctx, systemPrompt, append([]ChatMessage(nil), s.messages...), input.Message, append([]ToolCallResult(nil), s.toolResults...))
@@ -356,6 +361,16 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 		}
 
 		if len(resp.ToolCalls) == 0 {
+			if resp.ToolParseFailure && shouldRetryToolParseFailure(resp.FinalText, input.AllowedTools) {
+				if s.toolParseReprompts < toolParseRetryCap {
+					s.toolParseReprompts++
+					if text := strings.TrimSpace(resp.FinalText); text != "" {
+						s.messages = append(s.messages, ChatMessage{Role: "assistant", Content: text})
+					}
+					continue
+				}
+			}
+			s.toolParseReprompts = 0
 			if shouldForceFollowThrough(resp.FinalText, input.AllowedTools, s.toolResults) {
 				if s.followThroughReprompts < followThroughRepromptCap {
 					s.followThroughReprompts++
@@ -406,6 +421,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 		}
 
 		hadFreshExecution := s.executeTools(ctx, r, resp.ToolCalls, input)
+		s.toolParseReprompts = 0
 
 		if hadFreshExecution {
 			s.noProgressIterations = 0
@@ -437,6 +453,20 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 
 		s.toolIterations++
 	}
+}
+
+func shouldRetryToolParseFailure(finalText string, allowedTools []string) bool {
+	if len(allowedTools) == 0 {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(finalText))
+	if strings.Contains(text, "not enabled for this agent") ||
+		strings.Contains(text, "please enable it and retry") ||
+		strings.Contains(text, "network.enabled=true") ||
+		strings.Contains(text, "shell.enable_exec=true") {
+		return false
+	}
+	return true
 }
 
 func isProviderNoChoicesError(err error) bool {
@@ -491,7 +521,7 @@ func repeatedCallRepetitionKey(call ToolCallRequest) (string, int, bool) {
 		if toAgent == "" {
 			return "", 0, false
 		}
-		taskID := firstTrimmedStringFromMap(args, "task_id", "taskId")
+		taskID := normalizeTaskIDForRepetition(firstTrimmedStringFromMap(args, "task_id", "taskId"))
 		if taskID != "" {
 			return name + "|" + toAgent + "|" + taskID, agentMessageSendCap, true
 		}
@@ -521,7 +551,7 @@ func repeatedCallRepetitionKey(call ToolCallRequest) (string, int, bool) {
 		if agentID == "" {
 			return "", 0, false
 		}
-		taskID := firstTrimmedStringFromMap(args, "task_id", "taskId")
+		taskID := normalizeTaskIDForRepetition(firstTrimmedStringFromMap(args, "task_id", "taskId"))
 		if taskID != "" {
 			return name + "|" + agentID + "|" + taskID, agentRunCap, true
 		}
@@ -606,6 +636,55 @@ func firstN(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+func normalizeTaskIDForRepetition(taskID string) string {
+	value := strings.ToLower(strings.TrimSpace(taskID))
+	if value == "" {
+		return ""
+	}
+	cut := len(value)
+	for _, sep := range []string{"-", "_", ".", " "} {
+		if idx := strings.Index(value, sep); idx >= 0 && idx < cut {
+			cut = idx
+		}
+	}
+	if cut > 0 {
+		base := strings.TrimSpace(value[:cut])
+		if looksLaneTaskID(base) {
+			return base
+		}
+	}
+	if looksLaneTaskID(value) {
+		return value
+	}
+	return value
+}
+
+func looksLaneTaskID(value string) bool {
+	if value == "" {
+		return false
+	}
+	seenLetter := false
+	seenDigit := false
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' {
+			if seenDigit {
+				return false
+			}
+			seenLetter = true
+			continue
+		}
+		if r >= '0' && r <= '9' {
+			if !seenLetter {
+				return false
+			}
+			seenDigit = true
+			continue
+		}
+		return false
+	}
+	return seenLetter && seenDigit
 }
 
 func extractPathFromToolArgs(args []byte) string {
