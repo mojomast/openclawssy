@@ -1,5 +1,7 @@
 # Openclawssy
 
+> *This release is dedicated to a little kitty -- the smallest, fiercest, most relentless debugger on the team. Every late-night session, every stubborn test, every "one more fix" -- you were there. This one's for you.*
+
 Openclawssy is a security-first AI agent runtime in the Ussyverse: one Go binary, explicit controls, auditable runs, and operator-first defaults.
 
 It is for builders who want agent power without mystery behavior.
@@ -52,16 +54,38 @@ Come chat about Openclawssy and other Ussyverse projects.
   - Weekly maintenance (`memory.maintenance`) and proactive messaging triggers
   - Optional embeddings + semantic hybrid recall (OpenRouter/OpenAI-compatible providers)
 
-## Quickstart
+## Installation
+
+### Option A: Docker (Recommended)
+
+Docker is the fastest way to get started. Agents run in isolated containers with no host access by default.
+
+```bash
+docker run -d \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v openclawssy-data:/data \
+  -p 8080:8080 \
+  -e AUTH_TOKEN=change-me \
+  ghcr.io/openclawssy/openclawssy:latest
+```
+
+Or use `docker-compose`:
+
+```bash
+docker compose up -d
+```
+
+The Docker sandbox provider is enabled by default in the container image. See [`DOCKER.md`](DOCKER.md) for full configuration options, environment variables, and volume details.
+
+### Option B: Build from Source
 
 Prerequisite: Go 1.24+
 
 ```bash
-make fmt
-make lint
-make test
 make build
 ```
+
+Then run the interactive setup:
 
 ```bash
 ./bin/openclawssy setup
@@ -69,7 +93,17 @@ make build
 ./bin/openclawssy serve --token change-me
 ```
 
-Then open:
+To enable the Docker sandbox when running from a native build:
+
+```bash
+./bin/openclawssy serve --token change-me --sandbox-active --sandbox-provider docker
+```
+
+This requires Docker to be installed and the Docker socket accessible.
+
+### Access the Dashboard
+
+Once the server is running, open:
 
 - `https://127.0.0.1:8080/dashboard` (TLS enabled)
 - `http://127.0.0.1:8080/dashboard` (TLS disabled)
@@ -110,6 +144,7 @@ This is still a prototype under active development.
 Detailed operational/reference content has been moved out of the README into `docs/`.
 
 - Getting started: [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md)
+- Docker deployment: [`DOCKER.md`](DOCKER.md)
 - Usage and workflows: [`docs/USAGE.md`](docs/USAGE.md)
 - Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - Memory system: [`docs/MEMORY_SYSTEM.md`](docs/MEMORY_SYSTEM.md)

@@ -24,6 +24,7 @@ During setup you can:
 - ingest API key into encrypted secret store
 - enable HTTPS dashboard
 - enable Discord bot
+- select sandbox provider (Docker is recommended for isolation)
 
 ## 3) Verify
 
@@ -36,6 +37,15 @@ During setup you can:
 ```bash
 ./bin/openclawssy serve --token change-me
 ```
+
+> **Docker sandbox:** If you chose the Docker sandbox provider, you have two
+> options:
+>
+> - **Container (simplest):** Run Openclawssy itself inside a container with
+>   `docker-compose` — see [DOCKER.md](DOCKER.md) for details.
+> - **Native:** Run the binary directly with
+>   `--sandbox-active --sandbox-provider docker` and ensure Docker is installed
+>   with the socket accessible to the process.
 
 ## 5) Open dashboard
 

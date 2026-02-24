@@ -30,6 +30,8 @@ type runState struct {
 	toolParseFailure        bool
 	followThroughReprompts  int
 	toolCap                 int
+	// repetitionPrevention tracks tool calls to detect and prevent loops
+	repetitionPrevention map[string]int // key: "tool_name|agent_id" -> count
 }
 
 func newRunState(input RunInput, r Runner) *runState {
@@ -70,6 +72,7 @@ func newRunState(input RunInput, r Runner) *runState {
 		failedToolCallErrors:    make(map[string]string),
 		toolTimeout:             toolTimeout,
 		toolCap:                 toolCap,
+		repetitionPrevention:    make(map[string]int),
 	}
 }
 
@@ -160,6 +163,34 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 				s.toolResults = append(s.toolResults, record.Result)
 				s.registerToolOutcome(record.Result.Error)
 				continue
+			}
+		}
+
+		// Repetition prevention: detect repeated agent.create calls
+		if call.Name == "agent.create" || call.Name == "agents.create" {
+			agentID := extractAgentIDFromArgs(call.Arguments)
+			if agentID != "" {
+				key := call.Name + "|" + agentID
+				s.repetitionPrevention[key]++
+				if s.repetitionPrevention[key] >= 3 {
+					// Return cached error to prevent infinite loops
+					result := ToolCallResult{
+						ID:     call.ID,
+						Output: "",
+						Error:  fmt.Sprintf("repetition detected: agent '%s' creation was already attempted %d times. If the agent exists, use it directly. If not, check previous errors.", agentID, s.repetitionPrevention[key]),
+					}
+					record := ToolCallRecord{
+						Request:     call,
+						Result:      result,
+						StartedAt:   time.Now().UTC(),
+						CompletedAt: time.Now().UTC(),
+					}
+					s.notifyToolCall(&record, input.OnToolCall)
+					s.out.ToolCalls = append(s.out.ToolCalls, record)
+					s.toolResults = append(s.toolResults, result)
+					s.registerToolOutcome(result.Error)
+					continue
+				}
 			}
 		}
 
@@ -339,4 +370,25 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 
 		s.toolIterations++
 	}
+}
+
+// extractAgentIDFromArgs extracts the agent_id field from JSON tool arguments
+func extractAgentIDFromArgs(args []byte) string {
+	if len(args) == 0 {
+		return ""
+	}
+	// Simple JSON extraction: look for "agent_id":"value" pattern
+	argsStr := string(args)
+	if idx := strings.Index(argsStr, `"agent_id"`); idx != -1 {
+		rest := argsStr[idx+len(`"agent_id"`):]
+		// Skip whitespace and colon
+		rest = strings.TrimLeft(rest, " \t\n\r:")
+		if strings.HasPrefix(rest, `"`) {
+			rest = rest[1:]
+			if endIdx := strings.Index(rest, `"`); endIdx != -1 {
+				return rest[:endIdx]
+			}
+		}
+	}
+	return ""
 }

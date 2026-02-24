@@ -85,11 +85,7 @@ func NewProvider(name string, workspace string) (Provider, error) {
 	case "local":
 		return NewLocalProvider(workspace)
 	case "docker":
-		// Docker provider is planned for Phase 2.  The config layer allows
-		// "docker" as a valid provider name so that configs can be written
-		// ahead of time; runtime creation will fail gracefully until Phase 2
-		// ships.
-		return nil, ErrDockerNotYet
+		return NewDockerProvider("default", config.DockerSandboxConfig{})
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnknownProvider, name)
 	}

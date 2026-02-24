@@ -88,7 +88,7 @@ type DockerMountConfig struct {
 }
 
 // DockerSandboxConfig holds Docker-specific sandbox parameters.
-// These are used by the Docker provider (Phase 2).
+// These are used by the Docker sandbox provider.
 type DockerSandboxConfig struct {
 	Image          string              `json:"image"`
 	NetworkEnabled bool                `json:"network_enabled"`
@@ -204,8 +204,10 @@ func Default() Config {
 			Active:   false,
 			Provider: "none",
 			Docker: DockerSandboxConfig{
-				Image:      "ubuntu:24.04",
-				PullPolicy: "if-not-present",
+				Image:         "ubuntu:24.04",
+				PullPolicy:    "if-not-present",
+				CPULimit:      1.0,
+				MemoryLimitMB: 2048,
 			},
 		},
 		Engine: EngineConfig{
@@ -300,7 +302,23 @@ func Default() Config {
 func (c *Config) ApplyDefaults() {
 	d := Default()
 	if c.Sandbox.Provider == "" {
-		c.Sandbox.Provider = d.Sandbox.Provider
+		if c.Sandbox.Active {
+			c.Sandbox.Provider = "docker"
+		} else {
+			c.Sandbox.Provider = d.Sandbox.Provider
+		}
+	}
+	if c.Sandbox.Docker.Image == "" {
+		c.Sandbox.Docker.Image = d.Sandbox.Docker.Image
+	}
+	if c.Sandbox.Docker.PullPolicy == "" {
+		c.Sandbox.Docker.PullPolicy = d.Sandbox.Docker.PullPolicy
+	}
+	if c.Sandbox.Docker.CPULimit <= 0 {
+		c.Sandbox.Docker.CPULimit = d.Sandbox.Docker.CPULimit
+	}
+	if c.Sandbox.Docker.MemoryLimitMB <= 0 {
+		c.Sandbox.Docker.MemoryLimitMB = d.Sandbox.Docker.MemoryLimitMB
 	}
 	if c.Server.BindAddress == "" {
 		c.Server.BindAddress = d.Server.BindAddress

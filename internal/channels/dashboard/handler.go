@@ -1085,6 +1085,7 @@ summary{cursor:pointer;color:#9db2d4}
 <div class="field">
 <label for="cfgSandboxProvider">Sandbox provider</label>
 <select id="cfgSandboxProvider" onchange="updateRawPreview()">
+<option value="docker">docker (recommended)</option>
 <option value="local">local</option>
 <option value="none">none</option>
 </select>
@@ -1092,6 +1093,7 @@ summary{cursor:pointer;color:#9db2d4}
 <div class="field full">
 <label>Sandbox notes</label>
 <div style="font-size:0.85em;color:#9db2d4;line-height:1.4">
+Use <code>docker</code> for fully isolated agent runs inside per-agent containers (recommended).<br/>
 Use <code>local</code> for shell access in this machine environment (including tools like <code>docker</code> if they are installed).<br/>
 Use <code>none</code> to disable sandbox execution tools.
 </div>
@@ -1326,7 +1328,7 @@ function onSandboxActiveChange(){
 const isActive=!!byId('cfgSandboxActive').checked;
 const providerInput=byId('cfgSandboxProvider');
 if(!providerInput)return;
-if(isActive&&providerInput.value==='none')providerInput.value='local';
+if(isActive&&providerInput.value==='none')providerInput.value='docker';
 updateRawPreview();
 }
 
@@ -1351,10 +1353,10 @@ byId('cfgChatEnabled').checked=!!cfg.chat.enabled;
 byId('cfgDiscordEnabled').checked=!!cfg.discord.enabled;
 byId('cfgSandboxActive').checked=!!cfg.sandbox.active;
 const sandboxProvider=(cfg.sandbox.provider||'none').toLowerCase();
-if(sandboxProvider==='local'||sandboxProvider==='none'){
+if(sandboxProvider==='local'||sandboxProvider==='none'||sandboxProvider==='docker'){
 byId('cfgSandboxProvider').value=sandboxProvider;
 }else{
-byId('cfgSandboxProvider').value='local';
+byId('cfgSandboxProvider').value='docker';
 }
 byId('cfgShellExecEnabled').checked=!!cfg.shell.enable_exec;
 byId('cfgChatUsers').value=listToText(cfg.chat.allow_users);
@@ -1406,8 +1408,8 @@ if(!provider)return 'provider is required';
 if(!modelName)return 'model name is required';
 if(tempRaw!==''&&Number.isNaN(Number(tempRaw)))return 'temperature must be numeric';
 const sandboxProvider=byId('cfgSandboxProvider').value.trim().toLowerCase();
-if(sandboxProvider!=='local'&&sandboxProvider!=='none')return 'sandbox provider must be local or none';
-if(byId('cfgSandboxActive').checked&&sandboxProvider==='none')return 'sandbox provider must be local when sandbox is active';
+if(sandboxProvider!=='local'&&sandboxProvider!=='none'&&sandboxProvider!=='docker')return 'sandbox provider must be local, docker, or none';
+if(byId('cfgSandboxActive').checked&&sandboxProvider==='none')return 'sandbox provider must be local or docker when sandbox is active';
 if(provider==='generic'&&!byId('cfgGenericBaseURL').value.trim())return 'generic base_url is required';
 return '';
 }

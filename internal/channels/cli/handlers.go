@@ -39,10 +39,12 @@ type CronInput struct {
 }
 
 type ServeInput struct {
-	Addr     string
-	Token    string
-	RunsFile string
-	JobsFile string
+	Addr            string
+	Token           string
+	RunsFile        string
+	JobsFile        string
+	SandboxProvider string
+	SandboxActive   bool
 }
 
 type InitService interface {
@@ -218,6 +220,8 @@ func ParseServeArgs(args []string) (ServeInput, error) {
 	fs.StringVar(&input.Token, "token", "", "bearer token (required)")
 	fs.StringVar(&input.RunsFile, "runs-file", ".openclawssy/runs.json", "run status store path")
 	fs.StringVar(&input.JobsFile, "jobs-file", ".openclawssy/scheduler/jobs.json", "scheduler jobs store path")
+	fs.StringVar(&input.SandboxProvider, "sandbox-provider", "", "sandbox provider: none, local, docker (overrides config)")
+	fs.BoolVar(&input.SandboxActive, "sandbox-active", false, "enable sandbox (overrides config)")
 	if err := fs.Parse(args); err != nil {
 		return ServeInput{}, err
 	}

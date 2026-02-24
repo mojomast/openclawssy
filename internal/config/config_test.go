@@ -115,7 +115,7 @@ func TestValidateRejectsUnsupportedSandboxProvider(t *testing.T) {
 func TestValidateAcceptsDockerSandboxProvider(t *testing.T) {
 	cfg := Default()
 	cfg.Sandbox.Provider = "docker"
-	// docker is a known (Phase 2) provider — config validation must accept it
+	// docker is a fully supported sandbox provider
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected docker provider to be accepted by config, got: %v", err)
 	}

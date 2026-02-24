@@ -36,7 +36,7 @@ Input -> ExecuteWithInput
 
 ## Sandbox Provider Architecture
 
-All agent filesystem and shell operations are routed through a `sandbox.Provider` interface. Three implementations exist:
+All agent filesystem and shell operations are routed through a `sandbox.Provider` interface. Docker is the recommended and default provider when sandboxing is enabled. Three implementations exist:
 
 | Provider | Workspace | shell.exec |
 |----------|-----------|------------|

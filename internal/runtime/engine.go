@@ -404,7 +404,9 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		emitProgress("tool_end", map[string]any{
 			"tool":         rec.Request.Name,
 			"tool_call_id": rec.Request.ID,
+			"arguments":    rec.Request.Arguments,
 			"summary":      summarizeToolExecution(rec.Request.Name, rec.Result.Output, rec.Result.Error),
+			"output":       rec.Result.Output,
 			"error":        strings.TrimSpace(rec.Result.Error),
 			"duration_ms":  durationMS,
 		})

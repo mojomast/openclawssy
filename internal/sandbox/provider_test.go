@@ -58,13 +58,17 @@ func TestNewProviderRejectsUnsupportedProvider(t *testing.T) {
 	}
 }
 
-func TestNewProviderDockerReturnsNotYetError(t *testing.T) {
-	_, err := NewProvider("docker", t.TempDir())
-	if err == nil {
-		t.Fatalf("expected docker provider error")
+func TestNewProviderDockerReturnsProvider(t *testing.T) {
+	p, err := NewProvider("docker", t.TempDir())
+	if err != nil {
+		t.Fatalf("NewProvider(docker) should succeed, got %v", err)
 	}
-	if !errors.Is(err, ErrDockerNotYet) {
-		t.Fatalf("expected ErrDockerNotYet, got %v", err)
+	dp, ok := p.(*DockerProvider)
+	if !ok {
+		t.Fatalf("expected *DockerProvider, got %T", p)
+	}
+	if dp.ContainerName() != "openclawssy_agent_default" {
+		t.Errorf("expected container name openclawssy_agent_default, got %q", dp.ContainerName())
 	}
 }
 

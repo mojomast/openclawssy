@@ -95,6 +95,24 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
+
+	// Apply CLI overrides for sandbox settings.
+	if serveCfg.SandboxActive {
+		runtimeCfg.Sandbox.Active = true
+	}
+	if serveCfg.SandboxProvider != "" {
+		runtimeCfg.Sandbox.Provider = serveCfg.SandboxProvider
+	}
+	// When sandbox is active but provider is still "none", default to docker.
+	if runtimeCfg.Sandbox.Active && runtimeCfg.Sandbox.Provider == "none" {
+		runtimeCfg.Sandbox.Provider = "docker"
+	}
+	runtimeCfg.ApplyDefaults()
+	if err := runtimeCfg.Validate(); err != nil {
+		fmt.Fprintln(os.Stderr, "config validation:", err)
+		return 1
+	}
+
 	if secretStore, serr := secrets.NewStore(runtimeCfg); serr == nil {
 		if token, ok, _ := secretStore.Get("discord/bot_token"); ok && strings.TrimSpace(token) != "" {
 			runtimeCfg.Discord.Token = token
@@ -724,6 +742,15 @@ func handleSetup(args []string) int {
 		}
 	}
 
+	sandboxEnabled := prompt(in, "Enable Docker sandbox for isolated agent runs? (recommended) [Y/n]", "Y")
+	if !strings.EqualFold(sandboxEnabled, "n") {
+		cfg.Sandbox.Active = true
+		cfg.Sandbox.Provider = "docker"
+		cfg.Shell.EnableExec = true
+		fmt.Println("Docker sandbox enabled. Agent runs will execute inside isolated containers.")
+		fmt.Println("Ensure Docker is installed and /var/run/docker.sock is accessible.")
+	}
+
 	if apiKey != "" {
 		if err := ensureMasterKey(cfg.Secrets.MasterKeyFile); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -748,7 +775,12 @@ func handleSetup(args []string) int {
 	fmt.Println("Setup complete.")
 	fmt.Println("Next:")
 	fmt.Println("1) openclawssy doctor -v")
-	fmt.Println("2) openclawssy serve --token <token>")
+	if cfg.Sandbox.Active && cfg.Sandbox.Provider == "docker" {
+		fmt.Println("2) openclawssy serve --token <token> --sandbox-active --sandbox-provider docker")
+		fmt.Println("   Or use Docker: docker-compose up")
+	} else {
+		fmt.Println("2) openclawssy serve --token <token>")
+	}
 	if cfg.Server.TLSEnabled {
 		fmt.Printf("3) open https://%s:%d/dashboard\n", cfg.Server.BindAddress, cfg.Server.Port)
 	}
