@@ -509,6 +509,16 @@ func TestNormalizeToolArgsSessionCloseIDAliases(t *testing.T) {
 	}
 }
 
+func TestNormalizeToolArgsAgentMessageSendAliases(t *testing.T) {
+	args := normalizeToolArgs("agent.message.send", map[string]any{"agent_id": "ussyflow_builder", "content": "do task a2"})
+	if args["to_agent_id"] != "ussyflow_builder" {
+		t.Fatalf("expected agent_id alias to normalize into to_agent_id, got %#v", args["to_agent_id"])
+	}
+	if args["message"] != "do task a2" {
+		t.Fatalf("expected content alias to normalize into message, got %#v", args["message"])
+	}
+}
+
 func TestNormalizeToolArgsPolicyGrantAliases(t *testing.T) {
 	args := normalizeToolArgs("policy.grant", map[string]any{"target_agent": "worker", "tool": "fs.read"})
 	if args["agent_id"] != "worker" {
@@ -1305,8 +1315,8 @@ func TestExecuteWithInputPersistsToolMessageEvenWhenRunFailsLater(t *testing.T) 
 	if err != nil {
 		t.Fatalf("expected graceful recovery from second provider response failure, got %v", err)
 	}
-	if !strings.Contains(res.FinalText, "model/API error") {
-		t.Fatalf("expected degraded final response to mention model error, got %q", res.FinalText)
+	if !strings.Contains(res.FinalText, "model/API error") && !strings.Contains(res.FinalText, "couldn't get a complete model response") {
+		t.Fatalf("expected degraded final response to mention model failure, got %q", res.FinalText)
 	}
 
 	msgs, err := chat.ReadRecentMessages(session.SessionID, 20)

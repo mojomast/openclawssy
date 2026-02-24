@@ -19,6 +19,8 @@ services:
     volumes:
       # Persist configuration and secrets across runs
       - ./.openclawssy:/app/.openclawssy
+      # Persist runtime workspace files across container restarts
+      - ./workspace:/app/workspace
       # Docker socket — required so the backend can spawn sandbox containers.
       # This is a Unix socket mount, not HTTP. The docker CLI inside the
       # container talks to the host daemon directly through this socket.

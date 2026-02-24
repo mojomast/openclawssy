@@ -30,6 +30,60 @@ type mockTools struct {
 	calls   []ToolCallRequest
 }
 
+type noChoicesThenSuccessModel struct {
+	attempts int
+}
+
+func (m *noChoicesThenSuccessModel) Generate(_ context.Context, _ ModelRequest) (ModelResponse, error) {
+	m.attempts++
+	if m.attempts <= 2 {
+		return ModelResponse{}, errors.New("provider returned no choices")
+	}
+	return ModelResponse{FinalText: "done"}, nil
+}
+
+type alwaysNoChoicesModel struct {
+	attempts int
+}
+
+func (m *alwaysNoChoicesModel) Generate(_ context.Context, _ ModelRequest) (ModelResponse, error) {
+	m.attempts++
+	return ModelResponse{}, errors.New("provider returned no choices")
+}
+
+type toolThenNoChoicesModel struct {
+	attempts int
+}
+
+func (m *toolThenNoChoicesModel) Generate(_ context.Context, _ ModelRequest) (ModelResponse, error) {
+	m.attempts++
+	if m.attempts == 1 {
+		return ModelResponse{ToolCalls: []ToolCallRequest{{ID: "1", Name: "memory.search", Arguments: []byte(`{"query":"research"}`)}}}, nil
+	}
+	return ModelResponse{}, errors.New("provider returned no choices")
+}
+
+type transientErrorThenSuccessModel struct {
+	attempts int
+}
+
+func (m *transientErrorThenSuccessModel) Generate(_ context.Context, _ ModelRequest) (ModelResponse, error) {
+	m.attempts++
+	if m.attempts <= 2 {
+		return ModelResponse{}, errors.New("provider stream interrupted after partial output: context deadline exceeded (Client.Timeout while reading body)")
+	}
+	return ModelResponse{FinalText: "done"}, nil
+}
+
+type alwaysTransientErrorModel struct {
+	attempts int
+}
+
+func (m *alwaysTransientErrorModel) Generate(_ context.Context, _ ModelRequest) (ModelResponse, error) {
+	m.attempts++
+	return ModelResponse{}, errors.New("provider stream interrupted after partial output: context deadline exceeded")
+}
+
 func (m *mockTools) Execute(_ context.Context, call ToolCallRequest) (ToolCallResult, error) {
 	m.calls = append(m.calls, call)
 	result, ok := m.results[call.ID]
@@ -367,6 +421,308 @@ func TestRunnerCachesRepeatedFailureAfterSecondIdenticalError(t *testing.T) {
 	}
 }
 
+func TestRunnerBlocksRepeatedFileWriteLoopsOnSamePath(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.write", Arguments: []byte(`{"path":"notes.md","content":"v1"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.write", Arguments: []byte(`{"path":"notes.md","content":"v2"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "fs.write", Arguments: []byte(`{"path":"notes.md","content":"v3"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "4", Name: "fs.write", Arguments: []byte(`{"path":"notes.md","content":"v4"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "5", Name: "fs.write", Arguments: []byte(`{"path":"notes.md","content":"v5"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "6", Name: "fs.write", Arguments: []byte(`{"path":"notes.md","content":"v6"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "7", Name: "fs.write", Arguments: []byte(`{"path":"notes.md","content":"v7"}`)}}},
+		{FinalText: "done"},
+	}}
+
+	tools := &mockTools{}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "journal"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(tools.calls) != 5 {
+		t.Fatalf("expected only first 5 writes to execute, got %d", len(tools.calls))
+	}
+	if len(out.ToolCalls) != 7 {
+		t.Fatalf("expected seven tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[5].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on 6th call, got %q", out.ToolCalls[5].Result.Error)
+	}
+	if !strings.Contains(out.ToolCalls[6].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on 7th call, got %q", out.ToolCalls[6].Result.Error)
+	}
+}
+
+func TestRunnerBlocksSecondJournalWriteInSameRun(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.write", Arguments: []byte(`{"path":"exploration_journal.md","content":"v1"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.write", Arguments: []byte(`{"path":"exploration_journal.md","content":"v2"}`)}}},
+		{FinalText: "done"},
+	}}
+
+	tools := &mockTools{}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "journal"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected only first journal write to execute, got %d", len(tools.calls))
+	}
+	if len(out.ToolCalls) != 2 {
+		t.Fatalf("expected two tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[1].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on second journal write, got %q", out.ToolCalls[1].Result.Error)
+	}
+}
+
+func TestRunnerBlocksThirdJournalReadInSameRun(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.read", Arguments: []byte(`{"path":"exploration_journal.md"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.read", Arguments: []byte(`{"path":"exploration_journal.md"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "fs.read", Arguments: []byte(`{"path":"exploration_journal.md"}`)}}},
+		{FinalText: "done"},
+	}}
+
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Error: "tool.input_invalid (fs.read): path denied: exploration_journal.md (read path does not exist or is invalid)"},
+		"2": {ID: "2", Error: "tool.input_invalid (fs.read): path denied: exploration_journal.md (read path does not exist or is invalid)"},
+	}}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "journal"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(tools.calls) != 2 {
+		t.Fatalf("expected only first two journal reads to execute, got %d", len(tools.calls))
+	}
+	if len(out.ToolCalls) != 3 {
+		t.Fatalf("expected three tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[2].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on third journal read, got %q", out.ToolCalls[2].Result.Error)
+	}
+}
+
+func TestRunnerBlocksThirdBuildLogReadInSameRun(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.read", Arguments: []byte(`{"path":"ussyflow_build_log.md"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.read", Arguments: []byte(`{"path":"ussyflow_build_log.md"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "fs.read", Arguments: []byte(`{"path":"ussyflow_build_log.md"}`)}}},
+		{FinalText: "done"},
+	}}
+
+	tools := &mockTools{}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "read log"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected cache to execute first build-log read only, got %d", len(tools.calls))
+	}
+	if len(out.ToolCalls) != 3 {
+		t.Fatalf("expected three tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[2].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on third build-log read, got %q", out.ToolCalls[2].Result.Error)
+	}
+}
+
+func TestRunnerBlocksFourthSpecReadInSameRun(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.read", Arguments: []byte(`{"path":"ussyflow_spec.md"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.read", Arguments: []byte(`{"path":"ussyflow_spec.md"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "fs.read", Arguments: []byte(`{"path":"ussyflow_spec.md"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "4", Name: "fs.read", Arguments: []byte(`{"path":"ussyflow_spec.md"}`)}}},
+		{FinalText: "done"},
+	}}
+
+	tools := &mockTools{}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "read spec"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected first read only due to result cache + guard, got %d executions", len(tools.calls))
+	}
+	if len(out.ToolCalls) != 4 {
+		t.Fatalf("expected four tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[3].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on fourth spec read, got %q", out.ToolCalls[3].Result.Error)
+	}
+}
+
+func TestRunnerBlocksFourthSpecReadWithFileAliasInSameRun(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.read", Arguments: []byte(`{"file":"ussyflow_spec.md"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.read", Arguments: []byte(`{"file":"ussyflow_spec.md"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "fs.read", Arguments: []byte(`{"file":"ussyflow_spec.md"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "4", Name: "fs.read", Arguments: []byte(`{"file":"ussyflow_spec.md"}`)}}},
+		{FinalText: "done"},
+	}}
+
+	tools := &mockTools{}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "read spec"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected first read only due to result cache + guard, got %d executions", len(tools.calls))
+	}
+	if len(out.ToolCalls) != 4 {
+		t.Fatalf("expected four tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[3].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on fourth spec read, got %q", out.ToolCalls[3].Result.Error)
+	}
+}
+
+func TestRunnerBlocksRepeatedAgentMessageSendForSameTask(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "agent.message.send", Arguments: []byte(`{"to_agent_id":"ussyflow_builder","task_id":"A2","message":"do task"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "agent.message.send", Arguments: []byte(`{"to_agent_id":"ussyflow_builder","task_id":"A2","message":"do task"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "agent.message.send", Arguments: []byte(`{"to_agent_id":"ussyflow_builder","task_id":"A2","message":"do task"}`)}}},
+		{FinalText: "done"},
+	}}
+
+	tools := &mockTools{}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "dispatch once"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected first dispatch only, got %d executions", len(tools.calls))
+	}
+	if len(out.ToolCalls) != 3 {
+		t.Fatalf("expected three tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[1].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on second dispatch, got %q", out.ToolCalls[1].Result.Error)
+	}
+	if !strings.Contains(out.ToolCalls[2].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on third dispatch, got %q", out.ToolCalls[2].Result.Error)
+	}
+}
+
+func TestRunnerBlocksRepeatedAgentMessageSendWithLegacyAliases(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "agent.message.send", Arguments: []byte(`{"agent_id":"ussyflow_builder","task_id":"A2","content":"do task"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "agent.message.send", Arguments: []byte(`{"agent_id":"ussyflow_builder","task_id":"A2","content":"do task"}`)}}},
+		{FinalText: "done"},
+	}}
+
+	tools := &mockTools{}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "dispatch once"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected first dispatch only, got %d executions", len(tools.calls))
+	}
+	if len(out.ToolCalls) != 2 {
+		t.Fatalf("expected two tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[1].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on second dispatch, got %q", out.ToolCalls[1].Result.Error)
+	}
+}
+
+func TestRunnerBlocksThirdAgentInboxPollForSameAgent(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "agent.message.inbox", Arguments: []byte(`{"agent_id":"default","limit":50}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "agent.message.inbox", Arguments: []byte(`{"agent_id":"default","limit":50}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "agent.message.inbox", Arguments: []byte(`{"agent_id":"default","limit":50}`)}}},
+		{FinalText: "done"},
+	}}
+
+	tools := &mockTools{}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "check inbox"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected first poll only due to result cache + guard, got %d executions", len(tools.calls))
+	}
+	if len(out.ToolCalls) != 3 {
+		t.Fatalf("expected three tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[2].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on third poll, got %q", out.ToolCalls[2].Result.Error)
+	}
+}
+
+func TestRunnerBlocksRepeatedAgentRunForSameTask(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "agent.run", Arguments: []byte(`{"agent_id":"ussyflow_architect","task_id":"A1","message":"do a1"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "agent.run", Arguments: []byte(`{"agent_id":"ussyflow_architect","task_id":"A1","message":"do a1"}`)}}},
+		{FinalText: "done"},
+	}}
+
+	tools := &mockTools{}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "run subagents"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected first agent.run only, got %d executions", len(tools.calls))
+	}
+	if len(out.ToolCalls) != 2 {
+		t.Fatalf("expected two tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[1].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on second agent.run, got %q", out.ToolCalls[1].Result.Error)
+	}
+}
+
 func TestRunnerFinalizesWithModelWhenToolCapReached(t *testing.T) {
 	model := &mockModel{responses: []ModelResponse{
 		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "shell.exec", Arguments: []byte(`{"command":"bash","args":["-lc","nmap -sT 127.0.0.1"]}`)}}},
@@ -670,6 +1026,86 @@ func TestRunnerRecoversWithToolSummaryWhenModelCallFailsMidRun(t *testing.T) {
 	}
 	if !strings.Contains(out.FinalText, "failed to connect to local tailscaled") {
 		t.Fatalf("expected tool output in fallback summary, got %q", out.FinalText)
+	}
+}
+
+func TestRunnerRetriesProviderNoChoicesAndRecovers(t *testing.T) {
+	model := &noChoicesThenSuccessModel{}
+	runner := Runner{Model: model, ToolExecutor: &mockTools{}, MaxToolIterations: 120}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "hello"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("expected successful retry final text, got %q", out.FinalText)
+	}
+	if model.attempts != 3 {
+		t.Fatalf("expected 3 model attempts (2 retries then success), got %d", model.attempts)
+	}
+}
+
+func TestRunnerStopsAfterNoChoicesRetryCap(t *testing.T) {
+	model := &alwaysNoChoicesModel{}
+	runner := Runner{Model: model, ToolExecutor: &mockTools{}, MaxToolIterations: 120}
+
+	_, err := runner.Run(context.Background(), RunInput{Message: "hello"})
+	if err == nil {
+		t.Fatal("expected run to fail after retry cap")
+	}
+	if model.attempts != 3 {
+		t.Fatalf("expected 3 model attempts at retry cap, got %d", model.attempts)
+	}
+}
+
+func TestRunnerNoChoicesAfterToolsUsesFriendlyRecovery(t *testing.T) {
+	model := &toolThenNoChoicesModel{}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Output: `{"count":0,"items":[],"limit":8,"mode":"fts","query":"research explored discoveries journal","status":"active"}`},
+	}}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 120}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "what did you find"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if strings.Contains(out.FinalText, "model/API error") {
+		t.Fatalf("expected friendly no-choices recovery, got %q", out.FinalText)
+	}
+	if !strings.Contains(out.FinalText, "found no matching entries") {
+		t.Fatalf("expected empty-search summary, got %q", out.FinalText)
+	}
+	if model.attempts != 4 {
+		t.Fatalf("expected 1 initial + 3 no-choices attempts, got %d", model.attempts)
+	}
+}
+
+func TestRunnerRetriesTransientProviderTimeoutAndRecovers(t *testing.T) {
+	model := &transientErrorThenSuccessModel{}
+	runner := Runner{Model: model, ToolExecutor: &mockTools{}, MaxToolIterations: 120}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "hello"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("expected successful retry final text, got %q", out.FinalText)
+	}
+	if model.attempts != 3 {
+		t.Fatalf("expected 3 model attempts (2 retries then success), got %d", model.attempts)
+	}
+}
+
+func TestRunnerStopsAfterTransientProviderRetryCap(t *testing.T) {
+	model := &alwaysTransientErrorModel{}
+	runner := Runner{Model: model, ToolExecutor: &mockTools{}, MaxToolIterations: 120}
+
+	_, err := runner.Run(context.Background(), RunInput{Message: "hello"})
+	if err == nil {
+		t.Fatal("expected run to fail after retry cap")
+	}
+	if model.attempts != 3 {
+		t.Fatalf("expected 3 model attempts at retry cap, got %d", model.attempts)
 	}
 }
 

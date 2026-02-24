@@ -1329,6 +1329,14 @@ func normalizeToolArgs(toolName string, args map[string]any) map[string]any {
 				}
 			}
 		}
+		if getStringArg(args, "message") == "" {
+			for _, key := range []string{"content", "text", "body", "prompt"} {
+				if value := getStringArg(args, key); value != "" {
+					args["message"] = value
+					break
+				}
+			}
+		}
 	case "policy.list", "policy.grant", "policy.revoke":
 		if getStringArg(args, "agent_id") == "" {
 			for _, key := range []string{"id", "agent", "target_agent", "targetAgent", "agentId"} {

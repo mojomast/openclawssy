@@ -118,6 +118,128 @@ function parseMaybeJSON(value) {
   }
 }
 
+function isLikelyJSONText(value) {
+  const text = safeText(value);
+  if (!text) {
+    return false;
+  }
+  return text.startsWith("{") || text.startsWith("[");
+}
+
+function scanJSONStructure(value) {
+  const text = String(value || "");
+  const stack = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") {
+      stack.push("}");
+      continue;
+    }
+    if (char === "[") {
+      stack.push("]");
+      continue;
+    }
+    if (char === "}" || char === "]") {
+      const expected = stack.pop();
+      if (expected !== char) {
+        return { complete: false, partial: false, invalid: true };
+      }
+    }
+  }
+
+  if (inString) {
+    return { complete: false, partial: true, invalid: false };
+  }
+  if (stack.length > 0) {
+    return { complete: false, partial: true, invalid: false };
+  }
+  return { complete: true, partial: false, invalid: false };
+}
+
+function tryFormatJSONText(value) {
+  const text = safeText(value);
+  if (!isLikelyJSONText(text)) {
+    return "";
+  }
+  const structure = scanJSONStructure(text);
+  if (!structure.complete) {
+    return "";
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return JSON.stringify(parsed, null, 2);
+  } catch (_error) {
+    return "";
+  }
+}
+
+function isJSONFenceLanguage(value) {
+  const language = safeText(value).toLowerCase();
+  if (!language) {
+    return false;
+  }
+  return language === "json" || language === "jsonc" || language === "application/json";
+}
+
+function normalizeJSONFencedBlocks(value) {
+  const source = String(value || "");
+  if (!source.includes("```")) {
+    return source;
+  }
+
+  const fencePattern = /```([^\n]*)\n([\s\S]*?)```/g;
+  let changed = false;
+  const normalized = source.replace(fencePattern, (full, rawLanguage, rawBody) => {
+    const body = String(rawBody || "");
+    const language = safeText(rawLanguage).toLowerCase();
+    if (!isJSONFenceLanguage(language) && !isLikelyJSONText(body)) {
+      return full;
+    }
+    const formatted = tryFormatJSONText(body);
+    if (!formatted) {
+      return full;
+    }
+    changed = true;
+    return `\`\`\`json\n${formatted}\n\`\`\``;
+  });
+
+  return changed ? normalized : source;
+}
+
+function formatAssistantContentForDisplay(value) {
+  const source = String(value || "");
+  if (!source) {
+    return "";
+  }
+  const wholeJSON = tryFormatJSONText(source);
+  if (wholeJSON) {
+    return wholeJSON;
+  }
+  return normalizeJSONFencedBlocks(source);
+}
+
 function asDisplayText(value) {
   if (value === null || value === undefined) {
     return "";
@@ -935,7 +1057,12 @@ function handleRunStreamToolEnd(eventEnvelope) {
 
 function handleRunStreamModelText(eventEnvelope) {
   const payload = eventEnvelope?.data || {};
-  const text = typeof payload.text === "string" ? payload.text : String(payload.text || "");
+  const text =
+    typeof payload.text === "string"
+      ? payload.text
+      : payload.text === undefined || payload.text === null
+      ? ""
+      : asDisplayText(payload.text);
   if (!text) {
     return false;
   }
@@ -1504,7 +1631,10 @@ function renderChatPage() {
 
       const body = document.createElement("pre");
       body.className = "chat-message-content";
-      body.textContent = String(item.content || "");
+      body.textContent =
+        item.role === "assistant"
+          ? formatAssistantContentForDisplay(item.content)
+          : String(item.content || "");
 
       message.append(meta, body);
       if (item.pending && item.role === "assistant" && chatViewState.latestToolActivity) {

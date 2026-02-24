@@ -140,11 +140,50 @@ func fallbackFromToolResults(results []ToolCallResult, toolCap int) string {
 }
 
 func recoverFromModelError(err error, toolResults []ToolCallResult, toolCap int) string {
+	if isProviderNoChoicesError(err) {
+		return recoverFromNoChoices(toolResults, toolCap)
+	}
 	msg := strings.TrimSpace("I hit a model/API error while processing the next step: " + strings.TrimSpace(err.Error()))
 	if len(toolResults) == 0 {
 		return msg
 	}
 	return msg + "\n\nLatest tool results before the model/API error:\n" + formatLatestToolResults(toolResults) + fmt.Sprintf("\n(Iteration cap: %d)", toolCap)
+}
+
+func recoverFromNoChoices(toolResults []ToolCallResult, toolCap int) string {
+	if len(toolResults) == 0 {
+		return "I couldn't get a complete response from the model this time. Please try again."
+	}
+	if latestToolResultsAreEmptySearches(toolResults) {
+		return "I couldn't get a complete model response, but the latest search attempts found no matching entries."
+	}
+	return "I couldn't get a complete model response, but here are the latest tool results:\n" + formatLatestToolResults(toolResults) + fmt.Sprintf("\n(Iteration cap: %d)", toolCap)
+}
+
+func latestToolResultsAreEmptySearches(results []ToolCallResult) bool {
+	if len(results) == 0 {
+		return false
+	}
+	start := len(results) - 3
+	if start < 0 {
+		start = 0
+	}
+	checked := 0
+	for i := start; i < len(results); i++ {
+		item := results[i]
+		if strings.TrimSpace(item.Error) != "" {
+			return false
+		}
+		out := strings.ToLower(strings.TrimSpace(item.Output))
+		if out == "" {
+			return false
+		}
+		if !strings.Contains(out, `"count":0`) || !strings.Contains(out, `"items":[]`) {
+			return false
+		}
+		checked++
+	}
+	return checked > 0
 }
 
 func formatLatestToolResults(results []ToolCallResult) string {

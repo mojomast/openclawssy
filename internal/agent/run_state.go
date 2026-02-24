@@ -2,9 +2,26 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+)
+
+const (
+	defaultRepeatedFileWriteCap = 5
+	journalFileWriteCap         = 1
+	journalFileReadCap          = 2
+	buildLogFileWriteCap        = 2
+	buildLogFileReadCap         = 2
+	specFileReadCap             = 3
+	agentMessageSendCap         = 1
+	agentMessageInboxCap        = 2
+	agentRunCap                 = 1
+	noChoicesRetryCap           = 2
+	noChoicesRetryDelay         = 200 * time.Millisecond
+	transientModelRetryCap      = 2
+	transientModelRetryDelay    = 250 * time.Millisecond
 )
 
 // runState encapsulates the mutable state of a single agent run loop.
@@ -134,6 +151,32 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 		call := incoming
 		call.ID = uniqueToolCallID(call.ID, s.toolCallOrdinal, s.usedToolCallIDs)
 
+		if repetitionKey, cap, ok := repeatedCallRepetitionKey(call); ok {
+			s.repetitionPrevention[repetitionKey]++
+			if s.repetitionPrevention[repetitionKey] > cap {
+				repetitionMsg := fmt.Sprintf("repetition detected: %s has been attempted %d times in this run. Stop rewriting and provide a final response from current evidence.", repetitionKey, s.repetitionPrevention[repetitionKey])
+				if strings.HasPrefix(repetitionKey, "agent.run|") {
+					repetitionMsg = fmt.Sprintf("repetition detected: %s has been attempted %d times in this run. Do not rerun this same subagent task; move to the next required subagent or finalize with current results.", repetitionKey, s.repetitionPrevention[repetitionKey])
+				}
+				result := ToolCallResult{
+					ID:     call.ID,
+					Output: "",
+					Error:  repetitionMsg,
+				}
+				record := ToolCallRecord{
+					Request:     call,
+					Result:      result,
+					StartedAt:   time.Now().UTC(),
+					CompletedAt: time.Now().UTC(),
+				}
+				s.notifyToolCall(&record, input.OnToolCall)
+				s.out.ToolCalls = append(s.out.ToolCalls, record)
+				s.toolResults = append(s.toolResults, result)
+				s.registerToolOutcome(result.Error)
+				continue
+			}
+		}
+
 		callKey := call.Name + "|" + string(call.Arguments)
 		if callKey != "|" {
 			if cached, ok := s.cachedToolResults[callKey]; ok {
@@ -254,18 +297,42 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 	for {
 		systemPrompt := s.prepareSystemPrompt(ctx, input)
 
-		resp, err := r.Model.Generate(ctx, ModelRequest{
-			AgentID:       input.AgentID,
-			RunID:         input.RunID,
-			SystemPrompt:  systemPrompt,
-			Messages:      append([]ChatMessage(nil), s.messages...),
-			AllowedTools:  append([]string(nil), input.AllowedTools...),
-			ToolTimeoutMS: input.ToolTimeoutMS,
-			Prompt:        systemPrompt,
-			Message:       input.Message,
-			ToolResults:   append([]ToolCallResult(nil), s.toolResults...),
-			OnTextDelta:   input.OnTextDelta,
-		})
+		var (
+			resp ModelResponse
+			err  error
+		)
+		for attempt := 0; ; attempt++ {
+			resp, err = r.Model.Generate(ctx, ModelRequest{
+				AgentID:       input.AgentID,
+				RunID:         input.RunID,
+				SystemPrompt:  systemPrompt,
+				Messages:      append([]ChatMessage(nil), s.messages...),
+				AllowedTools:  append([]string(nil), input.AllowedTools...),
+				ToolTimeoutMS: input.ToolTimeoutMS,
+				Prompt:        systemPrompt,
+				Message:       input.Message,
+				ToolResults:   append([]ToolCallResult(nil), s.toolResults...),
+				OnTextDelta:   input.OnTextDelta,
+			})
+			if err == nil {
+				break
+			}
+			if isProviderNoChoicesError(err) {
+				if attempt >= noChoicesRetryCap {
+					break
+				}
+				time.Sleep(noChoicesRetryDelay)
+				continue
+			}
+			if isTransientProviderModelError(err) {
+				if attempt >= transientModelRetryCap {
+					break
+				}
+				time.Sleep(transientModelRetryDelay)
+				continue
+			}
+			break
+		}
 		if resp.ThinkingPresent {
 			s.thinkingPresent = true
 			if strings.TrimSpace(resp.Thinking) != "" {
@@ -372,6 +439,26 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 	}
 }
 
+func isProviderNoChoicesError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(text, "no choices") || strings.Contains(text, "empty choices")
+}
+
+func isTransientProviderModelError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(text, "stream interrupted") ||
+		strings.Contains(text, "context deadline exceeded") ||
+		strings.Contains(text, "client.timeout") ||
+		strings.Contains(text, "timeout while reading body") ||
+		strings.Contains(text, "i/o timeout")
+}
+
 // extractAgentIDFromArgs extracts the agent_id field from JSON tool arguments
 func extractAgentIDFromArgs(args []byte) string {
 	if len(args) == 0 {
@@ -391,4 +478,140 @@ func extractAgentIDFromArgs(args []byte) string {
 		}
 	}
 	return ""
+}
+
+func repeatedCallRepetitionKey(call ToolCallRequest) (string, int, bool) {
+	name := strings.TrimSpace(call.Name)
+	if name == "agent.message.send" {
+		args, ok := parseToolArgs(call.Arguments)
+		if !ok {
+			return "", 0, false
+		}
+		toAgent := firstTrimmedStringFromMap(args, "to_agent_id", "agent_id", "target_agent", "targetAgent", "agentId")
+		if toAgent == "" {
+			return "", 0, false
+		}
+		taskID := firstTrimmedStringFromMap(args, "task_id", "taskId")
+		if taskID != "" {
+			return name + "|" + toAgent + "|" + taskID, agentMessageSendCap, true
+		}
+		message := firstTrimmedStringFromMap(args, "message", "content", "text", "body", "prompt")
+		if message == "" {
+			return "", 0, false
+		}
+		return name + "|" + toAgent + "|" + firstN(strings.ToLower(message), 80), agentMessageSendCap, true
+	}
+	if name == "agent.message.inbox" {
+		args, ok := parseToolArgs(call.Arguments)
+		if !ok {
+			return "", 0, false
+		}
+		agentID := firstTrimmedStringFromMap(args, "agent_id", "id", "agent")
+		if agentID == "" {
+			agentID = "self"
+		}
+		return name + "|" + agentID, agentMessageInboxCap, true
+	}
+	if name == "agent.run" {
+		args, ok := parseToolArgs(call.Arguments)
+		if !ok {
+			return "", 0, false
+		}
+		agentID := firstTrimmedStringFromMap(args, "agent_id", "to_agent_id", "target_agent", "targetAgent", "agentId")
+		if agentID == "" {
+			return "", 0, false
+		}
+		taskID := firstTrimmedStringFromMap(args, "task_id", "taskId")
+		if taskID != "" {
+			return name + "|" + agentID + "|" + taskID, agentRunCap, true
+		}
+		message := firstTrimmedStringFromMap(args, "message", "content", "text", "body", "prompt")
+		if message == "" {
+			return "", 0, false
+		}
+		return name + "|" + agentID + "|" + firstN(strings.ToLower(message), 80), agentRunCap, true
+	}
+
+	if name != "fs.write" && name != "fs.append" && name != "fs.read" {
+		return "", 0, false
+	}
+	path := extractPathFromToolArgs(call.Arguments)
+	if path == "" {
+		return "", 0, false
+	}
+	cap, ok := repetitionCapForToolPath(name, path)
+	if !ok {
+		return "", 0, false
+	}
+	return name + "|" + path, cap, true
+}
+
+func repetitionCapForToolPath(toolName, path string) (int, bool) {
+	lower := strings.ToLower(strings.TrimSpace(path))
+	isJournalPath := strings.Contains(lower, "journal") || strings.Contains(lower, "diary")
+	isBuildLogPath := strings.Contains(lower, "build_log")
+	isSpecPath := strings.HasSuffix(lower, "_spec.md") || strings.HasSuffix(lower, "/spec.md")
+	if toolName == "fs.write" || toolName == "fs.append" {
+		if isBuildLogPath {
+			return buildLogFileWriteCap, true
+		}
+		if isJournalPath {
+			return journalFileWriteCap, true
+		}
+		return defaultRepeatedFileWriteCap, true
+	}
+	if toolName == "fs.read" && isBuildLogPath {
+		return buildLogFileReadCap, true
+	}
+	if toolName == "fs.read" && isSpecPath {
+		return specFileReadCap, true
+	}
+	if toolName == "fs.read" && isJournalPath {
+		return journalFileReadCap, true
+	}
+	return 0, false
+}
+
+func parseToolArgs(args []byte) (map[string]any, bool) {
+	if len(args) == 0 {
+		return nil, false
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(args, &payload); err != nil {
+		return nil, false
+	}
+	return payload, true
+}
+
+func firstTrimmedStringFromMap(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		raw, ok := values[key]
+		if !ok || raw == nil {
+			continue
+		}
+		text, ok := raw.(string)
+		if !ok {
+			continue
+		}
+		trimmed := strings.TrimSpace(text)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func firstN(s string, n int) string {
+	if n <= 0 || len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
+func extractPathFromToolArgs(args []byte) string {
+	payload, ok := parseToolArgs(args)
+	if !ok {
+		return ""
+	}
+	return firstTrimmedStringFromMap(payload, "path", "file", "target", "filename")
 }
