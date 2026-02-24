@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -185,7 +186,7 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 			}
 		}
 
-		callKey := call.Name + "|" + string(call.Arguments)
+		callKey := toolCallCacheKey(call)
 		if callKey != "|" {
 			if cached, ok := s.cachedToolResults[callKey]; ok {
 				now := time.Now().UTC()
@@ -661,6 +662,57 @@ func parseToolArgs(args []byte) (map[string]any, bool) {
 		return nil, false
 	}
 	return payload, true
+}
+
+func toolCallCacheKey(call ToolCallRequest) string {
+	name := strings.TrimSpace(call.Name)
+	if name == "http.request" || name == "net.fetch" {
+		if key, ok := normalizedHTTPRequestCacheKey(call.Arguments); ok {
+			return "http.request|" + key
+		}
+	}
+	return call.Name + "|" + string(call.Arguments)
+}
+
+func normalizedHTTPRequestCacheKey(args []byte) (string, bool) {
+	payload, ok := parseToolArgs(args)
+	if !ok {
+		return "", false
+	}
+	rawURL := firstTrimmedStringFromMap(payload, "url", "uri", "endpoint")
+	if rawURL == "" {
+		return "", false
+	}
+	method := strings.ToUpper(firstTrimmedStringFromMap(payload, "method"))
+	if method == "" {
+		method = "GET"
+	}
+	body := firstTrimmedStringFromMap(payload, "body", "data", "payload")
+	return method + "|" + normalizeRequestURL(rawURL) + "|" + firstN(body, 200), true
+}
+
+func normalizeRequestURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return strings.ToLower(trimmed)
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Host = strings.ToLower(parsed.Host)
+	if strings.HasSuffix(parsed.Host, ":80") && parsed.Scheme == "http" {
+		parsed.Host = strings.TrimSuffix(parsed.Host, ":80")
+	}
+	if strings.HasSuffix(parsed.Host, ":443") && parsed.Scheme == "https" {
+		parsed.Host = strings.TrimSuffix(parsed.Host, ":443")
+	}
+	if parsed.Path == "" {
+		parsed.Path = "/"
+	}
+	parsed.Fragment = ""
+	return parsed.String()
 }
 
 func firstTrimmedStringFromMap(values map[string]any, keys ...string) string {

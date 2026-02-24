@@ -1050,13 +1050,14 @@ function handleRunStreamToolEnd(eventEnvelope) {
   chatViewState.latestToolActivity = event;
   chatViewState.loopRisk = buildLoopRisk(chatViewState.streamToolEvents);
 
-  if (!safeText(chatViewState.currentStreamingText)) {
-    const detail = compactText(firstNonEmpty(event.summary, event.errorText, event.outputText, event.argsText), 180);
-    if (detail) {
-      updatePendingAssistant(`Working... ${event.tool}: ${detail}`);
-    } else {
-      updatePendingAssistant(`Working... ${event.tool}`);
-    }
+  if (safeText(chatViewState.currentStreamingText)) {
+    chatViewState.currentStreamingText = "";
+  }
+  const detail = compactText(firstNonEmpty(event.summary, event.errorText, event.outputText, event.argsText), 180);
+  if (detail) {
+    updatePendingAssistant(`Working... ${event.tool}: ${detail}`);
+  } else {
+    updatePendingAssistant(`Working... ${event.tool}`);
   }
 
   if (event.status === "failed" && safeText(event.errorText)) {

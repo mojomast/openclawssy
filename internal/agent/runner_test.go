@@ -370,6 +370,36 @@ func TestRunnerCachesRepeatedToolCallResult(t *testing.T) {
 	}
 }
 
+func TestRunnerCachesHTTPRequestsWithImplicitGETAndRootSlashVariants(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "http.request", Arguments: []byte(`{"method":"GET","url":"https://ussy.host"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "http.request", Arguments: []byte(`{"url":"https://ussy.host/"}`)}}},
+		{FinalText: "done"},
+	}}
+
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Output: `{"status":200,"url":"https://ussy.host"}`},
+	}}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 8}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "fetch homepage"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(out.ToolCalls) != 2 {
+		t.Fatalf("expected two tool call records, got %d", len(out.ToolCalls))
+	}
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected semantically-equivalent http.request call to use cache, got %d executions", len(tools.calls))
+	}
+	if out.ToolCalls[0].Result.Output != out.ToolCalls[1].Result.Output {
+		t.Fatalf("expected cached http.request output to be reused, got %+v", out.ToolCalls)
+	}
+}
+
 func TestRunnerAllowsRepeatedCallAndLetsModelRecover(t *testing.T) {
 	model := &mockModel{responses: []ModelResponse{
 		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.list", Arguments: []byte(`{"path":"."}`)}}},
