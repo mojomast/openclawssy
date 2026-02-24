@@ -195,6 +195,21 @@ function tryFormatJSONText(value) {
   }
 }
 
+function formatStreamingJSON(value) {
+  const text = safeText(value);
+  if (!isLikelyJSONText(text)) {
+    return "";
+  }
+  const structure = scanJSONStructure(text);
+  if (structure.complete) {
+    return tryFormatJSONText(text);
+  }
+  if (structure.partial) {
+    return text + "\n/* ... streaming ... */";
+  }
+  return "";
+}
+
 function isJSONFenceLanguage(value) {
   const language = safeText(value).toLowerCase();
   if (!language) {
@@ -667,6 +682,15 @@ function buildLoopRisk(toolEvents) {
   }
   if (repeatedFailureCount >= 3) {
     score += 1;
+  }
+
+  // Detect backend repetition guard messages in tool event errors
+  const hasRepetitionGuard = window.some(
+    (event) => event.errorText && event.errorText.includes("repetition detected")
+  );
+  if (hasRepetitionGuard) {
+    score += 3;
+    reasons.push("Backend repetition guard triggered.");
   }
 
   const level = score >= 6 ? "high" : score >= 3 ? "medium" : "low";
@@ -1808,7 +1832,9 @@ function renderChatPage() {
   const runMeta = document.createElement("p");
   runMeta.className = "chat-activity-meta";
   const streamState = chatViewState.streamActive ? "stream live" : "stream idle";
-  runMeta.textContent = `Run: ${runID || "-"} · status ${status} · ${streamState}`;
+  const toolCount = chatViewState.streamToolEvents.length;
+  const toolCountLabel = chatViewState.streamActive || chatViewState.polling ? ` · Tools: ${toolCount}` : "";
+  runMeta.textContent = `Run: ${runID || "-"} · status ${status} · ${streamState}${toolCountLabel}`;
 
   const sessionMeta = document.createElement("p");
   sessionMeta.className = "chat-activity-meta muted";
@@ -1882,6 +1908,29 @@ function renderChatPage() {
     });
     riskCard.append(reasonList);
   }
+
+  // Orchestration warning indicators
+  const orchestrationWarnings = [];
+  if (chatViewState.streamToolEvents.some(
+    (e) => e.errorText && e.errorText.includes("repetition detected")
+  )) {
+    orchestrationWarnings.push({ text: "Repetition guard active", cls: "repetition" });
+  }
+  if (
+    chatViewState.currentStreamingText.includes("tool-iteration limit") ||
+    chatViewState.streamToolEvents.some(
+      (e) => e.errorText && e.errorText.includes("tool-iteration limit")
+    )
+  ) {
+    orchestrationWarnings.push({ text: "Iteration limit reached", cls: "iteration-limit" });
+  }
+
+  orchestrationWarnings.forEach((warning) => {
+    const warningEl = document.createElement("p");
+    warningEl.className = `orchestration-warning ${warning.cls}`;
+    warningEl.textContent = warning.text;
+    riskCard.append(warningEl);
+  });
 
   activityPane.append(activityTitle, agentControlCard, runMeta, sessionMeta, debugActions, latestToolCard, errorCard, riskCard);
 

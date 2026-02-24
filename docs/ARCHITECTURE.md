@@ -6,6 +6,7 @@
 - Prompt assembly merges: system policy, agent files, optional chat/session context, and user input.
 - Model response is parsed for tool calls and visible text in a bounded loop.
 - Tool invocations pass through registry validation and policy checks before execution.
+- Repetition guards prevent same-intent loops (cached identical calls, per-tool caps, normalized task-id keys).
 - Run bundle artifacts, trace, and audit events are persisted at completion.
 
 ## Runner Loop
@@ -22,6 +23,8 @@ Input -> ExecuteWithInput
 
 ## Parser and Thinking Extraction
 - Parsing captures malformed tool snippets and normalized rejection reasons.
+- Recovery repair can close unbalanced JSON delimiters (truncated braces/brackets/strings) before parse retry.
+- Tagged fallback parsing supports `<tool_call>tool_name,{...}` when providers emit non-fenced tool directives.
 - `ParseDiagnostics` is returned when `thinking_mode=always` or parse failure occurred.
 - Thinking text extraction is controlled by `output.thinking_mode` (or per-request override).
 - Thinking text is truncated to `output.max_thinking_chars` before persistence/return.

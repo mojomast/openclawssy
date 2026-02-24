@@ -276,7 +276,73 @@ func repairJSONText(text string) string {
 	}
 
 	repaired = stripTrailingCommas(repaired)
+	repaired = closeOpenDelimiters(repaired)
 	return strings.TrimSpace(repaired)
+}
+
+// closeOpenDelimiters closes unclosed JSON strings, brackets, and braces.
+// It only applies to text that starts with '{' or '[' to avoid repairing non-JSON text.
+func closeOpenDelimiters(text string) string {
+	if text == "" {
+		return text
+	}
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" || (trimmed[0] != '{' && trimmed[0] != '[') {
+		return text
+	}
+
+	inString := false
+	escaped := false
+	stack := make([]byte, 0, 16)
+
+	for i := 0; i < len(text); i++ {
+		ch := text[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		if ch == '"' {
+			inString = true
+			continue
+		}
+		if ch == '{' || ch == '[' {
+			stack = append(stack, ch)
+			continue
+		}
+		if ch == '}' || ch == ']' {
+			if len(stack) == 0 {
+				continue
+			}
+			last := stack[len(stack)-1]
+			if (ch == '}' && last == '{') || (ch == ']' && last == '[') {
+				stack = stack[:len(stack)-1]
+			}
+		}
+	}
+
+	// Close unclosed string delimiter
+	if inString {
+		text += `"`
+	}
+	// Close unclosed brackets/braces in reverse order
+	for i := len(stack) - 1; i >= 0; i-- {
+		if stack[i] == '{' {
+			text += "}"
+		} else if stack[i] == '[' {
+			text += "]"
+		}
+	}
+	return text
 }
 
 func unwrapFence(text string) string {
@@ -436,6 +502,8 @@ func parseCallID(obj map[string]any, nextID *int) (string, string) {
 	return id, ""
 }
 
+const maxJSONNestingDepth = 64
+
 func extractBalancedJSONCandidates(content string) []string {
 	trimmed := strings.TrimSpace(content)
 	if trimmed == "" {
@@ -474,6 +542,13 @@ func extractBalancedJSONCandidates(content string) []string {
 				start = i
 			}
 			stack = append(stack, r)
+			// Abort current candidate if nesting exceeds depth limit
+			if len(stack) > maxJSONNestingDepth {
+				stack = stack[:0]
+				start = -1
+				inString = false
+				escaped = false
+			}
 			continue
 		}
 

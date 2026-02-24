@@ -417,6 +417,26 @@ body {
   padding-left: 1.1rem;
 }
 
+.orchestration-warning {
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 0.82em;
+  font-weight: 600;
+  margin-top: 6px;
+}
+
+.orchestration-warning.repetition {
+  background: #3b2e00;
+  border: 1px solid #f5a623;
+  color: #f5a623;
+}
+
+.orchestration-warning.iteration-limit {
+  background: #3b0000;
+  border: 1px solid #ff4444;
+  color: #ff4444;
+}
+
 .runs-controls {
   display: flex;
   flex-wrap: wrap;

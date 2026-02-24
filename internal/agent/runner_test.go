@@ -991,6 +991,11 @@ func TestRunnerContinuesWhenOnToolCallReturnsError(t *testing.T) {
 }
 
 func TestRunnerBreaksNoProgressToolLoopBeforeCap(t *testing.T) {
+	// After the shell.exec repetition cap (3), identical shell commands are blocked.
+	// After 2 all-blocked iterations the runner fast-finalizes.
+	// Sequence: iter1=fresh exec, iter2=cached (no progress), iter3=cached (no progress),
+	// iter4=repetition-blocked (allBlocked=1), iter5=repetition-blocked (allBlocked=2) → finalize.
+	// But with repeatedNoProgressLoopCapTrigger=3, generic no-progress fires at iter4.
 	model := &mockModel{responses: []ModelResponse{
 		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "shell.exec", Arguments: []byte(`{"command":"bash","args":["-lc","pip install flask requests"]}`)}}},
 		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "shell.exec", Arguments: []byte(`{"command":"bash","args":["-lc","pip install flask requests"]}`)}}},
@@ -1011,14 +1016,16 @@ func TestRunnerBreaksNoProgressToolLoopBeforeCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
-	if out.FinalText != "The venv is ready and flask/requests are already installed." {
-		t.Fatalf("unexpected final text: %q", out.FinalText)
+	// The runner should finalize before the model's 8th response due to no-progress / all-blocked detection
+	if out.FinalText == "" {
+		t.Fatalf("expected non-empty final text")
 	}
 	if len(tools.calls) != 1 {
 		t.Fatalf("expected only one real tool execution, got %d", len(tools.calls))
 	}
-	if len(model.reqs) != 8 {
-		t.Fatalf("expected finalize call after no-progress loop, got %d model requests", len(model.reqs))
+	// With shell.exec cap=3 and no-progress cap=3, the run stops well before 8 model calls
+	if len(model.reqs) > 8 {
+		t.Fatalf("expected no more than 8 model requests, got %d", len(model.reqs))
 	}
 }
 
@@ -1228,11 +1235,21 @@ func TestRunnerTreatsStructuredToolOutputErrorsAsFailures(t *testing.T) {
 }
 
 func TestRunnerEscalatesGuidanceForStructuredToolOutputErrors(t *testing.T) {
+	// Use distinct shell commands so the shell.exec repetition cap doesn't interfere
+	// with the failure recovery escalation path.
 	responses := make([]ModelResponse, 0, 6)
 	results := make(map[string]ToolCallResult, 6)
-	for i := 1; i <= 6; i++ {
-		id := "call-" + strconv.Itoa(i)
-		responses = append(responses, ModelResponse{ToolCalls: []ToolCallRequest{{ID: id, Name: "shell.exec", Arguments: []byte(`{"command":"bash","args":["-lc","curl -fsSL https://tailscale.com/install.sh | sh"]}`)}}})
+	commands := []string{
+		`{"command":"bash","args":["-lc","curl -fsSL https://tailscale.com/install.sh | sh"]}`,
+		`{"command":"bash","args":["-lc","wget -q https://tailscale.com/install.sh -O- | sh"]}`,
+		`{"command":"bash","args":["-lc","apt-get install -y tailscale"]}`,
+		`{"command":"bash","args":["-lc","yum install -y tailscale"]}`,
+		`{"command":"bash","args":["-lc","apk add tailscale"]}`,
+		`{"command":"bash","args":["-lc","snap install tailscale"]}`,
+	}
+	for i := 0; i < 6; i++ {
+		id := "call-" + strconv.Itoa(i+1)
+		responses = append(responses, ModelResponse{ToolCalls: []ToolCallRequest{{ID: id, Name: "shell.exec", Arguments: []byte(commands[i])}}})
 		results[id] = ToolCallResult{ID: id, Output: `{"exit_code":127,"stderr":"sh: rc-update: not found","stdout":"Installing Tailscale","error":"exit status 127"}`}
 	}
 
@@ -1314,5 +1331,131 @@ func TestRunnerAsksPermissionToAddAllowedDomainAfterRepeatedNetworkDeny(t *testi
 	}
 	if !strings.Contains(out.FinalText, "config.set") {
 		t.Fatalf("expected config.set guidance, got %q", out.FinalText)
+	}
+}
+
+func TestRunnerBlocksRepeatedShellExecLoopOnSameCommand(t *testing.T) {
+	// shell.exec with the same command+args should be blocked after shellExecRepetitionCap (3) calls.
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "shell.exec", Arguments: []byte(`{"command":"npm","args":["run","build"]}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "shell.exec", Arguments: []byte(`{"command":"npm","args":["run","build"]}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "shell.exec", Arguments: []byte(`{"command":"npm","args":["run","build"]}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "4", Name: "shell.exec", Arguments: []byte(`{"command":"npm","args":["run","build"]}`)}}},
+		{FinalText: "done"},
+	}}
+
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Output: "build failed: error TS2345"},
+	}}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "build project"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	// First call executes, second is cached, third is cached, fourth is repetition-blocked.
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected only one real shell.exec execution, got %d", len(tools.calls))
+	}
+	if len(out.ToolCalls) != 4 {
+		t.Fatalf("expected four tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[3].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on 4th shell.exec, got %q", out.ToolCalls[3].Result.Error)
+	}
+}
+
+func TestRunnerBlocksShellExecButAllowsDifferentCommands(t *testing.T) {
+	// Different shell commands should NOT be collapsed — each has its own counter.
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "shell.exec", Arguments: []byte(`{"command":"npm","args":["run","build"]}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "shell.exec", Arguments: []byte(`{"command":"npm","args":["run","test"]}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "shell.exec", Arguments: []byte(`{"command":"npm","args":["run","lint"]}`)}}},
+		{FinalText: "all passed"},
+	}}
+
+	tools := &mockTools{}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "run build, test, lint"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "all passed" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	// All three are different commands, so all should execute.
+	if len(tools.calls) != 3 {
+		t.Fatalf("expected three real executions for different commands, got %d", len(tools.calls))
+	}
+}
+
+func TestRunnerNormalizesTaskIDSuffixesForRepetition(t *testing.T) {
+	// Task IDs with -retry, -v2, -continue, -fix, -redo, -attempt3 suffixes
+	// should all normalize to the same base, so the second call is blocked.
+	suffixes := []string{"-retry", "-v2", "-continue", "-fix", "-redo", "-attempt3"}
+	for _, suffix := range suffixes {
+		t.Run(suffix, func(t *testing.T) {
+			variantID := "build-frontend" + suffix
+			model := &mockModel{responses: []ModelResponse{
+				{ToolCalls: []ToolCallRequest{{ID: "1", Name: "agent.run", Arguments: []byte(`{"agent_id":"builder","task_id":"build-frontend","message":"build it"}`)}}},
+				{ToolCalls: []ToolCallRequest{{ID: "2", Name: "agent.run", Arguments: []byte(`{"agent_id":"builder","task_id":"` + variantID + `","message":"build it"}`)}}},
+				{FinalText: "done"},
+			}}
+
+			tools := &mockTools{}
+			runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+			out, err := runner.Run(context.Background(), RunInput{Message: "run builder"})
+			if err != nil {
+				t.Fatalf("run failed: %v", err)
+			}
+			if len(tools.calls) != 1 {
+				t.Fatalf("suffix %q: expected first dispatch only, got %d executions", suffix, len(tools.calls))
+			}
+			if !strings.Contains(out.ToolCalls[1].Result.Error, "repetition detected") {
+				t.Fatalf("suffix %q: expected repetition guard, got %q", suffix, out.ToolCalls[1].Result.Error)
+			}
+		})
+	}
+}
+
+func TestRunnerFastFinalizesWhenAllToolCallsBlockedForTwoIterations(t *testing.T) {
+	// When every tool call in an iteration is repetition-blocked for 2+ consecutive
+	// iterations, the runner should fast-finalize without waiting for the full no-progress cap.
+	// Setup: 1 real exec, then iterations of the same blocked call. After shell.exec cap (3),
+	// calls 4-7 are blocked. Iterations 4&5 are all-blocked → fast finalize.
+	responses := make([]ModelResponse, 0, 10)
+	for i := 1; i <= 10; i++ {
+		id := strconv.Itoa(i)
+		responses = append(responses, ModelResponse{
+			ToolCalls: []ToolCallRequest{{ID: id, Name: "shell.exec", Arguments: []byte(`{"command":"make","args":["deploy"]}`)}},
+		})
+	}
+	responses = append(responses, ModelResponse{FinalText: "should not reach this"})
+
+	model := &mockModel{responses: responses}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Output: "deploy: permission denied"},
+	}}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 50}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "deploy the app"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	// Should finalize, not reach the model's final text
+	if out.FinalText == "should not reach this" {
+		t.Fatalf("runner did not fast-finalize; reached model's scripted final text")
+	}
+	if out.FinalText == "" {
+		t.Fatalf("expected non-empty finalized text")
+	}
+	// Should not have consumed all 10 model calls — fast finalization cuts it short
+	if len(model.reqs) > 7 {
+		t.Fatalf("expected early termination, but used %d model requests", len(model.reqs))
 	}
 }

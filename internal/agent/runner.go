@@ -19,7 +19,7 @@ var (
 const (
 	DefaultToolIterationCap          = 120
 	DefaultToolTimeout               = 900 * time.Second
-	repeatedNoProgressLoopCapTrigger = 6
+	repeatedNoProgressLoopCapTrigger = 3
 	failureRecoveryTrigger           = 2
 	failureGuidanceEscalation        = 3
 	followThroughRepromptCap         = 5

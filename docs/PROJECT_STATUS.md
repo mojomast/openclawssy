@@ -24,6 +24,9 @@ What works now:
 - dashboard chat layout controls (resizable chat, collapsible panes, focus mode)
 - long-running tool defaults (`120` iterations, `900s` per tool call) for heavy shell workflows
 - staged failure recovery (after 2 failures, force error-recovery mode; after 3 additional failures, ask user with attempted commands/errors/outputs, including intermittent failure loops)
+- repetition-loop hardening: normalized task-id retry suffix handling (`-v2`, `-retry`, `-continue`, `-attemptN`, `-redo`, `-fix`), `shell.exec` same-command repetition caps, and fast finalization when iterations are fully repetition-blocked
+- parser resilience for malformed tool payloads: delimiter-closure repair for truncated JSON candidates plus `<tool_call>...` tagged-call recovery coverage
+- dashboard orchestration visibility: loop-risk now surfaces backend repetition guards, shows active tool-call count, and renders explicit repetition/iteration-limit warning badges
 - dashboard chat auto-progress updates for long runs (elapsed time + completed tool calls + latest summary)
 - chat queue API now returns `session_id` for queued runs so clients can stay attached to session context
 - chatstore cross-process locking for writes and lock-respecting reads

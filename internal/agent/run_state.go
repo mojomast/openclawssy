@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -18,6 +19,7 @@ const (
 	agentMessageSendCap         = 1
 	agentMessageInboxCap        = 2
 	agentRunCap                 = 1
+	shellExecRepetitionCap      = 3
 	noChoicesRetryCap           = 2
 	noChoicesRetryDelay         = 200 * time.Millisecond
 	transientModelRetryCap      = 2
@@ -43,6 +45,7 @@ type runState struct {
 	successesSinceRecovery  int
 	toolTimeout             time.Duration
 	noProgressIterations    int
+	allBlockedIterations    int
 	latestThinking          string
 	thinkingPresent         bool
 	toolParseFailure        bool
@@ -425,8 +428,37 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 
 		if hadFreshExecution {
 			s.noProgressIterations = 0
+			s.allBlockedIterations = 0
 		} else {
 			s.noProgressIterations++
+			// Check if ALL results from this iteration were repetition-blocked
+			// (not just cached). If so, finalize faster than the generic no-progress path.
+			allRepetitionBlocked := len(resp.ToolCalls) > 0
+			for _, tr := range s.toolResults[len(s.toolResults)-len(resp.ToolCalls):] {
+				if !strings.Contains(tr.Error, "repetition detected") {
+					allRepetitionBlocked = false
+					break
+				}
+			}
+			if allRepetitionBlocked {
+				s.allBlockedIterations++
+			} else {
+				s.allBlockedIterations = 0
+			}
+		}
+
+		// Fast-finalize when all tool calls have been repetition-blocked for 2+ iterations
+		if s.allBlockedIterations >= 2 && len(s.toolResults) > 0 {
+			if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, ""); finalized != "" {
+				s.out.FinalText = finalized
+			} else {
+				s.out.FinalText = fallbackFromToolResults(s.toolResults, s.toolCap)
+			}
+			s.out.Thinking = s.latestThinking
+			s.out.ThinkingPresent = s.thinkingPresent
+			s.out.ToolParseFailure = s.toolParseFailure
+			s.out.CompletedAt = time.Now().UTC()
+			return s.out, nil
 		}
 
 		if s.failureRecoveryActive && s.failuresSinceRecovery >= failureGuidanceEscalation && len(s.out.ToolCalls) > 0 {
@@ -562,9 +594,27 @@ func repeatedCallRepetitionKey(call ToolCallRequest) (string, int, bool) {
 		return name + "|" + agentID + "|" + firstN(strings.ToLower(message), 80), agentRunCap, true
 	}
 
-	if name != "fs.write" && name != "fs.append" && name != "fs.read" {
+	if name != "fs.write" && name != "fs.append" && name != "fs.read" && name != "shell.exec" {
 		return "", 0, false
 	}
+
+	// shell.exec: prevent the same shell command from being run more than 3 times
+	if name == "shell.exec" {
+		args, ok := parseToolArgs(call.Arguments)
+		if !ok {
+			return "", 0, false
+		}
+		command := firstTrimmedStringFromMap(args, "command", "cmd")
+		cmdArgs := ""
+		if rawArgs, hasArgs := args["args"]; hasArgs {
+			if encoded, err := json.Marshal(rawArgs); err == nil {
+				cmdArgs = string(encoded)
+			}
+		}
+		key := name + "|" + command + "|" + firstN(cmdArgs, 120)
+		return key, shellExecRepetitionCap, true
+	}
+
 	path := extractPathFromToolArgs(call.Arguments)
 	if path == "" {
 		return "", 0, false
@@ -638,6 +688,9 @@ func firstN(s string, n int) string {
 	return s[:n]
 }
 
+// repetitionSuffixPattern matches common retry/version/continuation suffixes at the end of task IDs.
+var repetitionSuffixPattern = regexp.MustCompile(`(?i)-(v\d+|retry|continue|attempt\d*|redo|fix)$`)
+
 func normalizeTaskIDForRepetition(taskID string) string {
 	value := strings.ToLower(strings.TrimSpace(taskID))
 	if value == "" {
@@ -658,6 +711,10 @@ func normalizeTaskIDForRepetition(taskID string) string {
 	if looksLaneTaskID(value) {
 		return value
 	}
+	// Strip common retry/version/continuation suffixes so that
+	// "task-name-v2", "task-name-retry", "task-name-continue", etc.
+	// all normalize to "task-name".
+	value = repetitionSuffixPattern.ReplaceAllString(value, "")
 	return value
 }
 

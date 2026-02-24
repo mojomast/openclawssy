@@ -1663,6 +1663,70 @@ func TestProviderModelStreamingDoesNotRetryAfterFirstDelta(t *testing.T) {
 	}
 }
 
+func TestParseTaggedToolCallsValidWithNoFencedJSON(t *testing.T) {
+	content := `<tool_call>fs.list,{"path":"."}`
+	taggedCalls, diag := parseTaggedToolCalls(content, []string{"fs.list"})
+	if len(taggedCalls) != 1 {
+		t.Fatalf("expected one tagged tool call, got %d", len(taggedCalls))
+	}
+	if taggedCalls[0].Name != "fs.list" {
+		t.Fatalf("expected fs.list, got %q", taggedCalls[0].Name)
+	}
+	args := decodeToolArgs(t, taggedCalls[0].Arguments)
+	if args["path"] != "." {
+		t.Fatalf("expected path='.', got %#v", args["path"])
+	}
+	if len(diag.Candidates) != 1 || !diag.Candidates[0].Accepted {
+		t.Fatalf("expected one accepted candidate, got %+v", diag.Candidates)
+	}
+}
+
+func TestParseTaggedToolCallsMultipleTags(t *testing.T) {
+	content := `<tool_call>fs.list,{"path":"."}<tool_call>fs.read,{"path":"README.md"}`
+	taggedCalls, diag := parseTaggedToolCalls(content, []string{"fs.list", "fs.read"})
+	if len(taggedCalls) != 2 {
+		t.Fatalf("expected two tagged tool calls, got %d", len(taggedCalls))
+	}
+	if taggedCalls[0].Name != "fs.list" {
+		t.Fatalf("expected first call fs.list, got %q", taggedCalls[0].Name)
+	}
+	if taggedCalls[1].Name != "fs.read" {
+		t.Fatalf("expected second call fs.read, got %q", taggedCalls[1].Name)
+	}
+	if len(diag.Candidates) != 2 {
+		t.Fatalf("expected two candidates, got %d", len(diag.Candidates))
+	}
+	// Verify IDs are unique
+	if taggedCalls[0].ID == taggedCalls[1].ID {
+		t.Fatalf("expected unique IDs, got duplicates: %q", taggedCalls[0].ID)
+	}
+}
+
+func TestParseTaggedToolCallsMalformedJSONDoesNotPanic(t *testing.T) {
+	content := `<tool_call>fs.list,{not valid json at all`
+	taggedCalls, diag := parseTaggedToolCalls(content, []string{"fs.list"})
+	if len(taggedCalls) != 0 {
+		t.Fatalf("expected no accepted tool calls for malformed JSON, got %d", len(taggedCalls))
+	}
+	if len(diag.Rejected) == 0 {
+		t.Fatal("expected rejected candidate for malformed JSON")
+	}
+}
+
+func TestParseTaggedToolCallsCaseInsensitive(t *testing.T) {
+	content := `<TOOL_CALL>fs.list,{"path":"."}`
+	taggedCalls, diag := parseTaggedToolCalls(content, []string{"fs.list"})
+	if len(taggedCalls) != 1 {
+		t.Fatalf("expected one tagged tool call from uppercase tag, got %d", len(taggedCalls))
+	}
+	if taggedCalls[0].Name != "fs.list" {
+		t.Fatalf("expected fs.list, got %q", taggedCalls[0].Name)
+	}
+	if len(diag.Candidates) != 1 || !diag.Candidates[0].Accepted {
+		t.Fatalf("expected one accepted candidate, got %+v", diag.Candidates)
+	}
+}
+
 func decodeToolArgs(t *testing.T, raw []byte) map[string]any {
 	t.Helper()
 	out := map[string]any{}

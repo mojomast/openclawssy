@@ -409,3 +409,59 @@ func TestParseToolCallsRepairStillEnforcesAllowlist(t *testing.T) {
 		t.Fatalf("expected repaired JSON to pass parser before allowlist check, got %q", diag.Rejected[0].Reason)
 	}
 }
+
+func TestParseToolCallsRepairsTruncatedJSON(t *testing.T) {
+	// closeOpenDelimiters should close unclosed braces/brackets so the parser can extract a valid call.
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"unclosed_object", "```json\n{\"tool_name\":\"shell.exec\",\"arguments\":{\"command\":\"ls\"\n```"},
+		{"unclosed_string", "```json\n{\"tool_name\":\"shell.exec\",\"arguments\":{\"command\":\"ls -la /tmp\n```"},
+		{"unclosed_nested", "```json\n{\"tool_name\":\"fs.write\",\"arguments\":{\"path\":\"/a.txt\",\"content\":\"hello\n```"},
+		{"unclosed_array_arg", "```json\n{\"tool_name\":\"shell.exec\",\"arguments\":{\"command\":\"bash\",\"args\":[\"-lc\",\"echo hi\"\n```"},
+	}
+
+	allowed := []string{"shell.exec", "fs.write"}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls, diag := ParseToolCalls(tc.input, allowed)
+			if len(calls) == 0 {
+				reasons := ""
+				for _, r := range diag.Rejected {
+					reasons += fmt.Sprintf("%s: %s; ", r.ParsedToolName, r.Reason)
+				}
+				t.Fatalf("expected truncated JSON to be repaired and parsed, got 0 calls; rejected: %s", reasons)
+			}
+			if calls[0].Name != "shell.exec" && calls[0].Name != "fs.write" {
+				t.Fatalf("expected repaired tool name, got %q", calls[0].Name)
+			}
+		})
+	}
+}
+
+func TestCloseOpenDelimitersUnit(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"already_closed", `{"a":1}`, `{"a":1}`},
+		{"unclosed_brace", `{"a":1`, `{"a":1}`},
+		{"unclosed_nested", `{"a":{"b":2}`, `{"a":{"b":2}}`},
+		{"unclosed_array", `[1,2,3`, `[1,2,3]`},
+		{"unclosed_string_and_brace", `{"a":"hello`, `{"a":"hello"}`},
+		{"unclosed_mixed", `{"a":[1,{"b":2`, `{"a":[1,{"b":2}]}`},
+		{"no_json_start", `hello world`, `hello world`},
+		{"empty", ``, ``},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := closeOpenDelimiters(tc.input)
+			if got != tc.expected {
+				t.Fatalf("closeOpenDelimiters(%q) = %q, want %q", tc.input, got, tc.expected)
+			}
+		})
+	}
+}

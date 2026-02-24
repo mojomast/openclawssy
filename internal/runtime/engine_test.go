@@ -1745,7 +1745,7 @@ func TestExecuteIncludesParseDiagnosticsOnParseFailureEvenWhenThinkingNever(t *t
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []any{map[string]any{"message": map[string]string{"content": "```json\n{\"tool_name\":\"fs.list\",\"arguments\":{\"path\":\".\"},\"token\":\"super-secret-token-abcdefghijklmnopqrstuvwxyz\"\n```"}}},
+			"choices": []any{map[string]any{"message": map[string]string{"content": "```json\n{\"tool_name\":\"fs.list\",\"arguments\":{\"path\":.,\"token\":\"super-secret-token-abcdefghijklmnopqrstuvwxyz\"}}\n```"}}},
 		})
 	}))
 	defer server.Close()
