@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -21,6 +22,7 @@ const (
 	agentMessageInboxCap        = 2
 	agentRunCap                 = 1
 	shellExecRepetitionCap      = 3
+	memoryWriteRepetitionCap    = 2
 	noChoicesRetryCap           = 2
 	noChoicesRetryDelay         = 200 * time.Millisecond
 	transientModelRetryCap      = 2
@@ -52,6 +54,9 @@ type runState struct {
 	toolParseFailure        bool
 	toolParseReprompts      int
 	followThroughReprompts  int
+	lastIterationMixed      bool
+	lastIterationSucceeded  []string
+	lastIterationFailed     []string
 	toolCap                 int
 	// repetitionPrevention tracks tool calls to detect and prevent loops
 	repetitionPrevention map[string]int // key: "tool_name|agent_id" -> count
@@ -100,7 +105,11 @@ func newRunState(input RunInput, r Runner) *runState {
 }
 
 func (s *runState) registerToolOutcome(errText string) {
-	if strings.TrimSpace(errText) == "" {
+	trimmed := strings.TrimSpace(errText)
+	if strings.Contains(strings.ToLower(trimmed), "repetition detected") {
+		return
+	}
+	if trimmed == "" {
 		s.consecutiveToolFailures = 0
 		if s.failureRecoveryActive {
 			s.successesSinceRecovery++
@@ -135,6 +144,16 @@ func (s *runState) notifyToolCall(record *ToolCallRecord, onToolCall func(ToolCa
 
 func (s *runState) prepareSystemPrompt(ctx context.Context, input RunInput) string {
 	systemPrompt := s.out.Prompt
+	if s.lastIterationMixed {
+		directive := "# PARTIAL_SUCCESS_MODE\n- The previous tool batch had mixed outcomes.\n- Do not repeat tools that already succeeded in that batch.\n- Retry only the failed tools with corrected arguments, or finalize if the core request is already satisfied."
+		if len(s.lastIterationSucceeded) > 0 {
+			directive += "\n- Successful tools in previous batch: " + strings.Join(s.lastIterationSucceeded, ", ") + "."
+		}
+		if len(s.lastIterationFailed) > 0 {
+			directive += "\n- Failed tools in previous batch: " + strings.Join(s.lastIterationFailed, ", ") + "."
+		}
+		systemPrompt = appendPromptDirective(systemPrompt, directive)
+	}
 	if s.failureRecoveryActive {
 		systemPrompt = appendPromptDirective(systemPrompt, "# ERROR_RECOVERY_MODE\n- Recent tool calls failed. Analyze the latest errors and outputs before choosing the next action.\n- Try a materially different approach to resolve the error.\n- Do not repeat the same failing command/arguments unless you explain why it should now work.")
 	}
@@ -426,6 +445,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 
 		hadFreshExecution := s.executeTools(ctx, r, resp.ToolCalls, input)
 		s.toolParseReprompts = 0
+		s.updateLastIterationOutcome(len(resp.ToolCalls))
 
 		if hadFreshExecution {
 			s.noProgressIterations = 0
@@ -486,6 +506,51 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 
 		s.toolIterations++
 	}
+}
+
+func (s *runState) updateLastIterationOutcome(callCount int) {
+	s.lastIterationMixed = false
+	s.lastIterationSucceeded = nil
+	s.lastIterationFailed = nil
+	if callCount <= 0 || len(s.out.ToolCalls) < callCount {
+		return
+	}
+	start := len(s.out.ToolCalls) - callCount
+	iterRecords := s.out.ToolCalls[start:]
+	succeeded := make(map[string]struct{})
+	failed := make(map[string]struct{})
+	for _, rec := range iterRecords {
+		name := strings.TrimSpace(rec.Request.Name)
+		if name == "" {
+			name = "unknown.tool"
+		}
+		if strings.TrimSpace(rec.Result.Error) == "" {
+			succeeded[name] = struct{}{}
+		} else {
+			failed[name] = struct{}{}
+		}
+	}
+	if len(succeeded) == 0 || len(failed) == 0 {
+		return
+	}
+	s.lastIterationMixed = true
+	s.lastIterationSucceeded = sortedToolNames(succeeded)
+	s.lastIterationFailed = sortedToolNames(failed)
+}
+
+func sortedToolNames(values map[string]struct{}) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for name := range values {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	if len(out) > 6 {
+		out = out[:6]
+	}
+	return out
 }
 
 func shouldRetryToolParseFailure(finalText string, allowedTools []string) bool {
@@ -594,6 +659,13 @@ func repeatedCallRepetitionKey(call ToolCallRequest) (string, int, bool) {
 		}
 		return name + "|" + agentID + "|" + firstN(strings.ToLower(message), 80), agentRunCap, true
 	}
+	if name == "memory.write" {
+		key, ok := normalizedMemoryWriteKey(call.Arguments)
+		if !ok {
+			return "", 0, false
+		}
+		return "memory.write|" + key, memoryWriteRepetitionCap, true
+	}
 
 	if name != "fs.write" && name != "fs.append" && name != "fs.read" && name != "shell.exec" {
 		return "", 0, false
@@ -671,6 +743,11 @@ func toolCallCacheKey(call ToolCallRequest) string {
 			return "http.request|" + key
 		}
 	}
+	if name == "memory.write" {
+		if key, ok := normalizedMemoryWriteKey(call.Arguments); ok {
+			return "memory.write|" + key
+		}
+	}
 	return call.Name + "|" + string(call.Arguments)
 }
 
@@ -689,6 +766,20 @@ func normalizedHTTPRequestCacheKey(args []byte) (string, bool) {
 	}
 	body := firstTrimmedStringFromMap(payload, "body", "data", "payload")
 	return method + "|" + normalizeRequestURL(rawURL) + "|" + firstN(body, 200), true
+}
+
+func normalizedMemoryWriteKey(args []byte) (string, bool) {
+	payload, ok := parseToolArgs(args)
+	if !ok {
+		return "", false
+	}
+	title := firstTrimmedStringFromMap(payload, "title", "name", "key")
+	content := firstTrimmedStringFromMap(payload, "content", "summary", "text", "value")
+	kind := firstTrimmedStringFromMap(payload, "kind", "type")
+	if title == "" && content == "" {
+		return "", false
+	}
+	return strings.ToLower(kind) + "|" + strings.ToLower(title) + "|" + firstN(strings.ToLower(content), 160), true
 }
 
 func normalizeRequestURL(raw string) string {

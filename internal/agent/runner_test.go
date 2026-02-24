@@ -209,6 +209,40 @@ func TestRunnerRepromptsAfterToolParseFailure(t *testing.T) {
 	}
 }
 
+func TestRunnerAddsPartialSuccessDirectiveAfterMixedBatchOutcome(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{
+			{ID: "call-1", Name: "fs.write", Arguments: []byte(`{"path":"entry.md","content":"ok"}`)},
+			{ID: "call-2", Name: "memory.write", Arguments: []byte(`{"content":"note"}`)},
+			{ID: "call-3", Name: "fs.append", Arguments: []byte(`{"path":"exploration_journal.md","content":"line"}`)},
+		}},
+		{FinalText: "done"},
+	}}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"call-1": {ID: "call-1", Output: "wrote entry"},
+		"call-2": {ID: "call-2", Error: "missing required field: kind"},
+		"call-3": {ID: "call-3", Output: "journal appended"},
+	}}
+
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 8}
+	out, err := runner.Run(context.Background(), RunInput{Message: "record findings"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(model.reqs) < 2 {
+		t.Fatalf("expected at least two model requests, got %d", len(model.reqs))
+	}
+	if !strings.Contains(model.reqs[1].SystemPrompt, "PARTIAL_SUCCESS_MODE") {
+		t.Fatalf("expected partial-success directive in second turn prompt, got %q", model.reqs[1].SystemPrompt)
+	}
+	if !strings.Contains(model.reqs[1].SystemPrompt, "fs.write") || !strings.Contains(model.reqs[1].SystemPrompt, "memory.write") {
+		t.Fatalf("expected tool-specific mixed outcome guidance, got %q", model.reqs[1].SystemPrompt)
+	}
+}
+
 func TestRunnerReplacesRepeatedDeferralWithConcreteFallback(t *testing.T) {
 	model := &mockModel{responses: []ModelResponse{
 		{FinalText: "Let me check that right now."},
@@ -1420,6 +1454,37 @@ func TestRunnerBlocksShellExecButAllowsDifferentCommands(t *testing.T) {
 	// All three are different commands, so all should execute.
 	if len(tools.calls) != 3 {
 		t.Fatalf("expected three real executions for different commands, got %d", len(tools.calls))
+	}
+}
+
+func TestRunnerBlocksRepeatedMemoryWriteLoopWithMinorArgVariants(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "memory.write", Arguments: []byte(`{"kind":"journal","title":"Exploration Journal Entry 7","content":"Agency and consciousness notes","confidence":0.85}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "memory.write", Arguments: []byte(`{"title":"Exploration Journal Entry 7","content":"Agency and consciousness notes","kind":"journal","confidence":0.90}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "memory.write", Arguments: []byte(`{"kind":"journal","title":"Exploration Journal Entry 7","content":"Agency and consciousness notes","keywords":["agency","consciousness"]}`)}}},
+		{FinalText: "done"},
+	}}
+
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Output: `{"written":true,"id":"mem_1"}`},
+	}}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "journal this insight"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(out.ToolCalls) != 3 {
+		t.Fatalf("expected three tool call records, got %d", len(out.ToolCalls))
+	}
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected only one real memory.write execution, got %d", len(tools.calls))
+	}
+	if !strings.Contains(out.ToolCalls[2].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on third memory.write, got %q", out.ToolCalls[2].Result.Error)
 	}
 }
 
