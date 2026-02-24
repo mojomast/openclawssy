@@ -1,7 +1,7 @@
 # Openclawssy Architecture (v0.5)
 
 ## Runtime Flow
-- Channel adapters (CLI, HTTP, chat, Discord, scheduler) normalize requests into `runtime.ExecuteInput`.
+- Channel adapters (CLI, HTTP, chat, Discord, Telegram, scheduler) normalize requests into `runtime.ExecuteInput`.
 - Engine acquires a global run slot (`engine.max_concurrent_runs`) before execution.
 - Prompt assembly merges: system policy, agent files, optional chat/session context, and user input.
 - Model response is parsed for tool calls and visible text in a bounded loop.

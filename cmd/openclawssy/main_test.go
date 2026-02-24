@@ -13,6 +13,7 @@ import (
 	"openclawssy/internal/channels/cli"
 	"openclawssy/internal/channels/discord"
 	httpchannel "openclawssy/internal/channels/http"
+	"openclawssy/internal/channels/telegram"
 	"openclawssy/internal/chatstore"
 	"openclawssy/internal/config"
 	"openclawssy/internal/scheduler"
@@ -24,8 +25,8 @@ func TestChatAdaptersRouteBySource(t *testing.T) {
 		t.Fatalf("new chat store: %v", err)
 	}
 
-	sources := make([]string, 0, 2)
-	thinkingModes := make([]string, 0, 2)
+	sources := make([]string, 0, 3)
+	thinkingModes := make([]string, 0, 3)
 	connector := &chat.Connector{
 		Store:          store,
 		DefaultAgentID: "default",
@@ -51,6 +52,15 @@ func TestChatAdaptersRouteBySource(t *testing.T) {
 		t.Fatalf("unexpected discord run id: %q", resp.ID)
 	}
 
+	tgHandler := buildTelegramMessageHandler(connector, "default")
+	tgResp, err := tgHandler(context.Background(), telegram.Message{UserID: "u1", RoomID: "t1", Text: "hello", ThinkingMode: "never"})
+	if err != nil {
+		t.Fatalf("telegram handler error: %v", err)
+	}
+	if tgResp.ID != "run-1" {
+		t.Fatalf("unexpected telegram run id: %q", tgResp.ID)
+	}
+
 	adapter := scopedChatAdapter{connector: connector, source: "dashboard", defaultAgentID: "default"}
 	httpResp, err := adapter.HandleMessage(context.Background(), httpchannel.ChatMessage{UserID: "u1", RoomID: "dashboard", Message: "hello", ThinkingMode: "on_error"})
 	if err != nil {
@@ -60,13 +70,13 @@ func TestChatAdaptersRouteBySource(t *testing.T) {
 		t.Fatalf("unexpected dashboard run id: %q", httpResp.ID)
 	}
 
-	if len(sources) != 2 {
-		t.Fatalf("expected 2 queued calls, got %d", len(sources))
+	if len(sources) != 3 {
+		t.Fatalf("expected 3 queued calls, got %d", len(sources))
 	}
-	if sources[0] != "discord" || sources[1] != "dashboard" {
+	if sources[0] != "discord" || sources[1] != "telegram" || sources[2] != "dashboard" {
 		t.Fatalf("unexpected source routing: %#v", sources)
 	}
-	if thinkingModes[0] != "always" || thinkingModes[1] != "on_error" {
+	if thinkingModes[0] != "always" || thinkingModes[1] != "never" || thinkingModes[2] != "on_error" {
 		t.Fatalf("unexpected thinking mode routing: %#v", thinkingModes)
 	}
 }
