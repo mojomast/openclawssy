@@ -1112,6 +1112,8 @@ func toolCallingBestPracticesDocWithAgentTools() string {
 		1,
 	)
 	doc += "\n- Use agent.identity.set to bootstrap SOUL identity fields when SOUL.md is empty; provide assistant_name and user_name."
+	doc += "\n- Tool success pattern: successful calls return structured JSON result objects (often including flags like updated/created/deleted and identifying fields); treat this as completion evidence and continue the task instead of re-calling the same tool without new inputs."
+	doc += "\n- Tool failure pattern: failed calls return coded errors (for example tool.input_invalid, policy.denied, timeout, internal.error); read the error, adjust arguments/strategy, and avoid blind retries with identical inputs."
 	return doc
 }
 
