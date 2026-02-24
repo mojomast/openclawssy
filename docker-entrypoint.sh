@@ -85,6 +85,8 @@ fi
 echo ""
 echo -e "${GREEN}Starting Openclawssy server...${NC}"
 echo -e "${GREEN}Dashboard available at: http://localhost:8080/dashboard${NC}"
+echo "Onboarding docs: https://github.com/mojomast/openclawssy/blob/main/docs/GETTING_STARTED.md"
+echo "Docker docs: https://github.com/mojomast/openclawssy/blob/main/DOCKER.md"
 echo ""
 
 # Run the server with the provided arguments or defaults.

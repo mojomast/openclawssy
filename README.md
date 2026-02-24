@@ -74,14 +74,8 @@ The socket mount (`-v /var/run/docker.sock:...`) lets the backend talk to Docker
 
 If you want stricter isolation controls without changing default UX, enable opt-in hardening via `sandbox.docker.hardened=true` and (recommended) `sandbox.docker.require_dedicated_daemon=true` with a non-default `sandbox.docker.host` endpoint.
 
-If you run `./bin/openclawssy setup` in Docker/CI, you can pre-answer sandbox onboarding prompts with env vars:
-
-- `OPENCLAWSSY_SANDBOX_ACTIVE`
-- `OPENCLAWSSY_SANDBOX_DOCKER_HARDENED`
-- `OPENCLAWSSY_SANDBOX_DOCKER_REQUIRE_DEDICATED_DAEMON`
-- `OPENCLAWSSY_SANDBOX_DOCKER_HOST`
-
-When these are set, setup uses them directly and skips the matching prompts.
+Keep the quick-start minimal: for most users, only `ZAI_API_KEY` and (optionally) `OPENCLAWSSY_TOKEN` are needed.
+For hardening and advanced Docker options, see [`DOCKER.md`](DOCKER.md).
 
 Or use the included `docker-compose.yml` in the repo root:
 
