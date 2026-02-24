@@ -30,6 +30,13 @@ import (
 	"openclawssy/internal/secrets"
 )
 
+const (
+	envSandboxActive                 = "OPENCLAWSSY_SANDBOX_ACTIVE"
+	envSandboxDockerHardened         = "OPENCLAWSSY_SANDBOX_DOCKER_HARDENED"
+	envSandboxRequireDedicatedDaemon = "OPENCLAWSSY_SANDBOX_DOCKER_REQUIRE_DEDICATED_DAEMON"
+	envSandboxDockerHost             = "OPENCLAWSSY_SANDBOX_DOCKER_HOST"
+)
+
 func main() {
 	ctx := context.Background()
 	engine, err := runtime.NewEngine(".")
@@ -742,8 +749,17 @@ func handleSetup(args []string) int {
 		}
 	}
 
-	sandboxEnabled := prompt(in, "Enable Docker sandbox for isolated agent runs? (recommended) [Y/n]", "Y")
-	if !strings.EqualFold(sandboxEnabled, "n") {
+	sandboxActive := true
+	if value, ok, err := boolEnv(envSandboxActive); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: ignoring invalid %s: %v\n", envSandboxActive, err)
+	} else if ok {
+		sandboxActive = value
+	} else {
+		sandboxEnabled := prompt(in, "Enable Docker sandbox for isolated agent runs? (recommended) [Y/n]", "Y")
+		sandboxActive = !strings.EqualFold(sandboxEnabled, "n")
+	}
+
+	if sandboxActive {
 		cfg.Sandbox.Active = true
 		cfg.Sandbox.Provider = "docker"
 		cfg.Shell.EnableExec = true
@@ -751,17 +767,39 @@ func handleSetup(args []string) int {
 		fmt.Println("The backend talks to Docker via the Unix socket at /var/run/docker.sock.")
 		fmt.Println("Your user must be in the 'docker' group, or use sudo.")
 
-		hardened := prompt(in, "Enable hardened Docker sandbox mode? [y/N]", "N")
-		if strings.EqualFold(hardened, "y") {
+		hardenedEnabled := false
+		if value, ok, err := boolEnv(envSandboxDockerHardened); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: ignoring invalid %s: %v\n", envSandboxDockerHardened, err)
+		} else if ok {
+			hardenedEnabled = value
+		} else {
+			hardened := prompt(in, "Enable hardened Docker sandbox mode? [y/N]", "N")
+			hardenedEnabled = strings.EqualFold(hardened, "y")
+		}
+
+		if hardenedEnabled {
 			cfg.Sandbox.Docker.Hardened = true
 			cfg.Sandbox.Docker.PidsLimit = 256
 			cfg.Sandbox.Docker.AllowedImages = []string{cfg.Sandbox.Docker.Image}
 			fmt.Println("Hardened mode enabled: drops all caps, enables no-new-privileges, read-only rootfs, tmpfs mounts, and PID limit.")
 
-			dedicated := prompt(in, "Require a dedicated Docker daemon endpoint? (recommended for hardened mode) [Y/n]", "Y")
-			if !strings.EqualFold(dedicated, "n") {
+			requireDedicated := true
+			if value, ok, err := boolEnv(envSandboxRequireDedicatedDaemon); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: ignoring invalid %s: %v\n", envSandboxRequireDedicatedDaemon, err)
+			} else if ok {
+				requireDedicated = value
+			} else {
+				dedicated := prompt(in, "Require a dedicated Docker daemon endpoint? (recommended for hardened mode) [Y/n]", "Y")
+				requireDedicated = !strings.EqualFold(dedicated, "n")
+			}
+
+			if requireDedicated {
 				cfg.Sandbox.Docker.RequireDedicatedDaemon = true
-				cfg.Sandbox.Docker.Host = prompt(in, "Dedicated Docker host (unix://, tcp://, or ssh://)", "unix:///var/run/openclawssy-docker.sock")
+				if host, ok := stringEnv(envSandboxDockerHost); ok {
+					cfg.Sandbox.Docker.Host = host
+				} else {
+					cfg.Sandbox.Docker.Host = prompt(in, "Dedicated Docker host (unix://, tcp://, or ssh://)", "unix:///var/run/openclawssy-docker.sock")
+				}
 			}
 		}
 	}
@@ -810,6 +848,34 @@ func prompt(r *bufio.Reader, label, def string) string {
 		return def
 	}
 	return v
+}
+
+func boolEnv(key string) (bool, bool, error) {
+	raw, ok := os.LookupEnv(key)
+	if !ok {
+		return false, false, nil
+	}
+	v := strings.ToLower(strings.TrimSpace(raw))
+	switch v {
+	case "1", "t", "true", "y", "yes", "on":
+		return true, true, nil
+	case "0", "f", "false", "n", "no", "off":
+		return false, true, nil
+	default:
+		return false, true, fmt.Errorf("%q (expected true/false)", raw)
+	}
+}
+
+func stringEnv(key string) (string, bool) {
+	raw, ok := os.LookupEnv(key)
+	if !ok {
+		return "", false
+	}
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return "", false
+	}
+	return v, true
 }
 
 func ensureMasterKey(path string) error {

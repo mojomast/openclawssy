@@ -271,3 +271,58 @@ func TestEnsureDefaultMemoryMaintenanceJob(t *testing.T) {
 		t.Fatalf("expected idempotent setup to keep one job, got %d", len(store.List()))
 	}
 }
+
+func TestBoolEnv(t *testing.T) {
+	t.Setenv("OPENCLAWSSY_TEST_BOOL", "yes")
+	v, ok, err := boolEnv("OPENCLAWSSY_TEST_BOOL")
+	if err != nil {
+		t.Fatalf("boolEnv returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected boolEnv to report env present")
+	}
+	if !v {
+		t.Fatal("expected yes to parse as true")
+	}
+
+	t.Setenv("OPENCLAWSSY_TEST_BOOL", "0")
+	v, ok, err = boolEnv("OPENCLAWSSY_TEST_BOOL")
+	if err != nil {
+		t.Fatalf("boolEnv returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected boolEnv to report env present")
+	}
+	if v {
+		t.Fatal("expected 0 to parse as false")
+	}
+
+	t.Setenv("OPENCLAWSSY_TEST_BOOL", "maybe")
+	_, ok, err = boolEnv("OPENCLAWSSY_TEST_BOOL")
+	if !ok {
+		t.Fatal("expected boolEnv to report env present")
+	}
+	if err == nil {
+		t.Fatal("expected parse error for invalid bool env")
+	}
+}
+
+func TestStringEnv(t *testing.T) {
+	if _, ok := stringEnv("OPENCLAWSSY_TEST_STRING"); ok {
+		t.Fatal("expected missing env to return ok=false")
+	}
+
+	t.Setenv("OPENCLAWSSY_TEST_STRING", "  ")
+	if _, ok := stringEnv("OPENCLAWSSY_TEST_STRING"); ok {
+		t.Fatal("expected empty env to return ok=false")
+	}
+
+	t.Setenv("OPENCLAWSSY_TEST_STRING", " unix:///tmp/docker.sock ")
+	v, ok := stringEnv("OPENCLAWSSY_TEST_STRING")
+	if !ok {
+		t.Fatal("expected non-empty env to return ok=true")
+	}
+	if v != "unix:///tmp/docker.sock" {
+		t.Fatalf("unexpected trimmed value %q", v)
+	}
+}

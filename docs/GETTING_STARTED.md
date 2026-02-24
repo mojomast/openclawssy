@@ -26,6 +26,15 @@ During setup you can:
 - enable Discord bot
 - select sandbox provider (Docker recommended — runs workspace in a separate container)
 
+For non-interactive setup (Docker/CI), you can decide sandbox onboarding via env vars:
+
+- `OPENCLAWSSY_SANDBOX_ACTIVE`
+- `OPENCLAWSSY_SANDBOX_DOCKER_HARDENED`
+- `OPENCLAWSSY_SANDBOX_DOCKER_REQUIRE_DEDICATED_DAEMON`
+- `OPENCLAWSSY_SANDBOX_DOCKER_HOST`
+
+Setup precedence is: env var value, then existing config value/default via prompt.
+
 ## 3) Verify
 
 ```bash

@@ -153,6 +153,15 @@ What hardened mode changes for sandbox containers:
 
 This keeps default UX unchanged, while allowing operators to opt into stricter controls when security is the priority.
 
+If you use `./bin/openclawssy setup` in containers, you can make hardening decisions non-interactive by setting these env vars before running setup:
+
+- `OPENCLAWSSY_SANDBOX_ACTIVE`
+- `OPENCLAWSSY_SANDBOX_DOCKER_HARDENED`
+- `OPENCLAWSSY_SANDBOX_DOCKER_REQUIRE_DEDICATED_DAEMON`
+- `OPENCLAWSSY_SANDBOX_DOCKER_HOST`
+
+Setup uses env values when present and skips the corresponding prompts.
+
 ## Environment Variables
 
 | Variable | Required | Default | Description |
@@ -160,6 +169,10 @@ This keeps default UX unchanged, while allowing operators to opt into stricter c
 | `ZAI_API_KEY` | Yes | - | Your Z.AI API key for GLM-4.7 |
 | `OPENCLAWSSY_TOKEN` | No | `change-me` | Bearer token for API/dashboard access |
 | `DISCORD_BOT_TOKEN` | No | - | Optional Discord bot integration |
+| `OPENCLAWSSY_SANDBOX_ACTIVE` | No | unset | Pre-answer setup prompt to enable Docker sandbox (`true/false`) |
+| `OPENCLAWSSY_SANDBOX_DOCKER_HARDENED` | No | unset | Pre-answer setup prompt for hardened sandbox mode (`true/false`) |
+| `OPENCLAWSSY_SANDBOX_DOCKER_REQUIRE_DEDICATED_DAEMON` | No | unset | Pre-answer setup prompt to require dedicated Docker daemon (`true/false`) |
+| `OPENCLAWSSY_SANDBOX_DOCKER_HOST` | No | unset | Pre-answer setup prompt for dedicated Docker daemon endpoint |
 
 For deeper network diagnostics in the container (for example `tcpdump`/advanced `nmap` modes), you may also need extra capabilities:
 
