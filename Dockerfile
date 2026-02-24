@@ -78,5 +78,4 @@ EXPOSE 8080
 # Set the entrypoint
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
-# Default command (can be overridden)
-CMD ["serve", "--token", "change-me", "--addr", "0.0.0.0:8080"]
+# Default server launch behavior is handled in docker-entrypoint.sh

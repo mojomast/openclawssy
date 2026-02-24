@@ -74,7 +74,7 @@ The socket mount (`-v /var/run/docker.sock:...`) lets the backend talk to Docker
 
 If you want stricter isolation controls without changing default UX, enable opt-in hardening via `sandbox.docker.hardened=true` and (recommended) `sandbox.docker.require_dedicated_daemon=true` with a non-default `sandbox.docker.host` endpoint.
 
-Or use `docker-compose`:
+Or use the included `docker-compose.yml` in the repo root:
 
 ```bash
 docker compose up -d

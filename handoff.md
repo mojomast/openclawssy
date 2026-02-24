@@ -14,7 +14,7 @@ Updated `/home/mojo/projects/openclawssy/DOCKER.md` with comprehensive Docker sa
 - Made Docker socket mount (`-v /var/run/docker.sock:/var/run/docker.sock`) required with explanation that the process needs it to spawn child containers per agent
 - Added "Docker Sandbox" section explaining isolated containers, named volumes (`openclawssy_ws_<agentId>`), network disabled by default, CPU/memory limits, no host filesystem exposure
 - Added 6 new environment variables: SANDBOX_ACTIVE, SANDBOX_PROVIDER, SANDBOX_IMAGE, SANDBOX_CPU_LIMIT, SANDBOX_MEMORY_LIMIT_MB, SANDBOX_NETWORK_ENABLED
-- Updated docker-compose instructions to note sandbox is enabled by default
+- Updated docker compose instructions to note sandbox is enabled by default
 - Added "Legacy Local Sandbox" note with security warning for `--sandbox-provider local`
 - Added "Sandbox containers not starting" troubleshooting entry
 - Preserved all existing Tailscale, API endpoints, and troubleshooting sections

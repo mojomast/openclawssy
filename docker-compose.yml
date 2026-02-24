@@ -27,8 +27,6 @@ services:
     # cap_add:
     #   - NET_ADMIN
     #   - NET_RAW
-    command: ["serve", "--token", "${OPENCLAWSSY_TOKEN:-change-me}", "--addr", "0.0.0.0:8080", "--sandbox-active", "--sandbox-provider", "docker"]
-    
     # Health check
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/dashboard"]
