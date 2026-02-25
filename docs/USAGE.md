@@ -113,11 +113,18 @@ Dashboard URLs:
 - `https://127.0.0.1:8080/dashboard` (TLS enabled)
 - `http://127.0.0.1:8080/dashboard` (TLS disabled)
 
+Auth note:
+
+- The frontend prompts for a bearer token on first load.
+- Use the same token passed to `openclawssy serve --token ...`.
+
 Chat behavior and controls:
 
 - Session-aware commands: `/new`, `/resume <session_id>`, `/chats`
 - Agent routing commands: `/agents`, `/agent`, `/agent <agent_id>`
 - Queued chat responses can include `session_id` to support timeline resume
+
+For a full operator/frontend guide, see `docs/DASHBOARD.md`.
 
 ## HTTP APIs
 

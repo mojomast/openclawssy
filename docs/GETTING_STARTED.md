@@ -66,6 +66,8 @@ Dashboard tips:
 - You can resize the chat panel and collapse tool/session/status/admin panes.
 - Long runs keep updating in-place with elapsed time, completed tool-call count, and latest tool summary.
 
+For detailed frontend/operator usage, see `docs/DASHBOARD.md`.
+
 ## 6) Send a run
 
 ```bash

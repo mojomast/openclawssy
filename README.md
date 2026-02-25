@@ -185,6 +185,17 @@ Once the server is running, open:
 - `https://127.0.0.1:8080/dashboard` (TLS enabled)
 - `http://127.0.0.1:8080/dashboard` (TLS disabled)
 
+At first load, the dashboard asks for the same bearer token you passed to `serve`.
+
+Good first dashboard flow:
+
+1. Open Chat and send a simple prompt (`hello`)
+2. Run a tool-backed prompt (`/tool time.now {}`)
+3. Open run details to inspect tool summary + artifacts
+4. Check Settings/Secrets/Scheduler pages for operator controls
+
+For a full frontend guide, see [`docs/DASHBOARD.md`](docs/DASHBOARD.md).
+
 ## How To Use It
 
 If you just installed, this is a good first sequence:
@@ -259,6 +270,7 @@ Detailed operational/reference content has been moved out of the README into `do
 - Getting started: [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md)
 - Docker deployment: [`DOCKER.md`](DOCKER.md)
 - Usage and workflows: [`docs/USAGE.md`](docs/USAGE.md)
+- Dashboard operations: [`docs/DASHBOARD.md`](docs/DASHBOARD.md)
 - OpenClaw remote integration: [`docs/OPENCLAWREMOTEUSSY.md`](docs/OPENCLAWREMOTEUSSY.md)
 - Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - Memory system: [`docs/MEMORY_SYSTEM.md`](docs/MEMORY_SYSTEM.md)
@@ -267,6 +279,8 @@ Detailed operational/reference content has been moved out of the README into `do
 - Contracts + acceptance: [`docs/specs/CONTRACTS.md`](docs/specs/CONTRACTS.md), [`docs/specs/ACCEPTANCE.md`](docs/specs/ACCEPTANCE.md)
 - Threat model: [`docs/security/THREAT_MODEL.md`](docs/security/THREAT_MODEL.md)
 - Project status: [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md)
+- Contributing guide: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Contributors notes: [`CONTRIBUTORS.md`](CONTRIBUTORS.md)
 
 ## MIT License
 
