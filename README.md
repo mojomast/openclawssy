@@ -1,10 +1,73 @@
 # Openclawssy
 
-> *This release is dedicated to a little kitty -- the smallest, fiercest, most relentless debugger on the team. Every late-night session, every stubborn test, every "one more fix" -- you were there. This one's for you.*
+## The Ussycoded Agent Runtime
+
+Openclawssy is high-agency AI automation for builders who want speed and control at the same time.
+
+| Speed Lane | Control Lane | Audit Lane |
+| --- | --- | --- |
+| One Go binary, multi-channel runtime (CLI/API/dashboard/chat/scheduler) | Deny-by-default capability policy and workspace-safe boundaries | Reproducible run artifacts + append-only audit logs |
+| Fast iteration with tool-enabled agents | Explicit config and policy-gated operations | Clear failure modes and debuggable traces |
+
+### Launch In 3 Commands
+
+```bash
+make build
+./bin/openclawssy setup
+./bin/openclawssy serve --token change-me
+```
+
+If `openclawssy` is already on your PATH, you can drop the `./bin/` prefix.
+
+### What New Users Get In The First 10 Minutes
+
+- A running local agent service with a dashboard UI.
+- A real tool-capable run (not just plain chat output).
+- Inspectable artifacts at `.openclawssy/agents/<agent>/runs/<run-id>/`.
+- A secure baseline: policy controls, workspace guards, and redacted secrets.
+
+Try this once `serve` is running:
+
+```bash
+./bin/openclawssy ask "hello"
+./bin/openclawssy run --agent default --message '/tool time.now {}'
+```
 
 Openclawssy is a security-first AI agent runtime in the Ussyverse: one Go binary, explicit controls, auditable runs, and operator-first defaults.
 
-It is for builders who want agent power without mystery behavior.
+It is for builders who want agent power without mystery behavior, hidden cloud control planes, or hand-wavy safety claims.
+
+## Why Openclawssy
+
+- You can debug agent behavior instead of guessing what happened.
+- You can grant capabilities intentionally instead of trusting hidden defaults.
+- You can run one agent locally today, then scale to multi-agent orchestration later.
+- You can keep one runtime surface across CLI, API, dashboard, scheduler, and chat bridges.
+- You can hand this to a team and keep auditability intact.
+
+If you like fast iteration but still need operational guardrails, this is the lane.
+
+## What Makes It Ussycoded
+
+- Built in public, shipped fast, and unapologetically practical.
+- Opinionated toward control, traceability, and clear failure modes.
+- High-agency tooling for serious builders, not toy prompt demos.
+- Weird enough to be fun, disciplined enough to run real workloads.
+
+## Who It Is For
+
+- Engineers building internal agent platforms.
+- Solo builders who want local-first control.
+- Teams that need audit trails, policy gates, and reproducible behavior.
+- Operators who care more about reliability than flashy demos.
+
+## Popular Use Cases
+
+- **Secure coding copilot runtime:** run tool-enabled coding flows with strict path and capability boundaries.
+- **Agent ops platform:** provide API + dashboard + audit logs for internal automation teams.
+- **Scheduled automation:** run recurring jobs (`cron`) with agent context and replayable outputs.
+- **Multi-agent workflows:** split research/build/review work across agents with policy-gated routing.
+- **Chat-bridge assistant:** expose the same runtime safely in Discord/Telegram environments.
 
 ## Ussyverse Context
 
@@ -15,15 +78,13 @@ Openclawssy is part of the open-source Ussyverse ecosystem: experimental, fast-m
 
 Come chat about Openclawssy and other Ussyverse projects.
 
-## What It Does
+## What It Is Great At
 
-- Runs agents through CLI, HTTP, dashboard, Discord, and scheduler channels.
-- Enforces deny-by-default capability policy and workspace-safe file boundaries.
-- Persists reproducible run artifacts and append-only audit logs.
-- Supports encrypted secret ingestion with write-only dashboard/API handling.
-- Provides multi-agent control with per-agent profiles, model overrides, and routing pointers.
-- Includes session-aware chat timelines and operational controls for long-running workloads.
-- Ships a full memory system (event ingestion, checkpoint distillation, recall injection, maintenance, proactive hooks, optional embeddings).
+- Building a controllable coding/automation agent that can use tools without escaping your policy boundaries.
+- Running long-lived assistant workflows with scheduler jobs, chat timelines, and recoverable state.
+- Operating multi-agent setups with explicit routing and per-agent model profiles.
+- Giving teams auditability: reproducible run artifacts, structured errors, and append-only logs.
+- Mixing speed with safety through workspace guards, secret redaction, and capability checks.
 
 ## Core Capabilities
 
@@ -56,6 +117,13 @@ Come chat about Openclawssy and other Ussyverse projects.
   - Optional embeddings + semantic hybrid recall (OpenRouter/OpenAI-compatible providers)
 
 ## Installation
+
+Pick a path:
+
+- **Docker:** fastest for most users; good default for trying it now.
+- **Build from source:** best for contributors or custom runtime modifications.
+
+Provider note: set at least one provider API key (for most users, `ZAI_API_KEY`), then run `setup` + `doctor -v`.
 
 ### Option A: Docker (Recommended)
 
@@ -119,16 +187,24 @@ Once the server is running, open:
 
 ## How To Use It
 
+If you just installed, this is a good first sequence:
+
+```bash
+./bin/openclawssy doctor -v
+./bin/openclawssy ask "hello"
+./bin/openclawssy run --agent default --message "summarize this repository"
+```
+
 - Fast local run:
 
 ```bash
-./bin/openclawssy ask -agent default -message "hello"
+./bin/openclawssy ask "hello"
 ```
 
 - Tool-driven run:
 
 ```bash
-./bin/openclawssy run -agent default -message '/tool time.now {}'
+./bin/openclawssy run --agent default --message '/tool time.now {}'
 ```
 
 - API run:
