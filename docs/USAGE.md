@@ -19,8 +19,25 @@ openclawssy cron add --agent default --schedule "@every 1h" --message "status re
 openclawssy cron delete --id job_123
 openclawssy cron pause
 openclawssy cron resume --id job_123
+openclawssy remote pull
+openclawssy remote status
+openclawssy remote send "What model are you using?"
 openclawssy doctor
 ```
+
+## OpenClaw Remote (External Repository)
+
+OpenClaw gateway connectivity is provided by standalone `openclawremoteussy`.
+
+Pull/update it:
+
+```bash
+openclawssy remote pull
+```
+
+Then build it and point config `openclaw.remote.binary_path` to the built binary.
+
+Reference: `docs/OPENCLAWREMOTEUSSY.md`
 
 ## Setup and Provider Configuration
 

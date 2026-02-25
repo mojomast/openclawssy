@@ -29,6 +29,7 @@ Come chat about Openclawssy and other Ussyverse projects.
 
 - Runtime and channels
   - `openclawssy ask`, `openclawssy run`, `openclawssy serve`, `openclawssy cron`
+  - `openclawssy remote` delegates to standalone `openclawremoteussy`
   - HTTP APIs for runs and chat queueing
   - Dashboard admin surface for status/config/scheduler/secrets/docs
   - Discord bridge with allowlists and rate limiting
@@ -139,6 +140,34 @@ curl -s -X POST http://127.0.0.1:8080/v1/runs \
   -d '{"agent_id":"default","message":"summarize project status"}'
 ```
 
+## OpenClaw Remote Integration (External Repo)
+
+OpenClaw remote support is now split into its own repository: `openclawremoteussy`.
+
+Pull/update it from Openclawssy:
+
+```bash
+openclawssy remote pull
+```
+
+Then build and wire it:
+
+```bash
+go -C .openclawssy/external/openclawremoteussy build ./cmd/openclawremoteussy
+```
+
+Set `.openclawssy/config.json`:
+
+- `openclaw.remote.enabled=true`
+- `openclaw.remote.binary_path=.openclawssy/external/openclawremoteussy/openclawremoteussy`
+
+Store gateway token in secret store key `openclaw/remote/auth_token`, then run:
+
+```bash
+openclawssy remote status
+openclawssy remote send "What is up? Also, what model are you using?"
+```
+
 ## Prototype Warning
 
 This is still a prototype under active development.
@@ -154,6 +183,7 @@ Detailed operational/reference content has been moved out of the README into `do
 - Getting started: [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md)
 - Docker deployment: [`DOCKER.md`](DOCKER.md)
 - Usage and workflows: [`docs/USAGE.md`](docs/USAGE.md)
+- OpenClaw remote integration: [`docs/OPENCLAWREMOTEUSSY.md`](docs/OPENCLAWREMOTEUSSY.md)
 - Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - Memory system: [`docs/MEMORY_SYSTEM.md`](docs/MEMORY_SYSTEM.md)
 - Tool catalog: [`docs/TOOL_CATALOG.md`](docs/TOOL_CATALOG.md)

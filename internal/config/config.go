@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,7 @@ type Config struct {
 	Telegram  TelegramConfig  `json:"telegram"`
 	Secrets   SecretsConfig   `json:"secrets"`
 	Memory    MemoryConfig    `json:"memory"`
+	OpenClaw  OpenClawConfig  `json:"openclaw"`
 }
 
 const (
@@ -209,6 +211,24 @@ type MemoryConfig struct {
 	EventBufferSize   int    `json:"event_buffer_size,omitempty"`
 }
 
+type OpenClawConfig struct {
+	Remote OpenClawRemoteConfig `json:"remote"`
+}
+
+type OpenClawRemoteConfig struct {
+	Enabled          bool   `json:"enabled"`
+	RepositoryURL    string `json:"repository_url"`
+	BinaryPath       string `json:"binary_path"`
+	WSPrimary        string `json:"ws_primary"`
+	WSFallback       string `json:"ws_fallback,omitempty"`
+	SessionKey       string `json:"session_key"`
+	ConnectTimeoutMS int    `json:"connect_timeout_ms,omitempty"`
+	RequestTimeoutMS int    `json:"request_timeout_ms,omitempty"`
+	PollIntervalMS   int    `json:"poll_interval_ms,omitempty"`
+	PollTimeoutMS    int    `json:"poll_timeout_ms,omitempty"`
+	PreferTailnetWSS bool   `json:"prefer_tailnet_wss"`
+}
+
 func Default() Config {
 	return Config{
 		Network: NetworkConfig{
@@ -320,6 +340,21 @@ func Default() Config {
 			EmbeddingProvider: "openrouter",
 			EmbeddingModel:    "text-embedding-3-small",
 			EventBufferSize:   256,
+		},
+		OpenClaw: OpenClawConfig{
+			Remote: OpenClawRemoteConfig{
+				Enabled:          false,
+				RepositoryURL:    "https://github.com/mojomast/openclawremoteussy.git",
+				BinaryPath:       "openclawremoteussy",
+				WSPrimary:        "wss://kimi.tailec998.ts.net",
+				WSFallback:       "ws://100.125.104.79:18789",
+				SessionKey:       "agent:main:main",
+				ConnectTimeoutMS: 10000,
+				RequestTimeoutMS: 15000,
+				PollIntervalMS:   1200,
+				PollTimeoutMS:    60000,
+				PreferTailnetWSS: true,
+			},
 		},
 	}
 }
@@ -442,6 +477,33 @@ func (c *Config) ApplyDefaults() {
 	}
 	if strings.TrimSpace(c.Memory.EmbeddingModel) == "" {
 		c.Memory.EmbeddingModel = d.Memory.EmbeddingModel
+	}
+	if strings.TrimSpace(c.OpenClaw.Remote.WSPrimary) == "" {
+		c.OpenClaw.Remote.WSPrimary = d.OpenClaw.Remote.WSPrimary
+	}
+	if strings.TrimSpace(c.OpenClaw.Remote.RepositoryURL) == "" {
+		c.OpenClaw.Remote.RepositoryURL = d.OpenClaw.Remote.RepositoryURL
+	}
+	if strings.TrimSpace(c.OpenClaw.Remote.BinaryPath) == "" {
+		c.OpenClaw.Remote.BinaryPath = d.OpenClaw.Remote.BinaryPath
+	}
+	if strings.TrimSpace(c.OpenClaw.Remote.WSFallback) == "" {
+		c.OpenClaw.Remote.WSFallback = d.OpenClaw.Remote.WSFallback
+	}
+	if strings.TrimSpace(c.OpenClaw.Remote.SessionKey) == "" {
+		c.OpenClaw.Remote.SessionKey = d.OpenClaw.Remote.SessionKey
+	}
+	if c.OpenClaw.Remote.ConnectTimeoutMS <= 0 {
+		c.OpenClaw.Remote.ConnectTimeoutMS = d.OpenClaw.Remote.ConnectTimeoutMS
+	}
+	if c.OpenClaw.Remote.RequestTimeoutMS <= 0 {
+		c.OpenClaw.Remote.RequestTimeoutMS = d.OpenClaw.Remote.RequestTimeoutMS
+	}
+	if c.OpenClaw.Remote.PollIntervalMS <= 0 {
+		c.OpenClaw.Remote.PollIntervalMS = d.OpenClaw.Remote.PollIntervalMS
+	}
+	if c.OpenClaw.Remote.PollTimeoutMS <= 0 {
+		c.OpenClaw.Remote.PollTimeoutMS = d.OpenClaw.Remote.PollTimeoutMS
 	}
 
 	if c.Providers.OpenAI.BaseURL == "" {
@@ -632,7 +694,58 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.Memory.EmbeddingModel) == "" {
 		return errors.New("memory.embedding_model is required")
 	}
+	if err := validateWebSocketURL(c.OpenClaw.Remote.WSPrimary, "openclaw.remote.ws_primary"); err != nil {
+		return err
+	}
+	if fallback := strings.TrimSpace(c.OpenClaw.Remote.WSFallback); fallback != "" {
+		if err := validateWebSocketURL(fallback, "openclaw.remote.ws_fallback"); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(c.OpenClaw.Remote.SessionKey) == "" {
+		return errors.New("openclaw.remote.session_key is required")
+	}
+	if strings.TrimSpace(c.OpenClaw.Remote.RepositoryURL) == "" {
+		return errors.New("openclaw.remote.repository_url is required")
+	}
+	if strings.TrimSpace(c.OpenClaw.Remote.BinaryPath) == "" {
+		return errors.New("openclaw.remote.binary_path is required")
+	}
+	if c.OpenClaw.Remote.ConnectTimeoutMS < 1000 || c.OpenClaw.Remote.ConnectTimeoutMS > 120000 {
+		return errors.New("openclaw.remote.connect_timeout_ms must be between 1000 and 120000")
+	}
+	if c.OpenClaw.Remote.RequestTimeoutMS < 1000 || c.OpenClaw.Remote.RequestTimeoutMS > 120000 {
+		return errors.New("openclaw.remote.request_timeout_ms must be between 1000 and 120000")
+	}
+	if c.OpenClaw.Remote.PollIntervalMS < 100 || c.OpenClaw.Remote.PollIntervalMS > 60000 {
+		return errors.New("openclaw.remote.poll_interval_ms must be between 100 and 60000")
+	}
+	if c.OpenClaw.Remote.PollTimeoutMS < 1000 || c.OpenClaw.Remote.PollTimeoutMS > 600000 {
+		return errors.New("openclaw.remote.poll_timeout_ms must be between 1000 and 600000")
+	}
+	if c.OpenClaw.Remote.PollTimeoutMS < c.OpenClaw.Remote.PollIntervalMS {
+		return errors.New("openclaw.remote.poll_timeout_ms cannot be less than openclaw.remote.poll_interval_ms")
+	}
 
+	return nil
+}
+
+func validateWebSocketURL(raw, field string) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return fmt.Errorf("%s is required", field)
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return fmt.Errorf("%s invalid: %w", field, err)
+	}
+	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	if scheme != "ws" && scheme != "wss" {
+		return fmt.Errorf("%s must use ws:// or wss://", field)
+	}
+	if strings.TrimSpace(parsed.Host) == "" {
+		return fmt.Errorf("%s host is required", field)
+	}
 	return nil
 }
 

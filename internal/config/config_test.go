@@ -346,3 +346,30 @@ func TestValidateAcceptsDedicatedDaemonHost(t *testing.T) {
 		t.Fatalf("expected dedicated daemon config to validate, got %v", err)
 	}
 }
+
+func TestOpenClawRemoteDefaults(t *testing.T) {
+	cfg := Default()
+	if strings.TrimSpace(cfg.OpenClaw.Remote.RepositoryURL) == "" {
+		t.Fatal("expected openclaw remote repository_url default to be set")
+	}
+	if strings.TrimSpace(cfg.OpenClaw.Remote.BinaryPath) == "" {
+		t.Fatal("expected openclaw remote binary_path default to be set")
+	}
+	if cfg.OpenClaw.Remote.WSPrimary != "wss://kimi.tailec998.ts.net" {
+		t.Fatalf("unexpected openclaw remote ws_primary default: %q", cfg.OpenClaw.Remote.WSPrimary)
+	}
+	if cfg.OpenClaw.Remote.SessionKey != "agent:main:main" {
+		t.Fatalf("unexpected openclaw remote session key default: %q", cfg.OpenClaw.Remote.SessionKey)
+	}
+	if !cfg.OpenClaw.Remote.PreferTailnetWSS {
+		t.Fatal("expected openclaw remote prefer_tailnet_wss default true")
+	}
+}
+
+func TestValidateRejectsInvalidOpenClawRemoteURL(t *testing.T) {
+	cfg := Default()
+	cfg.OpenClaw.Remote.WSPrimary = "https://example.com"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for non-websocket ws_primary")
+	}
+}

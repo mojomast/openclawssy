@@ -703,6 +703,7 @@ func shellExec(ctx context.Context, req Request) (map[string]any, error) {
 
 	// Apply timeout if specified
 	timeoutMS := getIntArg(req.Args, "timeout_ms", 0)
+	allowEmptyOutput := getBoolArg(req.Args, "allow_empty_output", false)
 	execCtx := ctx
 	var cancel context.CancelFunc
 	if timeoutMS > 0 {
@@ -722,21 +723,26 @@ func shellExec(ctx context.Context, req Request) (map[string]any, error) {
 			}
 		}
 	}
-	res := map[string]any{"stdout": stdout, "stderr": stderr, "exit_code": exitCode}
+	res := map[string]any{"stdout": stdout, "stderr": stderr, "exit_code": exitCode, "captured": true}
 	if fallbackUsed != "" {
 		res["shell_fallback"] = fallbackUsed
-	}
-	returnErr := execErr
-	if isProcessExitStatusError(execErr) {
-		returnErr = nil
 	}
 	if execErr != nil {
 		res["error"] = execErr.Error()
 	}
+	if strings.TrimSpace(stdout) == "" && strings.TrimSpace(stderr) == "" && exitCode == 0 && !allowEmptyOutput {
+		res["error"] = "output_capture_bug: command exited 0 with empty stdout/stderr"
+		res["error_code"] = "output_capture_bug"
+	}
 	if timeoutMS > 0 {
 		res["timeout_ms"] = timeoutMS
 	}
-	return res, returnErr
+	// Preserve structured output for callers even when command execution fails.
+	// Callers infer failures from the embedded error payload.
+	if isProcessExitStatusError(execErr) {
+		return res, nil
+	}
+	return res, nil
 }
 
 func commandMatchesPrefix(invocation, prefix string) bool {

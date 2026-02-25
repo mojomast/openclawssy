@@ -292,6 +292,72 @@ func applyConfigFieldUpdate(cfg *config.Config, field string, value any) error {
 			return err
 		}
 		cfg.Memory.EventBufferSize = n
+	case "openclaw.remote.enabled":
+		b, err := requireBool(value, field)
+		if err != nil {
+			return err
+		}
+		cfg.OpenClaw.Remote.Enabled = b
+	case "openclaw.remote.repository_url":
+		s, err := requireString(value, field)
+		if err != nil {
+			return err
+		}
+		cfg.OpenClaw.Remote.RepositoryURL = strings.TrimSpace(s)
+	case "openclaw.remote.binary_path":
+		s, err := requireString(value, field)
+		if err != nil {
+			return err
+		}
+		cfg.OpenClaw.Remote.BinaryPath = strings.TrimSpace(s)
+	case "openclaw.remote.ws_primary":
+		s, err := requireString(value, field)
+		if err != nil {
+			return err
+		}
+		cfg.OpenClaw.Remote.WSPrimary = strings.TrimSpace(s)
+	case "openclaw.remote.ws_fallback":
+		s, err := requireString(value, field)
+		if err != nil {
+			return err
+		}
+		cfg.OpenClaw.Remote.WSFallback = strings.TrimSpace(s)
+	case "openclaw.remote.session_key":
+		s, err := requireString(value, field)
+		if err != nil {
+			return err
+		}
+		cfg.OpenClaw.Remote.SessionKey = strings.TrimSpace(s)
+	case "openclaw.remote.connect_timeout_ms":
+		n, err := requireInt(value, field)
+		if err != nil {
+			return err
+		}
+		cfg.OpenClaw.Remote.ConnectTimeoutMS = n
+	case "openclaw.remote.request_timeout_ms":
+		n, err := requireInt(value, field)
+		if err != nil {
+			return err
+		}
+		cfg.OpenClaw.Remote.RequestTimeoutMS = n
+	case "openclaw.remote.poll_interval_ms":
+		n, err := requireInt(value, field)
+		if err != nil {
+			return err
+		}
+		cfg.OpenClaw.Remote.PollIntervalMS = n
+	case "openclaw.remote.poll_timeout_ms":
+		n, err := requireInt(value, field)
+		if err != nil {
+			return err
+		}
+		cfg.OpenClaw.Remote.PollTimeoutMS = n
+	case "openclaw.remote.prefer_tailnet_wss":
+		b, err := requireBool(value, field)
+		if err != nil {
+			return err
+		}
+		cfg.OpenClaw.Remote.PreferTailnetWSS = b
 	default:
 		return fmt.Errorf("field is not mutable: %s", field)
 	}
@@ -351,6 +417,28 @@ func configGetField(cfg config.Config, field string) (any, bool) {
 		return cfg.Memory.EmbeddingModel, true
 	case "memory.event_buffer_size":
 		return cfg.Memory.EventBufferSize, true
+	case "openclaw.remote.enabled":
+		return cfg.OpenClaw.Remote.Enabled, true
+	case "openclaw.remote.repository_url":
+		return cfg.OpenClaw.Remote.RepositoryURL, true
+	case "openclaw.remote.binary_path":
+		return cfg.OpenClaw.Remote.BinaryPath, true
+	case "openclaw.remote.ws_primary":
+		return cfg.OpenClaw.Remote.WSPrimary, true
+	case "openclaw.remote.ws_fallback":
+		return cfg.OpenClaw.Remote.WSFallback, true
+	case "openclaw.remote.session_key":
+		return cfg.OpenClaw.Remote.SessionKey, true
+	case "openclaw.remote.connect_timeout_ms":
+		return cfg.OpenClaw.Remote.ConnectTimeoutMS, true
+	case "openclaw.remote.request_timeout_ms":
+		return cfg.OpenClaw.Remote.RequestTimeoutMS, true
+	case "openclaw.remote.poll_interval_ms":
+		return cfg.OpenClaw.Remote.PollIntervalMS, true
+	case "openclaw.remote.poll_timeout_ms":
+		return cfg.OpenClaw.Remote.PollTimeoutMS, true
+	case "openclaw.remote.prefer_tailnet_wss":
+		return cfg.OpenClaw.Remote.PreferTailnetWSS, true
 	case "config":
 		return cfg, true
 	default:

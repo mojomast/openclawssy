@@ -132,6 +132,24 @@ func (exitStatusShell) Exec(ctx context.Context, command string, args []string) 
 	return "scan partial output", "permission denied", 1, errors.New("exit status 1")
 }
 
+type silentSuccessShell struct{}
+
+func (silentSuccessShell) Exec(ctx context.Context, command string, args []string) (string, string, int, error) {
+	_ = ctx
+	_ = command
+	_ = args
+	return "", "", 0, nil
+}
+
+type failedExecShell struct{}
+
+func (failedExecShell) Exec(ctx context.Context, command string, args []string) (string, string, int, error) {
+	_ = ctx
+	_ = command
+	_ = args
+	return "partial", "failed", -1, errors.New("fork/exec bash: no such file or directory")
+}
+
 func (m *memAudit) LogEvent(ctx context.Context, eventType string, fields map[string]any) error {
 	_ = ctx
 	copyFields := map[string]any{}
@@ -451,6 +469,47 @@ func TestShellExecTreatsExitStatusAsResultNotToolFailure(t *testing.T) {
 	}
 	if strings.TrimSpace(res["error"].(string)) != "exit status 1" {
 		t.Fatalf("expected structured error field with exit status, got %#v", res["error"])
+	}
+}
+
+func TestShellExecDetectsSilentSuccessAsOutputCaptureBug(t *testing.T) {
+	reg := NewRegistry(fakePolicy{}, nil)
+	reg.SetShellExecutor(silentSuccessShell{})
+	reg.SetShellAllowedCommands([]string{"bash"})
+	if err := RegisterCore(reg); err != nil {
+		t.Fatalf("register core: %v", err)
+	}
+	res, err := reg.Execute(context.Background(), "agent", "shell.exec", ".", map[string]any{
+		"command": "bash",
+		"args":    []any{"-lc", "true"},
+	})
+	if err != nil {
+		t.Fatalf("expected structured silent output failure without tool error, got: %v", err)
+	}
+	if got := strings.TrimSpace(fmt.Sprintf("%v", res["error_code"])); got != "output_capture_bug" {
+		t.Fatalf("expected output_capture_bug error_code, got %#v", res["error_code"])
+	}
+}
+
+func TestShellExecPreservesCapturedOutputOnExecFailure(t *testing.T) {
+	reg := NewRegistry(fakePolicy{}, nil)
+	reg.SetShellExecutor(failedExecShell{})
+	reg.SetShellAllowedCommands([]string{"bash"})
+	if err := RegisterCore(reg); err != nil {
+		t.Fatalf("register core: %v", err)
+	}
+	res, err := reg.Execute(context.Background(), "agent", "shell.exec", ".", map[string]any{
+		"command": "bash",
+		"args":    []any{"-lc", "echo test"},
+	})
+	if err != nil {
+		t.Fatalf("expected captured payload on exec failure, got: %v", err)
+	}
+	if strings.TrimSpace(fmt.Sprintf("%v", res["stdout"])) != "partial" {
+		t.Fatalf("expected stdout passthrough, got %#v", res["stdout"])
+	}
+	if !strings.Contains(strings.ToLower(fmt.Sprintf("%v", res["error"])), "no such file") {
+		t.Fatalf("expected execution error field, got %#v", res["error"])
 	}
 }
 

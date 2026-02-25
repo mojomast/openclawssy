@@ -152,6 +152,21 @@ Provider API key env defaults:
     "embedding_provider": "openrouter",
     "embedding_model": "text-embedding-3-small",
     "event_buffer_size": 256
+  },
+  "openclaw": {
+    "remote": {
+      "enabled": false,
+      "repository_url": "https://github.com/mojomast/openclawremoteussy.git",
+      "binary_path": "openclawremoteussy",
+      "ws_primary": "wss://kimi.tailec998.ts.net",
+      "ws_fallback": "ws://100.125.104.79:18789",
+      "session_key": "agent:main:main",
+      "connect_timeout_ms": 10000,
+      "request_timeout_ms": 15000,
+      "poll_interval_ms": 1200,
+      "poll_timeout_ms": 60000,
+      "prefer_tailnet_wss": true
+    }
   }
 }
 ```
@@ -220,3 +235,10 @@ Provider API key env defaults:
 - `memory.event_buffer_size` controls async event ingestion queue capacity.
 
 OpenRouter embeddings are supported through `providers.openrouter.base_url` + `OPENROUTER_API_KEY` (or `providers.openrouter.api_key`).
+
+## OpenClaw Remote Integration
+
+- `openclaw.remote.repository_url` points to the external repo used by `openclawssy remote pull`.
+- `openclaw.remote.binary_path` points to the `openclawremoteussy` executable.
+- `openclaw.remote.enabled=true` enables remote command integration and startup probe in `serve`.
+- Auth token is read from secret key `openclaw/remote/auth_token` (not plain config).

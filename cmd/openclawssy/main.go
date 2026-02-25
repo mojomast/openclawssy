@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -11,9 +12,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -36,6 +39,7 @@ const (
 	envSandboxDockerHardened         = "OPENCLAWSSY_SANDBOX_DOCKER_HARDENED"
 	envSandboxRequireDedicatedDaemon = "OPENCLAWSSY_SANDBOX_DOCKER_REQUIRE_DEDICATED_DAEMON"
 	envSandboxDockerHost             = "OPENCLAWSSY_SANDBOX_DOCKER_HOST"
+	remoteAuthTokenSecretKey         = "openclaw/remote/auth_token"
 )
 
 func main() {
@@ -69,6 +73,10 @@ func main() {
 		code = handlers.HandleCron(ctx, os.Args[2:])
 	case "serve":
 		code = handleServe(ctx, engine, os.Args[2:])
+	case "remote":
+		code = handleRemote(ctx, os.Args[2:])
+	case "openclaw":
+		code = handleOpenClaw(ctx, os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n\n", os.Args[1])
 		printUsage(os.Stderr)
@@ -80,7 +88,261 @@ func main() {
 
 func printUsage(w *os.File) {
 	fmt.Fprintln(w, "usage: openclawssy <subcommand> [flags]")
-	fmt.Fprintln(w, "subcommands: init, setup, ask, run, serve, cron, doctor")
+	fmt.Fprintln(w, "subcommands: init, setup, ask, run, serve, cron, doctor, remote, openclaw")
+}
+
+func handleOpenClaw(ctx context.Context, args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: openclawssy openclaw remote <pull|status|send|history|reconnect> [flags]")
+		return 2
+	}
+	if strings.EqualFold(strings.TrimSpace(args[0]), "remote") {
+		return handleRemote(ctx, args[1:])
+	}
+	fmt.Fprintf(os.Stderr, "unsupported openclaw command: %s\n", args[0])
+	return 2
+}
+
+func handleRemote(ctx context.Context, args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: openclawssy remote <pull|status|send|history|reconnect> [flags]")
+		return 2
+	}
+	command := strings.ToLower(strings.TrimSpace(args[0]))
+	cmdArgs := args[1:]
+	cfg, err := config.LoadOrDefault(filepath.Join(".openclawssy", "config.json"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+
+	debug := false
+
+	switch command {
+	case "pull":
+		return handleRemotePull(ctx, cfg, cmdArgs)
+	case "status":
+		fs := flag.NewFlagSet("remote status", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		fs.BoolVar(&debug, "debug", false, "include sanitized websocket frame artifacts")
+		if err := fs.Parse(cmdArgs); err != nil {
+			return 2
+		}
+		if !cfg.OpenClaw.Remote.Enabled {
+			fmt.Fprintln(os.Stderr, "openclaw.remote.enabled is false; enable it in .openclawssy/config.json")
+			return 1
+		}
+		token, tokenErr := loadRemoteAuthToken(cfg)
+		if tokenErr != nil {
+			fmt.Fprintln(os.Stderr, tokenErr)
+			return 1
+		}
+		if err := runRemoteBridge(ctx, cfg, token, debug, []string{"status"}, os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	case "send":
+		fs := flag.NewFlagSet("remote send", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		fs.BoolVar(&debug, "debug", false, "include sanitized websocket frame artifacts")
+		if err := fs.Parse(cmdArgs); err != nil {
+			return 2
+		}
+		message := strings.TrimSpace(strings.Join(fs.Args(), " "))
+		if message == "" {
+			fmt.Fprintln(os.Stderr, "usage: openclawssy remote send [--debug] \"<message>\"")
+			return 2
+		}
+		if !cfg.OpenClaw.Remote.Enabled {
+			fmt.Fprintln(os.Stderr, "openclaw.remote.enabled is false; enable it in .openclawssy/config.json")
+			return 1
+		}
+		token, tokenErr := loadRemoteAuthToken(cfg)
+		if tokenErr != nil {
+			fmt.Fprintln(os.Stderr, tokenErr)
+			return 1
+		}
+		if err := runRemoteBridge(ctx, cfg, token, debug, []string{"send", "--message", message}, os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	case "history":
+		fs := flag.NewFlagSet("remote history", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		limit := 20
+		fs.IntVar(&limit, "limit", 20, "maximum history messages")
+		fs.BoolVar(&debug, "debug", false, "include sanitized websocket frame artifacts")
+		if err := fs.Parse(cmdArgs); err != nil {
+			return 2
+		}
+		if !cfg.OpenClaw.Remote.Enabled {
+			fmt.Fprintln(os.Stderr, "openclaw.remote.enabled is false; enable it in .openclawssy/config.json")
+			return 1
+		}
+		token, tokenErr := loadRemoteAuthToken(cfg)
+		if tokenErr != nil {
+			fmt.Fprintln(os.Stderr, tokenErr)
+			return 1
+		}
+		if err := runRemoteBridge(ctx, cfg, token, debug, []string{"history", "--limit", fmt.Sprintf("%d", limit)}, os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	case "reconnect":
+		fs := flag.NewFlagSet("remote reconnect", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		fs.BoolVar(&debug, "debug", false, "include sanitized websocket frame artifacts")
+		if err := fs.Parse(cmdArgs); err != nil {
+			return 2
+		}
+		if !cfg.OpenClaw.Remote.Enabled {
+			fmt.Fprintln(os.Stderr, "openclaw.remote.enabled is false; enable it in .openclawssy/config.json")
+			return 1
+		}
+		token, tokenErr := loadRemoteAuthToken(cfg)
+		if tokenErr != nil {
+			fmt.Fprintln(os.Stderr, tokenErr)
+			return 1
+		}
+		if err := runRemoteBridge(ctx, cfg, token, debug, []string{"reconnect"}, os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "unsupported remote command: %s\n", command)
+		return 2
+	}
+}
+
+func handleRemotePull(ctx context.Context, cfg config.Config, args []string) int {
+	fs := flag.NewFlagSet("remote pull", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	targetDir := filepath.Join(".openclawssy", "external", "openclawremoteussy")
+	repoURL := strings.TrimSpace(cfg.OpenClaw.Remote.RepositoryURL)
+	if repoURL == "" {
+		repoURL = "https://github.com/mojomast/openclawremoteussy.git"
+	}
+	fs.StringVar(&targetDir, "dir", targetDir, "target clone directory")
+	fs.StringVar(&repoURL, "repo", repoURL, "openclawremoteussy repository URL")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	gitDir := filepath.Join(targetDir, ".git")
+	if _, err := os.Stat(gitDir); err == nil {
+		if runErr := runGitCommand(ctx, "", []string{"-C", targetDir, "pull", "--ff-only"}, os.Stdout, os.Stderr); runErr != nil {
+			fmt.Fprintln(os.Stderr, runErr)
+			return 1
+		}
+		fmt.Fprintf(os.Stdout, "updated openclawremoteussy at %s\n", targetDir)
+	} else {
+		if err := os.MkdirAll(filepath.Dir(targetDir), 0o755); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		if runErr := runGitCommand(ctx, "", []string{"clone", repoURL, targetDir}, os.Stdout, os.Stderr); runErr != nil {
+			fmt.Fprintln(os.Stderr, runErr)
+			return 1
+		}
+		fmt.Fprintf(os.Stdout, "cloned openclawremoteussy to %s\n", targetDir)
+	}
+
+	fmt.Fprintln(os.Stdout, "next steps:")
+	fmt.Fprintf(os.Stdout, "1) go -C %s build ./cmd/openclawremoteussy\n", targetDir)
+	fmt.Fprintf(os.Stdout, "2) set openclaw.remote.binary_path in .openclawssy/config.json to %s/openclawremoteussy\n", filepath.ToSlash(targetDir))
+	fmt.Fprintln(os.Stdout, "3) set secret key openclaw/remote/auth_token, then run: openclawssy remote status")
+	return 0
+}
+
+func loadRemoteAuthToken(cfg config.Config) (string, error) {
+	store, err := secrets.NewStore(cfg)
+	if err != nil {
+		return "", err
+	}
+	value, ok, err := store.Get(remoteAuthTokenSecretKey)
+	if err != nil {
+		return "", err
+	}
+	if !ok || strings.TrimSpace(value) == "" {
+		return "", errors.New("missing secret openclaw/remote/auth_token; set it before using remote commands")
+	}
+	return strings.TrimSpace(value), nil
+}
+
+func runRemoteBridge(ctx context.Context, cfg config.Config, authToken string, debug bool, commandArgs []string, stdout, stderr io.Writer) error {
+	binaryPath := strings.TrimSpace(cfg.OpenClaw.Remote.BinaryPath)
+	if binaryPath == "" {
+		binaryPath = "openclawremoteussy"
+	}
+	baseArgs := []string{
+		"--ws-primary", cfg.OpenClaw.Remote.WSPrimary,
+		"--session-key", cfg.OpenClaw.Remote.SessionKey,
+		"--connect-timeout-ms", fmt.Sprintf("%d", cfg.OpenClaw.Remote.ConnectTimeoutMS),
+		"--request-timeout-ms", fmt.Sprintf("%d", cfg.OpenClaw.Remote.RequestTimeoutMS),
+		"--poll-interval-ms", fmt.Sprintf("%d", cfg.OpenClaw.Remote.PollIntervalMS),
+		"--poll-timeout-ms", fmt.Sprintf("%d", cfg.OpenClaw.Remote.PollTimeoutMS),
+		"--prefer-tailnet-wss", fmt.Sprintf("%t", cfg.OpenClaw.Remote.PreferTailnetWSS),
+		"--state-file", filepath.Join(".openclawssy", "openclaw", "remote_state.json"),
+	}
+	if strings.TrimSpace(cfg.OpenClaw.Remote.WSFallback) != "" {
+		baseArgs = append(baseArgs, "--ws-fallback", cfg.OpenClaw.Remote.WSFallback)
+	}
+	if debug {
+		baseArgs = append(baseArgs, "--debug")
+	}
+	args := append(baseArgs, commandArgs...)
+	cmd := exec.CommandContext(ctx, binaryPath, args...)
+	cmd.Env = append(os.Environ(), "OPENCLAWREMOTEUSSY_AUTH_TOKEN="+authToken)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("openclawremoteussy command failed: %w", err)
+	}
+	return nil
+}
+
+func probeRemoteBridge(ctx context.Context, cfg config.Config, secretStore *secrets.Store) {
+	if !cfg.OpenClaw.Remote.Enabled {
+		return
+	}
+	if secretStore == nil {
+		fmt.Fprintln(os.Stderr, "openclaw remote integration warning: secret store unavailable")
+		return
+	}
+	token, ok, err := secretStore.Get(remoteAuthTokenSecretKey)
+	if err != nil || !ok || strings.TrimSpace(token) == "" {
+		fmt.Fprintln(os.Stderr, "openclaw remote integration warning: missing openclaw/remote/auth_token")
+		return
+	}
+	var stderr bytes.Buffer
+	probeCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	err = runRemoteBridge(probeCtx, cfg, strings.TrimSpace(token), false, []string{"status", "--healthcheck"}, io.Discard, &stderr)
+	cancel()
+	if err != nil {
+		message := strings.TrimSpace(stderr.String())
+		if message != "" {
+			fmt.Fprintf(os.Stderr, "openclaw remote startup warning: %v (%s)\n", err, message)
+			return
+		}
+		fmt.Fprintln(os.Stderr, "openclaw remote startup warning:", err)
+	}
+}
+
+func runGitCommand(ctx context.Context, workdir string, args []string, stdout, stderr io.Writer) error {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	if strings.TrimSpace(workdir) != "" {
+		cmd.Dir = workdir
+	}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git command failed: %w", err)
+	}
+	return nil
 }
 
 func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int {
@@ -121,7 +383,8 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 		return 1
 	}
 
-	if secretStore, serr := secrets.NewStore(runtimeCfg); serr == nil {
+	secretStore, secretErr := secrets.NewStore(runtimeCfg)
+	if secretErr == nil {
 		if token, ok, _ := secretStore.Get("discord/bot_token"); ok && strings.TrimSpace(token) != "" {
 			runtimeCfg.Discord.Token = token
 		}
@@ -129,6 +392,8 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 			runtimeCfg.Telegram.Token = token
 		}
 	}
+
+	probeRemoteBridge(ctx, runtimeCfg, secretStore)
 
 	jobsStore, err := scheduler.NewStore(serveCfg.JobsFile)
 	if err != nil {
