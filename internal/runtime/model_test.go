@@ -1356,6 +1356,9 @@ func TestToolNameHelpersAndAllowlist(t *testing.T) {
 	if !isToolAllowed("fs.list", nil) {
 		t.Fatal("expected unrestricted allowlist to allow fs.list")
 	}
+	if isToolAllowed("fs.list", []string{}) {
+		t.Fatal("expected explicit empty allowlist to disable all tools")
+	}
 	if !isToolAllowed("shell.exec", []string{"bash.exec"}) {
 		t.Fatal("expected alias to map and allow shell.exec")
 	}

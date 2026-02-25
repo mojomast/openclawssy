@@ -1855,6 +1855,9 @@ func isToolAllowed(toolName string, allowed []string) bool {
 	if toolName == "tool.result" {
 		return false
 	}
+	if allowed != nil && len(allowed) == 0 {
+		return false
+	}
 	if len(allowed) == 0 {
 		return true
 	}

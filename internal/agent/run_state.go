@@ -27,7 +27,7 @@ const (
 	noChoicesRetryDelay         = 200 * time.Millisecond
 	transientModelRetryCap      = 2
 	transientModelRetryDelay    = 250 * time.Millisecond
-	toolParseRetryCap           = 2
+	toolParseRetryCap           = 4
 )
 
 // runState encapsulates the mutable state of a single agent run loop.
@@ -156,6 +156,9 @@ func (s *runState) prepareSystemPrompt(ctx context.Context, input RunInput) stri
 	}
 	if s.failureRecoveryActive {
 		systemPrompt = appendPromptDirective(systemPrompt, "# ERROR_RECOVERY_MODE\n- Recent tool calls failed. Analyze the latest errors and outputs before choosing the next action.\n- Try a materially different approach to resolve the error.\n- Do not repeat the same failing command/arguments unless you explain why it should now work.")
+	}
+	if s.noProgressIterations > 0 {
+		systemPrompt = appendPromptDirective(systemPrompt, "# NO_PROGRESS_MODE\n- The previous tool call(s) produced no new progress.\n- Do not repeat the same tool with unchanged arguments.\n- Either use a materially different tool/action, or provide a final response from current evidence.")
 	}
 	if s.followThroughReprompts > 0 {
 		systemPrompt = appendPromptDirective(systemPrompt, "# ACTION_EXECUTION_MODE\n- You previously replied with intent to act but did not execute.\n- In this turn, either call required tools now or provide a concrete final answer from existing evidence.\n- Do not defer with phrases like 'let me check' or promise future action without execution.")
@@ -409,7 +412,18 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 				s.out.CompletedAt = time.Now().UTC()
 				return s.out, nil
 			}
-			s.out.FinalText = resp.FinalText
+			finalText := strings.TrimSpace(resp.FinalText)
+			if finalText == "" {
+				if len(s.toolResults) > 0 {
+					if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, "# EMPTY_FINAL_TEXT_RECOVERY\n- Your previous final response was empty.\n- Provide a concise user-facing final answer from the latest tool results."); finalized != "" {
+						finalText = strings.TrimSpace(finalized)
+					}
+				}
+				if finalText == "" {
+					finalText = recoverFromEmptyFinal(s.toolResults)
+				}
+			}
+			s.out.FinalText = finalText
 			s.out.Thinking = s.latestThinking
 			s.out.ThinkingPresent = s.thinkingPresent
 			s.out.ToolParseFailure = s.toolParseFailure
@@ -473,7 +487,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 			if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, ""); finalized != "" {
 				s.out.FinalText = finalized
 			} else {
-				s.out.FinalText = fallbackFromToolResults(s.toolResults, s.toolCap)
+				s.out.FinalText = fallbackFromNoProgressToolResults(s.toolResults)
 			}
 			s.out.Thinking = s.latestThinking
 			s.out.ThinkingPresent = s.thinkingPresent
@@ -483,7 +497,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 		}
 
 		if s.failureRecoveryActive && s.failuresSinceRecovery >= failureGuidanceEscalation && len(s.out.ToolCalls) > 0 {
-			s.out.FinalText = requestUserGuidanceFromFailures(input.Message, s.out.ToolCalls)
+			s.out.FinalText = finalizeAfterFailureEscalation(input.Message, s.out.ToolCalls)
 			s.out.Thinking = s.latestThinking
 			s.out.ThinkingPresent = s.thinkingPresent
 			s.out.ToolParseFailure = s.toolParseFailure
@@ -495,7 +509,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 			if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, ""); finalized != "" {
 				s.out.FinalText = finalized
 			} else {
-				s.out.FinalText = fallbackFromToolResults(s.toolResults, s.toolCap)
+				s.out.FinalText = fallbackFromNoProgressToolResults(s.toolResults)
 			}
 			s.out.Thinking = s.latestThinking
 			s.out.ThinkingPresent = s.thinkingPresent

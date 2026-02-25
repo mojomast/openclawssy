@@ -464,7 +464,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		}
 		if runErr == nil && sessionID != "" {
 			if err := e.appendRunConversation(sessionID, runID, out, appendToolsAfterRun); err != nil {
-				runErr = err
+				log.Printf("runtime: failed to append run conversation (run=%s session=%s): %v", runID, sessionID, err)
 			}
 		}
 	}

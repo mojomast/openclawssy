@@ -145,6 +145,31 @@ func TestRunnerBasicLoopWithTools(t *testing.T) {
 	}
 }
 
+func TestRunnerRecoversWhenModelReturnsEmptyFinalTextAfterTools(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "call-1", Name: "fs.list", Arguments: []byte(`{"path":"."}`)}}},
+		{FinalText: "   "},
+	}}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"call-1": {ID: "call-1", Output: `{"items":["README.md"]}`},
+	}}
+
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 8}
+	out, err := runner.Run(context.Background(), RunInput{Message: "list files"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if strings.TrimSpace(out.FinalText) == "" {
+		t.Fatal("expected non-empty final text after empty model response")
+	}
+	if !strings.Contains(strings.ToLower(out.FinalText), "empty final response") {
+		t.Fatalf("expected explicit empty-final recovery note, got %q", out.FinalText)
+	}
+	if !strings.Contains(out.FinalText, "README.md") {
+		t.Fatalf("expected latest tool results in fallback final text, got %q", out.FinalText)
+	}
+}
+
 func TestRunnerRepromptsWhenModelDefersWithoutToolCall(t *testing.T) {
 	model := &mockModel{responses: []ModelResponse{
 		{FinalText: "Let me check that right now."},
@@ -168,6 +193,38 @@ func TestRunnerRepromptsWhenModelDefersWithoutToolCall(t *testing.T) {
 	}
 	if len(out.ToolCalls) != 1 {
 		t.Fatalf("expected one tool call after reprompt, got %d", len(out.ToolCalls))
+	}
+	if len(model.reqs) != 3 {
+		t.Fatalf("expected 3 model requests including reprompt, got %d", len(model.reqs))
+	}
+	if !strings.Contains(model.reqs[1].SystemPrompt, "ACTION_EXECUTION_MODE") {
+		t.Fatalf("expected follow-through directive in reprompt, got %q", model.reqs[1].SystemPrompt)
+	}
+}
+
+func TestRunnerRepromptsWhenModelClaimsCompletionWithoutToolCall(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{FinalText: "Implementation complete. I created calculator.py and handoff.txt."},
+		{ToolCalls: []ToolCallRequest{{ID: "call-1", Name: "fs.write", Arguments: []byte(`{"path":"calculator.py","content":"def add(a,b):\n    return a+b\n"}`)}}},
+		{FinalText: "done"},
+	}}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"call-1": {ID: "call-1", Output: `{"written":true}`},
+	}}
+
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 8}
+	out, err := runner.Run(context.Background(), RunInput{
+		Message:      "read DEVPLAN and implement files",
+		AllowedTools: []string{"fs.write", "fs.read"},
+	})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(out.ToolCalls) != 1 {
+		t.Fatalf("expected one tool call after completion-claim reprompt, got %d", len(out.ToolCalls))
 	}
 	if len(model.reqs) != 3 {
 		t.Fatalf("expected 3 model requests including reprompt, got %d", len(model.reqs))
@@ -1084,6 +1141,9 @@ func TestRunnerBreaksNoProgressToolLoopBeforeCap(t *testing.T) {
 	if out.FinalText == "" {
 		t.Fatalf("expected non-empty final text")
 	}
+	if strings.Contains(strings.ToLower(out.FinalText), "tool-iteration limit") {
+		t.Fatalf("expected no-progress finalization text instead of iteration-limit message, got %q", out.FinalText)
+	}
 	if len(tools.calls) != 1 {
 		t.Fatalf("expected only one real tool execution, got %d", len(tools.calls))
 	}
@@ -1150,11 +1210,14 @@ func TestRunnerAsksUserGuidanceAfterThreeMoreFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
-	if !strings.Contains(out.FinalText, "need your help to continue") {
-		t.Fatalf("expected user-guidance finalization, got %q", out.FinalText)
+	if !strings.Contains(out.FinalText, "stopped repeated failing tool attempts") {
+		t.Fatalf("expected loop-safe failure finalization, got %q", out.FinalText)
 	}
-	if !strings.Contains(out.FinalText, "What I tried") {
+	if !strings.Contains(out.FinalText, "Recent failing attempts") {
 		t.Fatalf("expected attempted steps in finalization, got %q", out.FinalText)
+	}
+	if strings.Contains(out.FinalText, "need your help to continue") {
+		t.Fatalf("expected no user-guidance escalation prompt, got %q", out.FinalText)
 	}
 	if len(out.ToolCalls) != 5 {
 		t.Fatalf("expected 5 tool calls before user-guidance escalation, got %d", len(out.ToolCalls))
@@ -1325,8 +1388,8 @@ func TestRunnerEscalatesGuidanceForStructuredToolOutputErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
-	if !strings.Contains(out.FinalText, "need your help to continue") {
-		t.Fatalf("expected guidance escalation, got %q", out.FinalText)
+	if !strings.Contains(out.FinalText, "stopped repeated failing tool attempts") {
+		t.Fatalf("expected loop-safe failure finalization, got %q", out.FinalText)
 	}
 	if len(out.ToolCalls) != 5 {
 		t.Fatalf("expected 5 tool calls before escalation, got %d", len(out.ToolCalls))
@@ -1361,8 +1424,8 @@ func TestRunnerEscalatesGuidanceAfterIntermittentFailuresInRecoveryMode(t *testi
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
-	if !strings.Contains(out.FinalText, "need your help to continue") {
-		t.Fatalf("expected guidance escalation after intermittent failures, got %q", out.FinalText)
+	if !strings.Contains(out.FinalText, "stopped repeated failing tool attempts") {
+		t.Fatalf("expected loop-safe failure finalization after intermittent failures, got %q", out.FinalText)
 	}
 	if len(out.ToolCalls) != 8 {
 		t.Fatalf("expected escalation after 8 tool calls, got %d", len(out.ToolCalls))

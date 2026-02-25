@@ -80,6 +80,23 @@ func shouldForceFollowThrough(finalText string, allowedTools []string, toolResul
 		}
 	}
 
+	completionClaims := []string{
+		"i created",
+		"created the file",
+		"created `",
+		"created ",
+		"implemented",
+		"implementation complete",
+		"i updated",
+		"i wrote",
+		"saved to",
+	}
+	for _, phrase := range completionClaims {
+		if strings.Contains(text, phrase) {
+			return true
+		}
+	}
+
 	return false
 }
 
@@ -112,7 +129,7 @@ func finalizeFromToolResults(ctx context.Context, model Model, agentID, runID, p
 		RunID:         runID,
 		SystemPrompt:  finalPrompt,
 		Messages:      append([]ChatMessage(nil), messages...),
-		AllowedTools:  nil,
+		AllowedTools:  []string{},
 		ToolTimeoutMS: toolTimeoutMS,
 		Prompt:        finalPrompt,
 		Message:       message,
@@ -139,6 +156,17 @@ func fallbackFromToolResults(results []ToolCallResult, toolCap int) string {
 	return b.String()
 }
 
+func fallbackFromNoProgressToolResults(results []ToolCallResult) string {
+	if len(results) == 0 {
+		return "I stopped repeated tool calls because they were no longer making progress."
+	}
+
+	var b strings.Builder
+	b.WriteString("I stopped repeated tool calls because they were no longer making progress. Here are the latest tool results:\n")
+	b.WriteString(formatLatestToolResults(results))
+	return b.String()
+}
+
 func recoverFromModelError(err error, toolResults []ToolCallResult, toolCap int) string {
 	if isProviderNoChoicesError(err) {
 		return recoverFromNoChoices(toolResults, toolCap)
@@ -158,6 +186,13 @@ func recoverFromNoChoices(toolResults []ToolCallResult, toolCap int) string {
 		return "I couldn't get a complete model response, but the latest search attempts found no matching entries."
 	}
 	return "I couldn't get a complete model response, but here are the latest tool results:\n" + formatLatestToolResults(toolResults) + fmt.Sprintf("\n(Iteration cap: %d)", toolCap)
+}
+
+func recoverFromEmptyFinal(toolResults []ToolCallResult) string {
+	if len(toolResults) == 0 {
+		return "I completed the run, but the model returned an empty final response. Please retry."
+	}
+	return "I completed tool execution, but the model returned an empty final response. Here are the latest tool results:\n" + formatLatestToolResults(toolResults)
 }
 
 func latestToolResultsAreEmptySearches(results []ToolCallResult) bool {
@@ -245,13 +280,13 @@ func appendPromptDirective(prompt, directive string) string {
 	return base + "\n\n" + extra
 }
 
-func requestUserGuidanceFromFailures(userMessage string, records []ToolCallRecord) string {
+func finalizeAfterFailureEscalation(userMessage string, records []ToolCallRecord) string {
 	if prompt, ok := networkAllowlistPermissionPrompt(userMessage, records); ok {
 		return prompt
 	}
 
 	var b strings.Builder
-	b.WriteString("I encountered an issue and need your help to continue.\n")
+	b.WriteString("I stopped repeated failing tool attempts to avoid looping and finalized with the best available result.\n")
 	goal := strings.TrimSpace(userMessage)
 	if goal != "" {
 		b.WriteString("Goal: ")
@@ -267,11 +302,11 @@ func requestUserGuidanceFromFailures(userMessage string, records []ToolCallRecor
 		failing = append(failing, records[i])
 	}
 	if len(failing) == 0 {
-		b.WriteString("Please tell me how you want to proceed.")
+		b.WriteString("No concrete failing tool payloads were captured in the final attempts.")
 		return b.String()
 	}
 
-	b.WriteString("What I tried:\n")
+	b.WriteString("Recent failing attempts:\n")
 	for i := len(failing) - 1; i >= 0; i-- {
 		rec := failing[i]
 		attempt := rec.Request.Name
@@ -281,7 +316,7 @@ func requestUserGuidanceFromFailures(userMessage string, records []ToolCallRecor
 		}
 		b.WriteString(fmt.Sprintf("- %s\n", attempt))
 	}
-	b.WriteString("\nPlease tell me how you'd like to proceed.")
+	b.WriteString("\nNext best step: adjust failing arguments/permissions, then rerun the task.")
 	return b.String()
 }
 
