@@ -33,6 +33,15 @@ type ProviderModel struct {
 	contextWindow     int
 }
 
+type completionUsage struct {
+	PromptTokens       int `json:"prompt_tokens"`
+	CompletionTokens   int `json:"completion_tokens"`
+	TotalTokens        int `json:"total_tokens"`
+	PromptTokensDetail struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+}
+
 const (
 	defaultProviderTimeout = 90 * time.Second
 	providerMaxAttempts    = 3
@@ -44,6 +53,7 @@ const (
 	maxPromptToolError     = 1200
 	maxResponseTokens      = 20000
 	defaultContextWindow   = 120000
+	zaiGLM47ContextWindow  = 200000
 	contextCompactionRatio = 0.80
 	compactionKeepRecent   = 60
 )
@@ -162,8 +172,20 @@ func NewProviderModelForConfig(cfg config.Config, modelCfg config.ModelConfig, l
 		headers:           headers,
 		httpClient:        &http.Client{Timeout: defaultProviderTimeout},
 		responseMaxTokens: responseMaxTokens,
-		contextWindow:     defaultContextWindow,
+		contextWindow:     contextWindowForModel(pName, modelCfg.Name),
 	}, nil
+}
+
+func contextWindowForModel(providerName, modelName string) int {
+	provider := strings.ToLower(strings.TrimSpace(providerName))
+	model := strings.ToLower(strings.TrimSpace(modelName))
+	if provider == "zai" {
+		switch model {
+		case "glm-4.7", "glm-4.7-flash", "glm-4.7-flashx":
+			return zaiGLM47ContextWindow
+		}
+	}
+	return defaultContextWindow
 }
 
 func (m *ProviderModel) ProviderName() string { return m.providerName }
@@ -237,7 +259,8 @@ func (m *ProviderModel) Generate(ctx context.Context, req agent.ModelRequest) (a
 					Content string `json:"content"`
 				} `json:"message"`
 			} `json:"choices"`
-			Error any `json:"error"`
+			Usage completionUsage `json:"usage"`
+			Error any             `json:"error"`
 		}
 		statusCode, err := m.doChatCompletionWithRetry(ctx, raw, &payload)
 		if err != nil {
@@ -245,6 +268,9 @@ func (m *ProviderModel) Generate(ctx context.Context, req agent.ModelRequest) (a
 		}
 		if statusCode >= 300 {
 			return agent.ModelResponse{}, fmt.Errorf("provider %s request failed: status=%d error=%v", m.providerName, statusCode, payload.Error)
+		}
+		if trace := runTraceCollectorFromContext(ctx); trace != nil {
+			trace.RecordModelUsage(payload.Usage.PromptTokens, payload.Usage.PromptTokensDetail.CachedTokens, payload.Usage.CompletionTokens, payload.Usage.TotalTokens)
 		}
 		if len(payload.Choices) == 0 {
 			return agent.ModelResponse{}, errors.New("provider returned no choices")
@@ -257,6 +283,9 @@ func (m *ProviderModel) Generate(ctx context.Context, req agent.ModelRequest) (a
 		}
 		if streamResult.StatusCode >= 300 {
 			return agent.ModelResponse{}, fmt.Errorf("provider %s request failed: status=%d error=%v", m.providerName, streamResult.StatusCode, streamResult.Error)
+		}
+		if trace := runTraceCollectorFromContext(ctx); trace != nil {
+			trace.RecordModelUsage(streamResult.Usage.PromptTokens, streamResult.Usage.PromptTokensDetail.CachedTokens, streamResult.Usage.CompletionTokens, streamResult.Usage.TotalTokens)
 		}
 		content = strings.TrimSpace(streamResult.Content)
 		if content == "" {
@@ -340,6 +369,7 @@ type streamingChatCompletionResult struct {
 	Content      string
 	Error        any
 	DeltaEmitted bool
+	Usage        completionUsage
 }
 
 func (m *ProviderModel) doStreamingChatCompletionWithRetry(ctx context.Context, raw []byte, onDelta func(string) error) (streamingChatCompletionResult, error) {
@@ -414,23 +444,25 @@ func (m *ProviderModel) doStreamingChatCompletionOnce(ctx context.Context, raw [
 		return result, nil
 	}
 
-	content, emitted, err := consumeProviderSSE(resp.Body, onDelta)
+	content, emitted, usage, err := consumeProviderSSE(resp.Body, onDelta)
 	result.Content = content
 	result.DeltaEmitted = emitted
+	result.Usage = usage
 	if err != nil {
 		return result, err
 	}
 	return result, nil
 }
 
-func consumeProviderSSE(reader io.Reader, onDelta func(string) error) (string, bool, error) {
+func consumeProviderSSE(reader io.Reader, onDelta func(string) error) (string, bool, completionUsage, error) {
 	br := bufio.NewReader(reader)
 	var content strings.Builder
 	emitted := false
+	latestUsage := completionUsage{}
 	for {
 		data, done, err := readNextSSEData(br)
 		if err != nil {
-			return content.String(), emitted, err
+			return content.String(), emitted, latestUsage, err
 		}
 		if done {
 			break
@@ -442,9 +474,14 @@ func consumeProviderSSE(reader io.Reader, onDelta func(string) error) (string, b
 		if trimmed == "[DONE]" {
 			break
 		}
+		if usage, ok, err := extractStreamingUsage(trimmed); err != nil {
+			return content.String(), emitted, latestUsage, err
+		} else if ok {
+			latestUsage = usage
+		}
 		delta, err := extractStreamingDeltaText(trimmed)
 		if err != nil {
-			return content.String(), emitted, err
+			return content.String(), emitted, latestUsage, err
 		}
 		if delta == "" {
 			continue
@@ -453,11 +490,29 @@ func consumeProviderSSE(reader io.Reader, onDelta func(string) error) (string, b
 		emitted = true
 		if onDelta != nil {
 			if err := onDelta(delta); err != nil {
-				return content.String(), emitted, err
+				return content.String(), emitted, latestUsage, err
 			}
 		}
 	}
-	return content.String(), emitted, nil
+	return content.String(), emitted, latestUsage, nil
+}
+
+func extractStreamingUsage(raw string) (completionUsage, bool, error) {
+	payload := strings.TrimSpace(raw)
+	if payload == "" {
+		return completionUsage{}, false, nil
+	}
+	var envelope struct {
+		Usage completionUsage `json:"usage"`
+	}
+	if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
+		return completionUsage{}, false, err
+	}
+	usage := envelope.Usage
+	if usage.PromptTokens <= 0 && usage.PromptTokensDetail.CachedTokens <= 0 && usage.CompletionTokens <= 0 && usage.TotalTokens <= 0 {
+		return completionUsage{}, false, nil
+	}
+	return usage, true, nil
 }
 
 func readNextSSEData(reader *bufio.Reader) (string, bool, error) {

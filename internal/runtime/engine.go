@@ -72,7 +72,7 @@ type ExecuteInput struct {
 }
 
 const (
-	maxSessionContextChars         = 12000
+	maxSessionContextChars         = 60000
 	maxSessionMessageChars         = 1400
 	maxSessionToolSummaryChars     = 220
 	maxSessionToolOutputChars      = 1000

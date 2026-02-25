@@ -218,6 +218,14 @@ func TestProviderModelTraceCapturesModelInputAndToolExtraction(t *testing.T) {
 					"content": "```json\n{\"tool_name\":\"fs.list\",\"arguments\":{\"path\":\".\"}}\n```",
 				}},
 			},
+			"usage": map[string]any{
+				"prompt_tokens":     1200,
+				"completion_tokens": 20,
+				"total_tokens":      1220,
+				"prompt_tokens_details": map[string]any{
+					"cached_tokens": 800,
+				},
+			},
 		})
 	}))
 	defer server.Close()
@@ -270,6 +278,18 @@ func TestProviderModelTraceCapturesModelInputAndToolExtraction(t *testing.T) {
 	}
 	if extract["parsed_tool_name"] != "fs.list" {
 		t.Fatalf("unexpected parsed tool name: %#v", extract["parsed_tool_name"])
+	}
+
+	usageEntries, ok := trace["model_usage"].([]any)
+	if !ok || len(usageEntries) != 1 {
+		t.Fatalf("expected one model usage trace entry, got %#v", trace["model_usage"])
+	}
+	usage, ok := usageEntries[0].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected model usage trace shape: %#v", usageEntries[0])
+	}
+	if usage["cached_prompt_tokens"] != float64(800) {
+		t.Fatalf("expected cached_prompt_tokens=800, got %#v", usage["cached_prompt_tokens"])
 	}
 }
 
@@ -1470,6 +1490,18 @@ func TestToolNameHelpersAndAllowlist(t *testing.T) {
 	}
 	if _, ok := canonicalToolName("unknown.tool"); ok {
 		t.Fatal("expected unknown tool alias to fail")
+	}
+}
+
+func TestContextWindowForModel(t *testing.T) {
+	if got := contextWindowForModel("zai", "GLM-4.7"); got != 200000 {
+		t.Fatalf("expected GLM-4.7 context window=200000, got %d", got)
+	}
+	if got := contextWindowForModel("zai", "glm-4.7-flash"); got != 200000 {
+		t.Fatalf("expected GLM-4.7-Flash context window=200000, got %d", got)
+	}
+	if got := contextWindowForModel("generic", "test-model"); got != defaultContextWindow {
+		t.Fatalf("expected default context window=%d for generic provider, got %d", defaultContextWindow, got)
 	}
 }
 

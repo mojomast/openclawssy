@@ -131,6 +131,31 @@ func TestRecordThinkingPersistsThinkingFields(t *testing.T) {
 	}
 }
 
+func TestRecordModelUsagePersistsCachedTokenStats(t *testing.T) {
+	collector := newRunTraceCollector("run_usage", "session_usage", "dashboard", "hello")
+	collector.RecordModelInput("hello", 1234, false, `{"model":"glm-4.7"}`)
+	collector.RecordModelUsage(1200, 800, 300, 1500)
+
+	snapshot := collector.Snapshot()
+	items, ok := snapshot["model_usage"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("expected one model usage entry, got %#v", snapshot["model_usage"])
+	}
+	entry, ok := items[0].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected model usage entry shape: %#v", items[0])
+	}
+	if entry["cached_prompt_tokens"] != float64(800) {
+		t.Fatalf("expected cached_prompt_tokens=800, got %#v", entry["cached_prompt_tokens"])
+	}
+	if entry["prompt_tokens"] != float64(1200) {
+		t.Fatalf("expected prompt_tokens=1200, got %#v", entry["prompt_tokens"])
+	}
+	if entry["total_tokens"] != float64(1500) {
+		t.Fatalf("expected total_tokens=1500, got %#v", entry["total_tokens"])
+	}
+}
+
 func TestIntValueParsesCommonNumericRepresentations(t *testing.T) {
 	if got := intValue(12); got != 12 {
 		t.Fatalf("expected int 12, got %d", got)

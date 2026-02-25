@@ -21,6 +21,7 @@ type runTraceEnvelope struct {
 	Thinking             string                   `json:"thinking,omitempty"`
 	ThinkingPresent      bool                     `json:"thinking_present,omitempty"`
 	ModelInputs          []modelInputTrace        `json:"model_inputs,omitempty"`
+	ModelUsage           []modelUsageTrace        `json:"model_usage,omitempty"`
 	ExtractedToolCalls   []toolExtractionTrace    `json:"extracted_tool_calls,omitempty"`
 	ToolExecutionResults []toolExecutionResultLog `json:"tool_execution_results,omitempty"`
 }
@@ -31,6 +32,14 @@ type modelInputTrace struct {
 	PromptLength    int    `json:"prompt_length"`
 	HistoryInjected bool   `json:"history_injected"`
 	RequestJSON     string `json:"request_json"`
+}
+
+type modelUsageTrace struct {
+	Iteration          int `json:"iteration"`
+	PromptTokens       int `json:"prompt_tokens,omitempty"`
+	CachedPromptTokens int `json:"cached_prompt_tokens,omitempty"`
+	CompletionTokens   int `json:"completion_tokens,omitempty"`
+	TotalTokens        int `json:"total_tokens,omitempty"`
 }
 
 type toolExtractionTrace struct {
@@ -83,6 +92,28 @@ func (c *runTraceCollector) RecordModelInput(message string, promptLength int, h
 		PromptLength:    promptLength,
 		HistoryInjected: historyInjected,
 		RequestJSON:     requestJSON,
+	})
+}
+
+func (c *runTraceCollector) RecordModelUsage(promptTokens, cachedPromptTokens, completionTokens, totalTokens int) {
+	if c == nil {
+		return
+	}
+	if promptTokens <= 0 && cachedPromptTokens <= 0 && completionTokens <= 0 && totalTokens <= 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	iteration := c.current
+	if iteration <= 0 {
+		iteration = len(c.env.ModelInputs) + 1
+	}
+	c.env.ModelUsage = append(c.env.ModelUsage, modelUsageTrace{
+		Iteration:          iteration,
+		PromptTokens:       promptTokens,
+		CachedPromptTokens: cachedPromptTokens,
+		CompletionTokens:   completionTokens,
+		TotalTokens:        totalTokens,
 	})
 }
 
