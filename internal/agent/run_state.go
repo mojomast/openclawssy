@@ -543,6 +543,24 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 				} else {
 					// Check rewrite budget to prevent infinite loops
 					if s.toolRewriteCount >= maxToolRewriteBudget {
+						// Execute pending subtasks directly if we have them
+						if len(s.pendingSubtasks) > 0 {
+							log.Printf("[delegation] Executing %d pending subtasks directly (rewrite budget exceeded)", len(s.pendingSubtasks))
+							if err := r.executeDelegatedTasks(ctx, s, s.pendingSubtasks, input); err != nil {
+								s.out.FinalText = fmt.Sprintf("Delegation failed: %v", err)
+								s.out.Thinking = s.latestThinking
+								s.out.ThinkingPresent = s.thinkingPresent
+								s.out.ToolParseFailure = s.toolParseFailure
+								s.out.CompletedAt = time.Now().UTC()
+								return s.out, nil
+							}
+							// Subtasks completed, unlock delegation and continue
+							s.pendingSubtasks = nil
+							s.delegationLocked = false
+							s.delegationMode = ""
+							log.Printf("[delegation] Subtasks completed, unlocking delegation mode")
+							continue
+						}
 						// Budget exceeded - fail fast with clear message
 						s.out.FinalText = fmt.Sprintf("DELEGATION_REWRITE_BUDGET_EXCEEDED: Task requires delegation but exceeded maximum rewrite attempts (%d). The subagent keeps trying to use forbidden tools. Please break this task into smaller, independent subtasks manually.", maxToolRewriteBudget)
 						s.out.Thinking = s.latestThinking
@@ -551,7 +569,25 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 						s.out.CompletedAt = time.Now().UTC()
 						return s.out, nil
 					}
-					// Rewrite to delegation call
+					// Execute pending subtasks directly instead of rewriting
+					if len(s.pendingSubtasks) > 0 {
+						log.Printf("[delegation] Executing %d pending subtasks directly (model tried forbidden tool: %s)", len(s.pendingSubtasks), call.Name)
+						if err := r.executeDelegatedTasks(ctx, s, s.pendingSubtasks, input); err != nil {
+							s.out.FinalText = fmt.Sprintf("Delegation failed: %v", err)
+							s.out.Thinking = s.latestThinking
+							s.out.ThinkingPresent = s.thinkingPresent
+							s.out.ToolParseFailure = s.toolParseFailure
+							s.out.CompletedAt = time.Now().UTC()
+							return s.out, nil
+						}
+						// Subtasks completed, unlock delegation and continue
+						s.pendingSubtasks = nil
+						s.delegationLocked = false
+						s.delegationMode = ""
+						log.Printf("[delegation] Subtasks completed, unlocking delegation mode")
+						continue
+					}
+					// Rewrite to delegation call (fallback when no pending subtasks)
 					rewritten := s.rewriteToDelegation(call)
 					filteredCalls = append(filteredCalls, rewritten)
 					s.toolRewriteCount++
@@ -562,6 +598,24 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 			// If model output plain text with no tool calls in forced mode
 			if len(resp.ToolCalls) == 0 && strings.TrimSpace(resp.FinalText) != "" {
 				s.noProgressIterations++
+				// Execute pending subtasks directly if we have them
+				if s.noProgressIterations >= 1 && len(s.pendingSubtasks) > 0 {
+					log.Printf("[delegation] Executing %d pending subtasks directly (model didn't call tools)", len(s.pendingSubtasks))
+					if err := r.executeDelegatedTasks(ctx, s, s.pendingSubtasks, input); err != nil {
+						s.out.FinalText = fmt.Sprintf("Delegation failed: %v", err)
+						s.out.Thinking = s.latestThinking
+						s.out.ThinkingPresent = s.thinkingPresent
+						s.out.ToolParseFailure = s.toolParseFailure
+						s.out.CompletedAt = time.Now().UTC()
+						return s.out, nil
+					}
+					// Subtasks completed, unlock delegation and continue to let model process results
+					s.pendingSubtasks = nil
+					s.delegationLocked = false
+					s.delegationMode = ""
+					log.Printf("[delegation] Subtasks completed, unlocking delegation mode")
+					continue
+				}
 				// Re-prompt once with stronger directive
 				if s.noProgressIterations <= 1 {
 					s.setLastModelOutput(resp.FinalText)
