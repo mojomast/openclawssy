@@ -60,6 +60,7 @@ type DecomposedTask struct {
 	Produces       []string `json:"produces,omitempty"`
 	Priority       int      `json:"priority"`
 	TimeoutMS      int      `json:"timeout_ms,omitempty"`
+	ThinkingMode   string   `json:"thinking_mode,omitempty"`
 }
 
 type StateSnapshot struct {

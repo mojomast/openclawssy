@@ -1066,7 +1066,7 @@ func (s *runState) rewriteToDelegation(call ToolCallRequest) ToolCallRequest {
 		"agent_id":      "default",
 		"task_id":       "auto-delegated-" + call.ID,
 		"message":       message,
-		"thinking_mode": "off",
+		"thinking_mode": "never",
 	})
 	return ToolCallRequest{
 		ID:        call.ID,

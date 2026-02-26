@@ -1012,7 +1012,28 @@ func (e *Engine) loadPromptDocs(agentID string) ([]agent.ArtifactDoc, error) {
 			hasSoulDoc = true
 		}
 	}
-	if !hasSoulDoc || agentdocs.SoulNeedsBootstrap(soulContent) {
+
+	// Check for identity.json - if present with valid identity, no bootstrap needed
+	needsBootstrap := !hasSoulDoc || agentdocs.SoulNeedsBootstrap(soulContent)
+	if needsBootstrap {
+		identityPath := filepath.Join(agentRoot, "identity.json")
+		if identityData, err := os.ReadFile(identityPath); err == nil {
+			// Parse identity.json to extract names
+			var identity struct {
+				UserName      string `json:"user_name"`
+				AssistantName string `json:"assistant_name"`
+			}
+			if err := json.Unmarshal(identityData, &identity); err == nil {
+				if identity.UserName != "" && identity.AssistantName != "" {
+					// Identity is set via identity.json, no bootstrap needed
+					// Optionally inject identity into SOUL content or keep separate
+					needsBootstrap = false
+				}
+			}
+		}
+	}
+
+	if needsBootstrap {
 		docs = append(docs, agent.ArtifactDoc{Name: "IDENTITY_BOOTSTRAP.md", Content: identityBootstrapDoc()})
 	}
 	docs = append(docs, agent.ArtifactDoc{Name: "RUNTIME_CONTEXT.md", Content: runtimeContextDoc(e.workspaceDir)})
@@ -1672,13 +1693,17 @@ type agentSubAgentRunnerAdapter struct {
 }
 
 func (a *agentSubAgentRunnerAdapter) ExecuteSubAgent(ctx context.Context, task agent.DecomposedTask) (agent.SubAgentOutput, error) {
+	thinkingMode := task.ThinkingMode
+	if thinkingMode == "" {
+		thinkingMode = "never" // default for subagents
+	}
 	result, err := a.runner.ExecuteSubAgent(ctx, tools.AgentRunInput{
 		CallerAgentID: "",
 		TargetAgentID: task.AgentID,
 		Message:       task.Message,
 		TaskID:        task.TaskID,
 		Source:        "subagent/delegation",
-		ThinkingMode:  "off",
+		ThinkingMode:  thinkingMode,
 	})
 	if err != nil {
 		return agent.SubAgentOutput{Success: false, Error: err.Error()}, err

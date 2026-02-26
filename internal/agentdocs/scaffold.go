@@ -19,6 +19,8 @@ var scaffoldFiles = map[string]string{
 	"HANDOFF.md":  "# HANDOFF\n\nStatus: initialized\n\nNext:\n- Define first run objective.\n",
 }
 
+const defaultIdentityContent = "{\"user_name\": \"User\", \"assistant_name\": \"Openclawssy\"}"
+
 func ScaffoldFiles() map[string]string {
 	out := make(map[string]string, len(scaffoldFiles))
 	for name, content := range scaffoldFiles {
@@ -35,7 +37,9 @@ func SeedAgentScaffold(agentRoot string, force bool) ([]string, error) {
 	}
 
 	files := ScaffoldFiles()
-	seeded := make([]string, 0, len(files))
+	seeded := make([]string, 0, len(files)+1)
+
+	// Write scaffold files
 	for name, body := range files {
 		path := filepath.Join(agentRoot, name)
 		if !force {
@@ -48,6 +52,24 @@ func SeedAgentScaffold(agentRoot string, force bool) ([]string, error) {
 		}
 		seeded = append(seeded, name)
 	}
+
+	// Write identity.json with defaults to prevent onboarding questions
+	identityPath := filepath.Join(agentRoot, "identity.json")
+	if force {
+		if err := os.WriteFile(identityPath, []byte(defaultIdentityContent), 0o600); err != nil {
+			return nil, fmt.Errorf("write identity.json: %w", err)
+		}
+		seeded = append(seeded, "identity.json")
+	} else {
+		// Only create if it doesn't exist
+		if _, err := os.Stat(identityPath); os.IsNotExist(err) {
+			if err := os.WriteFile(identityPath, []byte(defaultIdentityContent), 0o600); err != nil {
+				return nil, fmt.Errorf("write identity.json: %w", err)
+			}
+			seeded = append(seeded, "identity.json")
+		}
+	}
+
 	sort.Strings(seeded)
 	return seeded, nil
 }
