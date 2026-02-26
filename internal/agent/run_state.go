@@ -290,6 +290,27 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 					continue
 				}
 			}
+			// Global cap on total agent.create calls to prevent agent spam
+			globalCreateKey := "agent.create|total"
+			s.repetitionPrevention[globalCreateKey]++
+			if s.repetitionPrevention[globalCreateKey] > 2 {
+				result := ToolCallResult{
+					ID:     call.ID,
+					Output: "",
+					Error:  fmt.Sprintf("agent creation limit reached: you have already created %d agents. Use one of the existing agents instead of creating more.", s.repetitionPrevention[globalCreateKey]-1),
+				}
+				record := ToolCallRecord{
+					Request:     call,
+					Result:      result,
+					StartedAt:   time.Now().UTC(),
+					CompletedAt: time.Now().UTC(),
+				}
+				s.notifyToolCall(&record, input.OnToolCall)
+				s.out.ToolCalls = append(s.out.ToolCalls, record)
+				s.toolResults = append(s.toolResults, result)
+				s.registerToolOutcome(result.Error)
+				continue
+			}
 		}
 
 		record := ToolCallRecord{
