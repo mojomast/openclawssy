@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/url"
 	"regexp"
 	"sort"
@@ -28,6 +29,7 @@ const (
 	transientModelRetryCap      = 2
 	transientModelRetryDelay    = 250 * time.Millisecond
 	toolParseRetryCap           = 4
+	maxToolRewriteBudget        = 3 // Maximum rewrites to prevent infinite loops
 )
 
 // runState encapsulates the mutable state of a single agent run loop.
@@ -70,6 +72,8 @@ type runState struct {
 	delegationArtifacts map[string]string
 	lastModelOutput     string
 	recentIntents       []string
+	toolRewriteCount    int  // tracks rewrites to prevent infinite loops
+	delegationLocked    bool // once true, stays true until subtasks complete
 }
 
 func newRunState(input RunInput, r Runner) *runState {
@@ -119,6 +123,8 @@ func newRunState(input RunInput, r Runner) *runState {
 		delegationArtifacts:     make(map[string]string),
 		lastModelOutput:         "",
 		recentIntents:           make([]string, 0),
+		toolRewriteCount:        0,
+		delegationLocked:        false,
 	}
 }
 
@@ -358,36 +364,44 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 		promptTokens := 0
 		contextWindow := 120000 // default context window
 
-		if trigger := s.computeDelegationTrigger(promptTokens, contextWindow, snapshot); trigger != nil {
-			s.delegationMode = trigger.Mode
-			s.delegationCooldown = trigger.CooldownFor
-			s.pendingSubtasks = trigger.Subtasks
-			s.delegationActive = true
+		// Only evaluate delegation trigger if not already locked in forced mode
+		if !s.delegationLocked {
+			if trigger := s.computeDelegationTrigger(promptTokens, contextWindow, snapshot); trigger != nil {
+				s.delegationMode = trigger.Mode
+				s.delegationCooldown = trigger.CooldownFor
+				s.pendingSubtasks = trigger.Subtasks
+				s.delegationActive = true
 
-			// AUTO-EXECUTE mode: bypass model entirely
-			if trigger.Mode == DelegationModeAutoExecute && input.AutoDelegate {
-				if err := r.executeDelegatedTasks(ctx, s, trigger.Subtasks, input); err != nil {
+				// Lock delegation mode once we enter forced or critical mode
+				if trigger.Mode == DelegationModeToolGated || trigger.Mode == DelegationModeAutoExecute {
+					s.delegationLocked = true
+				}
+
+				// AUTO-EXECUTE mode: bypass model entirely
+				if trigger.Mode == DelegationModeAutoExecute && input.AutoDelegate {
+					if err := r.executeDelegatedTasks(ctx, s, trigger.Subtasks, input); err != nil {
+						s.out.Thinking = s.latestThinking
+						s.out.ThinkingPresent = s.thinkingPresent
+						s.out.ToolParseFailure = s.toolParseFailure
+						s.out.CompletedAt = time.Now().UTC()
+						return s.out, err
+					}
 					s.out.Thinking = s.latestThinking
 					s.out.ThinkingPresent = s.thinkingPresent
 					s.out.ToolParseFailure = s.toolParseFailure
 					s.out.CompletedAt = time.Now().UTC()
-					return s.out, err
+					return s.out, nil
 				}
-				s.out.Thinking = s.latestThinking
-				s.out.ThinkingPresent = s.thinkingPresent
-				s.out.ToolParseFailure = s.toolParseFailure
-				s.out.CompletedAt = time.Now().UTC()
-				return s.out, nil
-			}
 
-			// TOOL_GATED mode: inject directive
-			if trigger.Mode == DelegationModeToolGated {
-				systemPrompt = appendPromptDirective(systemPrompt, buildForcedDelegationDirective(trigger))
-			}
+				// TOOL_GATED mode: inject directive
+				if trigger.Mode == DelegationModeToolGated {
+					systemPrompt = appendPromptDirective(systemPrompt, buildForcedDelegationDirective(trigger))
+				}
 
-			// PROMPT_ONLY mode: soft hint
-			if trigger.Mode == DelegationModePromptOnly {
-				systemPrompt = appendPromptDirective(systemPrompt, buildSoftDelegationHint(trigger))
+				// PROMPT_ONLY mode: soft hint
+				if trigger.Mode == DelegationModePromptOnly {
+					systemPrompt = appendPromptDirective(systemPrompt, buildSoftDelegationHint(trigger))
+				}
 			}
 		}
 
@@ -527,9 +541,20 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 				if s.isToolAllowedInDelegationMode(call.Name) {
 					filteredCalls = append(filteredCalls, call)
 				} else {
+					// Check rewrite budget to prevent infinite loops
+					if s.toolRewriteCount >= maxToolRewriteBudget {
+						// Budget exceeded - fail fast with clear message
+						s.out.FinalText = fmt.Sprintf("DELEGATION_REWRITE_BUDGET_EXCEEDED: Task requires delegation but exceeded maximum rewrite attempts (%d). The subagent keeps trying to use forbidden tools. Please break this task into smaller, independent subtasks manually.", maxToolRewriteBudget)
+						s.out.Thinking = s.latestThinking
+						s.out.ThinkingPresent = s.thinkingPresent
+						s.out.ToolParseFailure = s.toolParseFailure
+						s.out.CompletedAt = time.Now().UTC()
+						return s.out, nil
+					}
 					// Rewrite to delegation call
 					rewritten := s.rewriteToDelegation(call)
 					filteredCalls = append(filteredCalls, rewritten)
+					s.toolRewriteCount++
 				}
 			}
 			resp.ToolCalls = filteredCalls
@@ -1013,7 +1038,10 @@ func (s *runState) computeDelegationTrigger(promptTokens, contextWindow int, sna
 	trigger := ShouldTriggerDelegation(score, s, snapshot)
 
 	if trigger != nil {
+		log.Printf("[delegation.trigger] level=%d mode=%s triggers=%v score=%+v",
+			score.Level, trigger.Mode, score.Triggers, score)
 		trigger.Subtasks = DecomposeTask(s.out.Prompt, score, snapshot)
+		log.Printf("[delegation.decompose] generated %d subtasks", len(trigger.Subtasks))
 	}
 
 	return trigger
@@ -1032,6 +1060,7 @@ func (s *runState) isToolAllowedInDelegationMode(toolName string) bool {
 }
 
 func (s *runState) rewriteToDelegation(call ToolCallRequest) ToolCallRequest {
+	log.Printf("[delegation.rewrite] from=%s to=agent.run rewrite_count=%d/%d", call.Name, s.toolRewriteCount+1, maxToolRewriteBudget)
 	message := fmt.Sprintf("Execute %s with args: %s", call.Name, string(call.Arguments))
 	newArgs, _ := json.Marshal(map[string]any{
 		"agent_id":      "default",

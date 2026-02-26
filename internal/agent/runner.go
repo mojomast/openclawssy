@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -445,9 +446,16 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 		return errors.New("subagent runner not configured for auto-delegation")
 	}
 
-	ordered := topologicalSortTasks(tasks)
+	log.Printf("[delegation] Starting execution of %d subtasks for run", len(tasks))
+
+	ordered, err := topologicalSortTasks(tasks)
+	if err != nil {
+		log.Printf("[delegation] ERROR: %v", err)
+		return err
+	}
 
 	for _, task := range ordered {
+		log.Printf("[delegation.subtask] Starting task_id=%s agent_id=%s priority=%d", task.TaskID, task.AgentID, task.Priority)
 		// Check dependencies
 		for _, dep := range task.DependsOn {
 			if _, ok := s.completedSubtasks[dep]; !ok {
@@ -465,54 +473,120 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 		modifiedTask := task
 		modifiedTask.Message = message
 
-		result, err := r.SubAgentRunner.ExecuteSubAgent(ctx, modifiedTask)
+		// Apply subtask timeout if specified
+		taskCtx := ctx
+		if task.TimeoutMS > 0 {
+			var cancel context.CancelFunc
+			taskCtx, cancel = context.WithTimeout(ctx, time.Duration(task.TimeoutMS)*time.Millisecond)
+			defer cancel()
+		}
+
+		result, err := r.SubAgentRunner.ExecuteSubAgent(taskCtx, modifiedTask)
 
 		if err != nil {
+			log.Printf("[delegation.subtask] FAILED task_id=%s error=%v", task.TaskID, err)
 			s.completedSubtasks[task.TaskID] = "FAILED: " + err.Error()
 			continue
 		}
 
+		log.Printf("[delegation.subtask] COMPLETED task_id=%s success=%t output_len=%d", task.TaskID, result.Success, len(result.FinalText))
 		s.completedSubtasks[task.TaskID] = result.FinalText
 
 		// Store produced artifacts
 		for _, artifact := range task.Produces {
 			s.delegationArtifacts[artifact] = summarizeForArtifact(result.FinalText)
+			log.Printf("[delegation.artifact] STORED key=%s task_id=%s", artifact, task.TaskID)
 		}
 	}
 
 	// Aggregate results into final output
 	s.out.FinalText = aggregateSubtaskResults(s.completedSubtasks)
+	log.Printf("[delegation] COMPLETED all subtasks. Final output length: %d", len(s.out.FinalText))
 	return nil
 }
 
-func topologicalSortTasks(tasks []DecomposedTask) []DecomposedTask {
-	sorted := make([]DecomposedTask, len(tasks))
-	copy(sorted, tasks)
+func topologicalSortTasks(tasks []DecomposedTask) ([]DecomposedTask, error) {
+	// Build task map for O(1) lookup
+	taskMap := make(map[string]DecomposedTask)
+	for _, task := range tasks {
+		taskMap[task.TaskID] = task
+	}
 
-	// Sort by priority first
-	for i := 0; i < len(sorted)-1; i++ {
-		for j := i + 1; j < len(sorted); j++ {
-			if sorted[j].Priority < sorted[i].Priority {
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			}
+	// Build adjacency list (task -> tasks that depend on it)
+	dependents := make(map[string][]string)
+	for _, task := range tasks {
+		for _, dep := range task.DependsOn {
+			dependents[dep] = append(dependents[dep], task.TaskID)
 		}
 	}
 
-	// Then respect dependencies
-	for i := 0; i < len(sorted); i++ {
-		for _, dep := range sorted[i].DependsOn {
-			for j := i + 1; j < len(sorted); j++ {
-				if sorted[j].TaskID == dep {
-					tmp := sorted[j]
-					copy(sorted[j:], sorted[i:j])
-					sorted[i] = tmp
-					break
+	// Kahn's algorithm for topological sort with cycle detection
+	inDegree := make(map[string]int)
+	for _, task := range tasks {
+		inDegree[task.TaskID] = len(task.DependsOn)
+	}
+
+	// Start with tasks that have no dependencies
+	queue := make([]string, 0)
+	for _, task := range tasks {
+		if inDegree[task.TaskID] == 0 {
+			queue = append(queue, task.TaskID)
+		}
+	}
+
+	// Sort queue by priority (lower priority first)
+	sortByPriority := func(ids []string) {
+		for i := 0; i < len(ids)-1; i++ {
+			for j := i + 1; j < len(ids); j++ {
+				if taskMap[ids[j]].Priority < taskMap[ids[i]].Priority {
+					ids[i], ids[j] = ids[j], ids[i]
 				}
 			}
 		}
 	}
+	sortByPriority(queue)
 
-	return sorted
+	result := make([]DecomposedTask, 0, len(tasks))
+	visited := make(map[string]bool)
+
+	for len(queue) > 0 {
+		// Pop from front
+		id := queue[0]
+		queue = queue[1:]
+
+		if visited[id] {
+			continue
+		}
+		visited[id] = true
+
+		task := taskMap[id]
+		result = append(result, task)
+
+		// Reduce in-degree for dependents
+		for _, dependentID := range dependents[id] {
+			inDegree[dependentID]--
+			if inDegree[dependentID] == 0 {
+				queue = append(queue, dependentID)
+			}
+		}
+
+		// Re-sort queue by priority
+		sortByPriority(queue)
+	}
+
+	// Check for cycles
+	if len(result) != len(tasks) {
+		// Find tasks that weren't visited (part of a cycle)
+		unvisited := make([]string, 0)
+		for _, task := range tasks {
+			if !visited[task.TaskID] {
+				unvisited = append(unvisited, task.TaskID)
+			}
+		}
+		return nil, fmt.Errorf("dependency cycle detected involving tasks: %v", unvisited)
+	}
+
+	return result, nil
 }
 
 func injectArtifacts(message string, deps []string, artifacts map[string]string) string {
