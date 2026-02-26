@@ -4,6 +4,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"mime"
 	"net/http"
 	"os"
@@ -47,6 +48,29 @@ var dashboardEditableDocNames = []string{
 	"HEARTBEAT.md",
 }
 
+const (
+	playwriteSkillName  = "playwrite"
+	playwriteSkillFile  = "playwrite.md"
+	skillsBlockStartTag = "<!-- OPENCLAWSSY_ACTIVATED_SKILLS_START -->"
+	skillsBlockEndTag   = "<!-- OPENCLAWSSY_ACTIVATED_SKILLS_END -->"
+)
+
+var builtInSkillCatalog = map[string]string{
+	playwriteSkillName: "---\n" +
+		"name: playwrite\n" +
+		"required_secrets: []\n" +
+		"---\n\n" +
+		"# Playwrite Skill\n\n" +
+		"Use this skill for browser automation and UI verification tasks.\n\n" +
+		"Workflow:\n" +
+		"1. Ensure browser dependencies are installed for your environment.\n" +
+		"2. Use `playwright` scripts for deterministic UI checks.\n" +
+		"3. Prefer isolated test selectors and explicit waits.\n\n" +
+		"When this skill is activated for an agent, ask it to load with:\n" +
+		"`skill.read` (name=`playwrite`)\n\n" +
+		"Then execute the generated script with the shell tool if available.\n",
+}
+
 //go:embed ui/*
 var dashboardUIFS embed.FS
 
@@ -72,6 +96,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/chat/sessions/", h.chatSessionMessages)
 	mux.HandleFunc("/api/admin/agents", h.handleAgents)
 	mux.HandleFunc("/api/admin/agent/docs", h.handleAgentDocs)
+	mux.HandleFunc("/api/admin/skills", h.handleSkills)
 	mux.HandleFunc("/api/admin/debug/runs/", h.getRunTrace)
 	mux.HandleFunc("/api/admin/memory/", h.getAgentMemory)
 }
@@ -787,6 +812,320 @@ func (h *Handler) setAgentDoc(w http.ResponseWriter, r *http.Request) {
 		"alias_for":     aliasFor,
 		"stored_bytes":  len(req.Content),
 	})
+}
+
+func (h *Handler) handleSkills(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		h.getSkills(w, r)
+	case http.MethodPost:
+		h.postSkills(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *Handler) getSkills(w http.ResponseWriter, r *http.Request) {
+	agentID, err := normalizeDashboardAgentID(strings.TrimSpace(r.URL.Query().Get("agent_id")))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	workspaceRoot := h.dashboardWorkspaceRoot()
+	installed, err := listInstalledSkills(workspaceRoot)
+	if err != nil {
+		http.Error(w, "failed to list skills", http.StatusInternalServerError)
+		return
+	}
+	activated, err := h.readActivatedSkills(agentID)
+	if err != nil {
+		http.Error(w, "failed to read agent skill activation", http.StatusInternalServerError)
+		return
+	}
+
+	installableNames := make([]string, 0, len(builtInSkillCatalog))
+	for name := range builtInSkillCatalog {
+		installableNames = append(installableNames, name)
+	}
+	sort.Strings(installableNames)
+	installable := make([]map[string]any, 0, len(installableNames))
+	for _, name := range installableNames {
+		installable = append(installable, map[string]any{
+			"name":      name,
+			"installed": containsString(installed, name),
+		})
+	}
+
+	writeJSON(w, map[string]any{
+		"agent_id":         agentID,
+		"available_agents": h.listDashboardAgentIDs(),
+		"installable":      installable,
+		"installed_skills": installed,
+		"activated_skills": activated,
+	})
+}
+
+func (h *Handler) postSkills(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Action  string `json:"action"`
+		Name    string `json:"name"`
+		AgentID string `json:"agent_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	name := normalizeSkillName(req.Name)
+	if name == "" {
+		http.Error(w, "skill name is required", http.StatusBadRequest)
+		return
+	}
+	workspaceRoot := h.dashboardWorkspaceRoot()
+
+	switch action {
+	case "install":
+		if err := installBuiltInSkill(workspaceRoot, name); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	case "activate", "deactivate":
+		agentID, err := normalizeDashboardAgentID(req.AgentID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		installed, err := listInstalledSkills(workspaceRoot)
+		if err != nil {
+			http.Error(w, "failed to list skills", http.StatusInternalServerError)
+			return
+		}
+		if !containsString(installed, name) {
+			http.Error(w, fmt.Sprintf("skill %s is not installed", name), http.StatusBadRequest)
+			return
+		}
+		if err := h.setSkillActivation(agentID, name, action == "activate"); err != nil {
+			http.Error(w, "failed to update agent skill activation", http.StatusInternalServerError)
+			return
+		}
+	default:
+		http.Error(w, "action must be install, activate, or deactivate", http.StatusBadRequest)
+		return
+	}
+
+	h.getSkills(w, httptestCloneRequestWithAgent(r, req.AgentID))
+}
+
+func (h *Handler) dashboardWorkspaceRoot() string {
+	cfgPath := filepath.Join(h.rootDir, ".openclawssy", "config.json")
+	cfg, err := config.LoadOrDefault(cfgPath)
+	if err != nil {
+		return filepath.Join(h.rootDir, "workspace")
+	}
+	root := strings.TrimSpace(cfg.Workspace.Root)
+	if root == "" {
+		return filepath.Join(h.rootDir, "workspace")
+	}
+	if filepath.IsAbs(root) {
+		return root
+	}
+	return filepath.Clean(filepath.Join(h.rootDir, root))
+}
+
+func listInstalledSkills(workspaceRoot string) ([]string, error) {
+	skillsDir := filepath.Join(workspaceRoot, "skills")
+	entries, err := os.ReadDir(skillsDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+	installed := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.ToLower(filepath.Ext(entry.Name())) != ".md" {
+			continue
+		}
+		name := normalizeSkillName(strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name())))
+		if name != "" {
+			installed = append(installed, name)
+		}
+	}
+	sort.Strings(installed)
+	return installed, nil
+}
+
+func installBuiltInSkill(workspaceRoot, name string) error {
+	body, ok := builtInSkillCatalog[name]
+	if !ok {
+		return fmt.Errorf("skill %s is not installable", name)
+	}
+	skillsDir := filepath.Join(workspaceRoot, "skills")
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		return err
+	}
+	path := filepath.Join(skillsDir, name+".md")
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return os.WriteFile(path, []byte(body), 0o600)
+}
+
+func normalizeSkillName(raw string) string {
+	name := strings.ToLower(strings.TrimSpace(raw))
+	if name == "" {
+		return ""
+	}
+	for _, r := range name {
+		isAlphaNum := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if isAlphaNum || r == '-' || r == '_' {
+			continue
+		}
+		return ""
+	}
+	return name
+}
+
+func containsString(items []string, needle string) bool {
+	for _, item := range items {
+		if strings.EqualFold(strings.TrimSpace(item), strings.TrimSpace(needle)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handler) toolsDocPath(agentID string) string {
+	return filepath.Join(h.rootDir, ".openclawssy", "agents", agentID, "TOOLS.md")
+}
+
+func (h *Handler) readActivatedSkills(agentID string) ([]string, error) {
+	raw, err := os.ReadFile(h.toolsDocPath(agentID))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+	return parseActivatedSkillsBlock(string(raw)), nil
+}
+
+func (h *Handler) setSkillActivation(agentID, name string, enabled bool) error {
+	toolsPath := h.toolsDocPath(agentID)
+	raw, err := os.ReadFile(toolsPath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		raw = []byte("# TOOLS\n\nEnabled core tools: skill.list, skill.read.\n")
+	}
+	next := updateActivatedSkillsBlock(string(raw), name, enabled)
+	if err := os.MkdirAll(filepath.Dir(toolsPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(toolsPath, []byte(next), 0o600)
+}
+
+func parseActivatedSkillsBlock(content string) []string {
+	start := strings.Index(content, skillsBlockStartTag)
+	if start < 0 {
+		return []string{}
+	}
+	bodyStart := start + len(skillsBlockStartTag)
+	endRel := strings.Index(content[bodyStart:], skillsBlockEndTag)
+	if endRel < 0 {
+		return []string{}
+	}
+	body := content[bodyStart : bodyStart+endRel]
+	lines := strings.Split(body, "\n")
+	seen := map[string]struct{}{}
+	out := make([]string, 0, 4)
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "-"))
+		if trimmed == "" {
+			continue
+		}
+		name := normalizeSkillName(trimmed)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func renderActivatedSkillsBlock(skills []string) string {
+	if len(skills) == 0 {
+		return ""
+	}
+	lines := []string{skillsBlockStartTag, "## Activated Skills", "Add these skill names to your workflow with skill.read before execution."}
+	for _, skill := range skills {
+		lines = append(lines, "- "+skill)
+	}
+	lines = append(lines, skillsBlockEndTag)
+	return "\n\n" + strings.Join(lines, "\n") + "\n"
+}
+
+func updateActivatedSkillsBlock(content, name string, enabled bool) string {
+	current := parseActivatedSkillsBlock(content)
+	nextSet := make(map[string]struct{}, len(current)+1)
+	for _, skill := range current {
+		nextSet[skill] = struct{}{}
+	}
+	if enabled {
+		nextSet[name] = struct{}{}
+	} else {
+		delete(nextSet, name)
+	}
+	nextList := make([]string, 0, len(nextSet))
+	for skill := range nextSet {
+		nextList = append(nextList, skill)
+	}
+	sort.Strings(nextList)
+	nextBlock := renderActivatedSkillsBlock(nextList)
+
+	start := strings.Index(content, skillsBlockStartTag)
+	if start < 0 {
+		if nextBlock == "" {
+			return content
+		}
+		return strings.TrimRight(content, "\n") + nextBlock
+	}
+	bodyStart := start + len(skillsBlockStartTag)
+	endRel := strings.Index(content[bodyStart:], skillsBlockEndTag)
+	if endRel < 0 {
+		if nextBlock == "" {
+			return content
+		}
+		return content + nextBlock
+	}
+	end := bodyStart + endRel + len(skillsBlockEndTag)
+	if nextBlock == "" {
+		return strings.TrimRight(content[:start]+content[end:], "\n") + "\n"
+	}
+	return content[:start] + nextBlock + content[end:]
+}
+
+func httptestCloneRequestWithAgent(r *http.Request, agentID string) *http.Request {
+	next := r.Clone(r.Context())
+	q := next.URL.Query()
+	normalized, err := normalizeDashboardAgentID(agentID)
+	if err != nil {
+		normalized = "default"
+	}
+	q.Set("agent_id", normalized)
+	next.URL.RawQuery = q.Encode()
+	return next
 }
 
 func (h *Handler) readAgentDoc(agentID, name string) (agentDocPayload, error) {

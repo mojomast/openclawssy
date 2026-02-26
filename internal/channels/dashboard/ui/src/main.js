@@ -8,6 +8,7 @@ import { schedulerPage } from "./pages/scheduler.js";
 import { settingsPage } from "./pages/settings.js";
 import { secretsPage } from "./pages/secrets.js";
 import { docsPage } from "./pages/docs.js";
+import { skillsPage } from "./pages/skills.js";
 import { sandboxPage } from "./pages/sandbox.js";
 import { toolInspector } from "./inspectors/tool_inspector.js";
 import { traceInspector } from "./inspectors/trace_inspector.js";
@@ -23,6 +24,7 @@ const ROUTES = [
   { path: "/scheduler", label: "Scheduler", page: schedulerPage },
   { path: "/settings", label: "Settings", page: settingsPage },
   { path: "/docs", label: "Docs", page: docsPage },
+  { path: "/skills", label: "Skills", page: skillsPage },
   { path: "/secrets", label: "Secrets", page: secretsPage },
   { path: "/sandbox", label: "Sandbox", page: sandboxPage },
 ];

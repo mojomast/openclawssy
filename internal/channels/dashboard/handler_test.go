@@ -476,6 +476,87 @@ func TestAdminAgentDocsEndpointRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestAdminSkillsInstallAndActivation(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "workspace"), 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if err := config.Save(filepath.Join(root, ".openclawssy", "config.json"), config.Default()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/skills?agent_id=default", nil)
+	listResp := httptest.NewRecorder()
+	mux.ServeHTTP(listResp, listReq)
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("expected list status %d, got %d (%s)", http.StatusOK, listResp.Code, listResp.Body.String())
+	}
+
+	installReq := httptest.NewRequest(http.MethodPost, "/api/admin/skills", bytes.NewBufferString(`{"action":"install","name":"playwrite","agent_id":"default"}`))
+	installReq.Header.Set("Content-Type", "application/json")
+	installResp := httptest.NewRecorder()
+	mux.ServeHTTP(installResp, installReq)
+	if installResp.Code != http.StatusOK {
+		t.Fatalf("expected install status %d, got %d (%s)", http.StatusOK, installResp.Code, installResp.Body.String())
+	}
+
+	if _, err := os.Stat(filepath.Join(root, "workspace", "skills", "playwrite.md")); err != nil {
+		t.Fatalf("expected installed playwrite skill file: %v", err)
+	}
+
+	activateReq := httptest.NewRequest(http.MethodPost, "/api/admin/skills", bytes.NewBufferString(`{"action":"activate","name":"playwrite","agent_id":"default"}`))
+	activateReq.Header.Set("Content-Type", "application/json")
+	activateResp := httptest.NewRecorder()
+	mux.ServeHTTP(activateResp, activateReq)
+	if activateResp.Code != http.StatusOK {
+		t.Fatalf("expected activate status %d, got %d (%s)", http.StatusOK, activateResp.Code, activateResp.Body.String())
+	}
+
+	rawTools, err := os.ReadFile(filepath.Join(root, ".openclawssy", "agents", "default", "TOOLS.md"))
+	if err != nil {
+		t.Fatalf("read TOOLS.md: %v", err)
+	}
+	toolsText := string(rawTools)
+	if !strings.Contains(toolsText, "OPENCLAWSSY_ACTIVATED_SKILLS_START") || !strings.Contains(toolsText, "- playwrite") {
+		t.Fatalf("expected TOOLS.md activated skills block, got %q", toolsText)
+	}
+
+	verifyReq := httptest.NewRequest(http.MethodGet, "/api/admin/skills?agent_id=default", nil)
+	verifyResp := httptest.NewRecorder()
+	mux.ServeHTTP(verifyResp, verifyReq)
+	if verifyResp.Code != http.StatusOK {
+		t.Fatalf("expected verify status %d, got %d (%s)", http.StatusOK, verifyResp.Code, verifyResp.Body.String())
+	}
+	var verifyPayload map[string]any
+	if err := json.Unmarshal(verifyResp.Body.Bytes(), &verifyPayload); err != nil {
+		t.Fatalf("decode verify payload: %v", err)
+	}
+	activatedAny, ok := verifyPayload["activated_skills"].([]any)
+	if !ok || len(activatedAny) != 1 || activatedAny[0] != "playwrite" {
+		t.Fatalf("expected activated playwrite skill, got %#v", verifyPayload["activated_skills"])
+	}
+
+	deactivateReq := httptest.NewRequest(http.MethodPost, "/api/admin/skills", bytes.NewBufferString(`{"action":"deactivate","name":"playwrite","agent_id":"default"}`))
+	deactivateReq.Header.Set("Content-Type", "application/json")
+	deactivateResp := httptest.NewRecorder()
+	mux.ServeHTTP(deactivateResp, deactivateReq)
+	if deactivateResp.Code != http.StatusOK {
+		t.Fatalf("expected deactivate status %d, got %d (%s)", http.StatusOK, deactivateResp.Code, deactivateResp.Body.String())
+	}
+
+	rawTools, err = os.ReadFile(filepath.Join(root, ".openclawssy", "agents", "default", "TOOLS.md"))
+	if err != nil {
+		t.Fatalf("read TOOLS.md after deactivate: %v", err)
+	}
+	if strings.Contains(string(rawTools), "- playwrite") {
+		t.Fatalf("expected playwrite to be removed after deactivate, got %q", string(rawTools))
+	}
+}
+
 func TestDebugRunTraceEndpointReturnsNotFoundWithoutTrace(t *testing.T) {
 	store := httpchannel.NewInMemoryRunStore()
 	_, err := store.Create(context.Background(), httpchannel.Run{ID: "run_2", AgentID: "default", Message: "hello", Status: "completed", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()})

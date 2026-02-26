@@ -1409,6 +1409,26 @@ pre {
   font-family: "IBM Plex Mono", "Menlo", "Consolas", monospace;
 }
 
+.skills-list {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.skills-card {
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--secondary);
+  padding: 0.6rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.skills-card p {
+  margin: 0;
+}
+
 @media (max-width: 900px) {
   .shell {
     padding: 0.75rem;
