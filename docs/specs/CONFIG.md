@@ -108,6 +108,11 @@ Provider API key env defaults:
     "allow_inter_agent_messaging": true,
     "allow_agent_model_overrides": true,
     "self_improvement_enabled": false,
+    "auto_delegate": false,
+    "delegation_mode": "tool_gated",
+    "delegation_threshold": 2,
+    "delegation_agent_id": "default",
+    "delegation_cooldown_iterations": 15,
     "profiles": {
       "default": {
         "enabled": true,
@@ -158,8 +163,8 @@ Provider API key env defaults:
       "enabled": false,
       "repository_url": "https://github.com/mojomast/openclawremoteussy.git",
       "binary_path": "openclawremoteussy",
-      "ws_primary": "wss://kimi.tailec998.ts.net",
-      "ws_fallback": "ws://100.125.104.79:18789",
+      "ws_primary": "wss://your-gateway.example.com",
+      "ws_fallback": "ws://your-fallback-gateway.example.net:18789",
       "session_key": "agent:main:main",
       "connect_timeout_ms": 10000,
       "request_timeout_ms": 15000,
@@ -207,6 +212,27 @@ Provider API key env defaults:
 - `agents.allow_inter_agent_messaging` toggles `agent.message.send` and `agent.message.inbox` workflows.
 - `agents.self_improvement_enabled` gates prompt file mutation tools (`agent.prompt.update`).
 - `agents.profiles.<agent_id>.self_improvement=true` must also be set for that agent before prompt mutation is allowed.
+
+## Auto-Delegation Settings
+- `agents.auto_delegate` — when `true`, enables automatic task decomposition and subagent execution in critical mode.
+- `agents.delegation_mode` — controls delegation behavior:
+  - `prompt_only` — injects soft delegation hints (no enforcement)
+  - `tool_gated` — runtime blocks non-agent tools and rewrites to `agent.run` (default)
+  - `auto_execute` — bypasses model entirely and executes subtasks automatically
+- `agents.delegation_threshold` — complexity threshold to trigger delegation (default: 2, range 0-3):
+  - 0 = never delegate automatically
+  - 1 = moderate complexity (soft hints)
+  - 2 = high complexity (tool gating)
+  - 3 = critical complexity (auto-execute)
+- `agents.delegation_agent_id` — default agent to use for delegated subtasks (default: `default`).
+- `agents.delegation_cooldown_iterations` — iterations to wait before re-evaluating delegation (default: 15).
+
+Delegation triggers on:
+- Tool iterations > 40 (warn), > 80 (force)
+- 2+ consecutive tool failures
+- 2+ iterations with no progress
+- 1+ iteration where all calls were blocked (repetition)
+- Context window pressure > 75% (warn), > 85% (force), > 92% (critical)
 
 ## Output Notes
 - `output.thinking_mode` supports: `never`, `on_error`, `always`.

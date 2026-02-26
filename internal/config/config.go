@@ -145,6 +145,12 @@ type AgentsConfig struct {
 	AllowAgentModelOverrides bool                    `json:"allow_agent_model_overrides"`
 	SelfImprovementEnabled   bool                    `json:"self_improvement_enabled"`
 	Profiles                 map[string]AgentProfile `json:"profiles,omitempty"`
+	// Delegation settings
+	AutoDelegate           bool   `json:"auto_delegate,omitempty"`
+	DelegationMode         string `json:"delegation_mode,omitempty"`
+	DelegationThreshold    int    `json:"delegation_threshold,omitempty"`
+	DelegationAgentID      string `json:"delegation_agent_id,omitempty"`
+	DelegationCooldownIter int    `json:"delegation_cooldown_iterations,omitempty"`
 }
 
 type ProviderEndpointConfig struct {
@@ -304,6 +310,11 @@ func Default() Config {
 			AllowAgentModelOverrides: true,
 			SelfImprovementEnabled:   false,
 			Profiles:                 map[string]AgentProfile{},
+			AutoDelegate:             false,
+			DelegationMode:           "tool_gated",
+			DelegationThreshold:      2,
+			DelegationAgentID:        "default",
+			DelegationCooldownIter:   15,
 		},
 		Chat: ChatConfig{
 			Enabled:               true,
@@ -426,6 +437,19 @@ func (c *Config) ApplyDefaults() {
 	}
 	if len(c.Agents.Profiles) == 0 && len(d.Agents.Profiles) == 0 {
 		c.Agents.Profiles = map[string]AgentProfile{}
+	}
+	// Delegation defaults
+	if c.Agents.DelegationMode == "" {
+		c.Agents.DelegationMode = d.Agents.DelegationMode
+	}
+	if c.Agents.DelegationThreshold == 0 {
+		c.Agents.DelegationThreshold = d.Agents.DelegationThreshold
+	}
+	if c.Agents.DelegationAgentID == "" {
+		c.Agents.DelegationAgentID = d.Agents.DelegationAgentID
+	}
+	if c.Agents.DelegationCooldownIter == 0 {
+		c.Agents.DelegationCooldownIter = d.Agents.DelegationCooldownIter
 	}
 	if c.Chat.RateLimitPerMin == 0 {
 		c.Chat.RateLimitPerMin = d.Chat.RateLimitPerMin

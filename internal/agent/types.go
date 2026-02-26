@@ -25,6 +25,7 @@ type RunInput struct {
 	MaxToolIterations int                        `json:"max_tool_iterations"`
 	ToolTimeoutMS     int                        `json:"tool_timeout_ms,omitempty"`
 	AllowedTools      []string                   `json:"allowed_tools,omitempty"`
+	AutoDelegate      bool                       `json:"auto_delegate,omitempty"`
 	OnToolCall        func(ToolCallRecord) error `json:"-"`
 	SystemPromptExt   SystemPromptExtender       `json:"-"`
 	OnTextDelta       func(delta string) error   `json:"-"`
@@ -105,4 +106,18 @@ type Model interface {
 // ToolExecutor is an injectable tool backend.
 type ToolExecutor interface {
 	Execute(ctx context.Context, call ToolCallRequest) (ToolCallResult, error)
+}
+
+// SubAgentRunner is used for delegating tasks to other agents.
+// It is compatible with tools.AgentRunner interface.
+type SubAgentRunner interface {
+	ExecuteSubAgent(ctx context.Context, input DecomposedTask) (SubAgentOutput, error)
+}
+
+// SubAgentOutput is returned from subagent execution.
+type SubAgentOutput struct {
+	RunID     string `json:"run_id"`
+	FinalText string `json:"final_text"`
+	Success   bool   `json:"success"`
+	Error     string `json:"error,omitempty"`
 }

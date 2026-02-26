@@ -93,6 +93,63 @@ The Docker sandbox exposes operator endpoints at `/api/admin/sandbox/docker/*`:
 
 All endpoints require bearer auth (same token as the rest of the API).
 
+## Auto-Delegation System
+
+When tasks exceed safe execution complexity, the runtime can automatically delegate work to subagents using the `agent.run` tool. This prevents context window exhaustion and helps avoid infinite loops.
+
+### Triggering Conditions
+
+The system monitors several signals and computes a complexity score:
+
+| Signal | Weight | Trigger Threshold |
+|--------|--------|-------------------|
+| Iterations | +1 at 40, +2 at 80, +3 at 120 | ≥40 warn, ≥80 force |
+| Consecutive failures | +2 at 2 failures, +3 at 3 | ≥2 |
+| No progress iterations | +2 | ≥2 |
+| All blocked iterations | +3 | ≥1 |
+| Repetition detected | +2 | any tool ≥2 |
+| Context pressure | +1 at 75%, +2 at 85%, +3 at 92% | ≥75% warn, ≥85% force, ≥92% critical |
+
+**Complexity levels:**
+- Total score ≥2: Moderate (soft hint)
+- Total score ≥4 OR all blocked: High (tool gating)
+- Total score ≥6 OR blocked + others: Critical (auto-execute)
+
+### Delegation Modes
+
+1. **prompt_only** — Injects a soft suggestion to use `agent.run`. No enforcement.
+2. **tool_gated** — Runtime blocks non-agent tools (fs.*, shell.exec, etc.) and rewrites them to `agent.run` calls. Model is forced to delegate.
+3. **auto_execute** — Bypasses the model entirely. Tasks are automatically decomposed and executed by subagents.
+
+### Task Decomposition
+
+When delegation triggers, the system:
+1. Analyzes the original task for known patterns (refactor, analyze, debug, etc.)
+2. Falls back to signal-based decomposition if no pattern matches
+3. Generates subtasks with dependencies (e.g., "discover files" → "modify files")
+4. Executes subtasks in topological order, passing artifact summaries between them
+
+### Safety Features
+
+- **Cooldown**: 15 iterations by default before re-evaluating delegation
+- **User question detection**: Prevents delegation when the model asked the user a question
+- **Dependency tracking**: Subtasks wait for dependencies before executing
+- **Timeout per subtask**: Configurable via `timeout_ms` on each task
+
+### Configuration
+
+```json
+{
+  "agents": {
+    "auto_delegate": false,
+    "delegation_mode": "tool_gated",
+    "delegation_threshold": 2,
+    "delegation_agent_id": "default",
+    "delegation_cooldown_iterations": 15
+  }
+}
+```
+
 ## Key Persistence Surfaces
 - Config: `.openclawssy/config.json` (atomic write + validation).
 - Runs: `.openclawssy/agents/<agent>/runs/<run_id>/`.

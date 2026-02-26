@@ -60,6 +60,16 @@ type runState struct {
 	toolCap                 int
 	// repetitionPrevention tracks tool calls to detect and prevent loops
 	repetitionPrevention map[string]int // key: "tool_name|agent_id" -> count
+
+	// Delegation state
+	delegationMode      DelegationMode
+	delegationCooldown  int
+	delegationActive    bool
+	pendingSubtasks     []DecomposedTask
+	completedSubtasks   map[string]string
+	delegationArtifacts map[string]string
+	lastModelOutput     string
+	recentIntents       []string
 }
 
 func newRunState(input RunInput, r Runner) *runState {
@@ -101,6 +111,14 @@ func newRunState(input RunInput, r Runner) *runState {
 		toolTimeout:             toolTimeout,
 		toolCap:                 toolCap,
 		repetitionPrevention:    make(map[string]int),
+		delegationMode:          "",
+		delegationCooldown:      0,
+		delegationActive:        false,
+		pendingSubtasks:         nil,
+		completedSubtasks:       make(map[string]string),
+		delegationArtifacts:     make(map[string]string),
+		lastModelOutput:         "",
+		recentIntents:           make([]string, 0),
 	}
 }
 
@@ -328,6 +346,51 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 	for {
 		systemPrompt := s.prepareSystemPrompt(ctx, input)
 
+		// === DELEGATION TRIGGER CHECK ===
+		snapshot := StateSnapshot{
+			LastToolAttempted: s.getLastToolName(),
+			LastErrorTypes:    s.getRecentErrorTypes(),
+			LastModelOutput:   s.getLastModelOutput(),
+			AskedUserQuestion: DetectUserQuestion(s.getLastModelOutput()),
+		}
+
+		// TODO: Get actual prompt tokens and context window from model response
+		promptTokens := 0
+		contextWindow := 120000 // default context window
+
+		if trigger := s.computeDelegationTrigger(promptTokens, contextWindow, snapshot); trigger != nil {
+			s.delegationMode = trigger.Mode
+			s.delegationCooldown = trigger.CooldownFor
+			s.pendingSubtasks = trigger.Subtasks
+			s.delegationActive = true
+
+			// AUTO-EXECUTE mode: bypass model entirely
+			if trigger.Mode == DelegationModeAutoExecute && input.AutoDelegate {
+				if err := r.executeDelegatedTasks(ctx, s, trigger.Subtasks, input); err != nil {
+					s.out.Thinking = s.latestThinking
+					s.out.ThinkingPresent = s.thinkingPresent
+					s.out.ToolParseFailure = s.toolParseFailure
+					s.out.CompletedAt = time.Now().UTC()
+					return s.out, err
+				}
+				s.out.Thinking = s.latestThinking
+				s.out.ThinkingPresent = s.thinkingPresent
+				s.out.ToolParseFailure = s.toolParseFailure
+				s.out.CompletedAt = time.Now().UTC()
+				return s.out, nil
+			}
+
+			// TOOL_GATED mode: inject directive
+			if trigger.Mode == DelegationModeToolGated {
+				systemPrompt = appendPromptDirective(systemPrompt, buildForcedDelegationDirective(trigger))
+			}
+
+			// PROMPT_ONLY mode: soft hint
+			if trigger.Mode == DelegationModePromptOnly {
+				systemPrompt = appendPromptDirective(systemPrompt, buildSoftDelegationHint(trigger))
+			}
+		}
+
 		var (
 			resp ModelResponse
 			err  error
@@ -456,6 +519,35 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 			s.out.CompletedAt = time.Now().UTC()
 			return s.out, ErrToolIterationCapExceeded
 		}
+
+		// === TOOL GATING IN FORCED MODE ===
+		if (s.delegationMode == DelegationModeToolGated || s.delegationMode == DelegationModeAutoExecute) && len(resp.ToolCalls) > 0 {
+			filteredCalls := make([]ToolCallRequest, 0, len(resp.ToolCalls))
+			for _, call := range resp.ToolCalls {
+				if s.isToolAllowedInDelegationMode(call.Name) {
+					filteredCalls = append(filteredCalls, call)
+				} else {
+					// Rewrite to delegation call
+					rewritten := s.rewriteToDelegation(call)
+					filteredCalls = append(filteredCalls, rewritten)
+				}
+			}
+			resp.ToolCalls = filteredCalls
+
+			// If model output plain text with no tool calls in forced mode
+			if len(resp.ToolCalls) == 0 && strings.TrimSpace(resp.FinalText) != "" {
+				s.noProgressIterations++
+				// Re-prompt once with stronger directive
+				if s.noProgressIterations <= 1 {
+					s.setLastModelOutput(resp.FinalText)
+					s.messages = append(s.messages, ChatMessage{Role: "assistant", Content: resp.FinalText})
+					continue
+				}
+			}
+		}
+
+		// Update model output tracking
+		s.setLastModelOutput(resp.FinalText)
 
 		hadFreshExecution := s.executeTools(ctx, r, resp.ToolCalls, input)
 		s.toolParseReprompts = 0
@@ -907,4 +999,78 @@ func extractPathFromToolArgs(args []byte) string {
 		return ""
 	}
 	return firstTrimmedStringFromMap(payload, "path", "file", "target", "filename")
+}
+
+// Delegation state methods
+
+func (s *runState) computeDelegationTrigger(promptTokens, contextWindow int, snapshot StateSnapshot) *DelegationTrigger {
+	if s.delegationCooldown > 0 {
+		s.delegationCooldown--
+		return nil
+	}
+
+	score := ComputeComplexity(s, promptTokens, contextWindow)
+	trigger := ShouldTriggerDelegation(score, s, snapshot)
+
+	if trigger != nil {
+		trigger.Subtasks = DecomposeTask(s.out.Prompt, score, snapshot)
+	}
+
+	return trigger
+}
+
+func (s *runState) isToolAllowedInDelegationMode(toolName string) bool {
+	if s.delegationMode == "" || s.delegationMode == DelegationModePromptOnly {
+		return true
+	}
+
+	allowed := map[string]bool{
+		"agent.list": true,
+		"agent.run":  true,
+	}
+	return allowed[toolName]
+}
+
+func (s *runState) rewriteToDelegation(call ToolCallRequest) ToolCallRequest {
+	message := fmt.Sprintf("Execute %s with args: %s", call.Name, string(call.Arguments))
+	newArgs, _ := json.Marshal(map[string]any{
+		"agent_id":      "default",
+		"task_id":       "auto-delegated-" + call.ID,
+		"message":       message,
+		"thinking_mode": "off",
+	})
+	return ToolCallRequest{
+		ID:        call.ID,
+		Name:      "agent.run",
+		Arguments: newArgs,
+	}
+}
+
+func (s *runState) getLastToolName() string {
+	if len(s.out.ToolCalls) == 0 {
+		return ""
+	}
+	return s.out.ToolCalls[len(s.out.ToolCalls)-1].Request.Name
+}
+
+func (s *runState) getRecentErrorTypes() []string {
+	errors := make([]string, 0)
+	for i := len(s.toolResults) - 1; i >= 0 && len(errors) < 3; i-- {
+		if strings.TrimSpace(s.toolResults[i].Error) != "" {
+			errors = append(errors, s.toolResults[i].Error)
+		}
+	}
+	return errors
+}
+
+func (s *runState) getLastModelOutput() string {
+	return s.lastModelOutput
+}
+
+func (s *runState) setLastModelOutput(output string) {
+	s.lastModelOutput = output
+	s.recentIntents = append(s.recentIntents, output)
+	if len(s.recentIntents) > 3 {
+		s.recentIntents = s.recentIntents[1:]
+	}
 }

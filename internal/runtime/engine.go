@@ -327,10 +327,14 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		return RunResult{}, err
 	}
 
+	subAgentRunner := &subAgentRunner{engine: e}
+	adapter := &agentSubAgentRunnerAdapter{runner: subAgentRunner}
+
 	runner := agent.Runner{
 		Model:             model,
 		ToolExecutor:      &RegistryExecutor{Registry: registry, AgentID: agentID, Workspace: e.workspaceDir},
 		MaxToolIterations: agent.DefaultToolIterationCap,
+		SubAgentRunner:    adapter,
 	}
 
 	modelMessages := []agent.ChatMessage{{Role: "user", Content: runMessage}}
@@ -1659,6 +1663,30 @@ func (s *subAgentRunner) ExecuteSubAgent(ctx context.Context, input tools.AgentR
 		ToolCalls:    result.ToolCalls,
 		Provider:     result.Provider,
 		Model:        result.Model,
+	}, nil
+}
+
+// agentSubAgentRunnerAdapter adapts the runtime subAgentRunner to the agent.SubAgentRunner interface.
+type agentSubAgentRunnerAdapter struct {
+	runner tools.AgentRunner
+}
+
+func (a *agentSubAgentRunnerAdapter) ExecuteSubAgent(ctx context.Context, task agent.DecomposedTask) (agent.SubAgentOutput, error) {
+	result, err := a.runner.ExecuteSubAgent(ctx, tools.AgentRunInput{
+		CallerAgentID: "",
+		TargetAgentID: task.AgentID,
+		Message:       task.Message,
+		TaskID:        task.TaskID,
+		Source:        "subagent/delegation",
+		ThinkingMode:  "off",
+	})
+	if err != nil {
+		return agent.SubAgentOutput{Success: false, Error: err.Error()}, err
+	}
+	return agent.SubAgentOutput{
+		RunID:     result.RunID,
+		FinalText: result.FinalText,
+		Success:   true,
 	}, nil
 }
 

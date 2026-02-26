@@ -31,6 +31,7 @@ type Runner struct {
 	ToolExecutor      ToolExecutor
 	PromptAssembler   func([]ArtifactDoc, int) string
 	MaxToolIterations int
+	SubAgentRunner    SubAgentRunner
 }
 
 // Run executes: input -> assemble prompt -> model call -> optional tools -> finalize.
@@ -435,6 +436,153 @@ func toolResultErrorText(result ToolCallResult) string {
 		}
 	}
 	return ""
+}
+
+// Delegation helper functions
+
+func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks []DecomposedTask, input RunInput) error {
+	if r.SubAgentRunner == nil {
+		return errors.New("subagent runner not configured for auto-delegation")
+	}
+
+	ordered := topologicalSortTasks(tasks)
+
+	for _, task := range ordered {
+		// Check dependencies
+		for _, dep := range task.DependsOn {
+			if _, ok := s.completedSubtasks[dep]; !ok {
+				return fmt.Errorf("dependency not satisfied: %s", dep)
+			}
+		}
+
+		// Inject artifact context from dependencies
+		message := task.Message
+		if len(task.DependsOn) > 0 {
+			message = injectArtifacts(message, task.DependsOn, s.delegationArtifacts)
+		}
+
+		// Execute subtask with the updated message
+		modifiedTask := task
+		modifiedTask.Message = message
+
+		result, err := r.SubAgentRunner.ExecuteSubAgent(ctx, modifiedTask)
+
+		if err != nil {
+			s.completedSubtasks[task.TaskID] = "FAILED: " + err.Error()
+			continue
+		}
+
+		s.completedSubtasks[task.TaskID] = result.FinalText
+
+		// Store produced artifacts
+		for _, artifact := range task.Produces {
+			s.delegationArtifacts[artifact] = summarizeForArtifact(result.FinalText)
+		}
+	}
+
+	// Aggregate results into final output
+	s.out.FinalText = aggregateSubtaskResults(s.completedSubtasks)
+	return nil
+}
+
+func topologicalSortTasks(tasks []DecomposedTask) []DecomposedTask {
+	sorted := make([]DecomposedTask, len(tasks))
+	copy(sorted, tasks)
+
+	// Sort by priority first
+	for i := 0; i < len(sorted)-1; i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			if sorted[j].Priority < sorted[i].Priority {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+
+	// Then respect dependencies
+	for i := 0; i < len(sorted); i++ {
+		for _, dep := range sorted[i].DependsOn {
+			for j := i + 1; j < len(sorted); j++ {
+				if sorted[j].TaskID == dep {
+					tmp := sorted[j]
+					copy(sorted[j:], sorted[i:j])
+					sorted[i] = tmp
+					break
+				}
+			}
+		}
+	}
+
+	return sorted
+}
+
+func injectArtifacts(message string, deps []string, artifacts map[string]string) string {
+	var b strings.Builder
+	b.WriteString(message)
+	b.WriteString("\n\nContext from previous steps:\n")
+	for _, dep := range deps {
+		if artifact, ok := artifacts[dep]; ok {
+			b.WriteString(fmt.Sprintf("- %s: %s\n", dep, artifact))
+		}
+	}
+	return b.String()
+}
+
+func summarizeForArtifact(fullText string) string {
+	lines := strings.Split(fullText, "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+	if len(lines) <= 3 {
+		return fullText
+	}
+	return strings.Join(lines[:3], "\n") + "..."
+}
+
+func aggregateSubtaskResults(results map[string]string) string {
+	var b strings.Builder
+	b.WriteString("## Delegated Task Results\n\n")
+	for id, result := range results {
+		b.WriteString(fmt.Sprintf("### %s\n", id))
+		b.WriteString(result)
+		b.WriteString("\n\n")
+	}
+	return b.String()
+}
+
+func buildForcedDelegationDirective(trigger *DelegationTrigger) string {
+	subtaskJSON, _ := json.MarshalIndent(trigger.Subtasks, "", "  ")
+	return fmt.Sprintf(`# FORCED_DELEGATION_MODE
+
+CRITICAL: Task complexity has exceeded safe execution thresholds.
+You are in FORCED mode. Only these tools are allowed: %s
+
+TRIGGER REASON: %s
+
+REQUIRED ACTIONS:
+1. Use agent.list to discover available agents
+2. Execute each subtask below using agent.run
+
+SUBTASKS:
+%s
+
+Your output MUST be tool calls only. Plain text responses are not accepted.
+Each agent.run call must include the task_id from the subtask definition.`,
+		strings.Join(trigger.AllowedTools, ", "),
+		trigger.Reason,
+		string(subtaskJSON),
+	)
+}
+
+func buildSoftDelegationHint(trigger *DelegationTrigger) string {
+	return fmt.Sprintf(`# DELEGATION_RECOMMENDED
+
+Context signals suggest this task would benefit from delegation:
+Reason: %s
+
+Consider using agent.run to delegate subtasks to specialized agents.
+Each subagent gets a fresh context window, which can help with complex multi-step tasks.`,
+		trigger.Reason,
+	)
 }
 
 func uniqueToolCallID(rawID string, ordinal int, used map[string]struct{}) string {
