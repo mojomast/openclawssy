@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -446,16 +446,16 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 		return errors.New("subagent runner not configured for auto-delegation")
 	}
 
-	log.Printf("[delegation] Starting execution of %d subtasks for run", len(tasks))
+	slog.Debug("delegation: starting subtask execution", "task_count", len(tasks))
 
 	ordered, err := topologicalSortTasks(tasks)
 	if err != nil {
-		log.Printf("[delegation] ERROR: %v", err)
+		slog.Debug("delegation: topological sort failed", "error", err)
 		return err
 	}
 
 	for _, task := range ordered {
-		log.Printf("[delegation.subtask] Starting task_id=%s agent_id=%s priority=%d", task.TaskID, task.AgentID, task.Priority)
+		slog.Debug("delegation: starting subtask", "task_id", task.TaskID, "agent_id", task.AgentID, "priority", task.Priority)
 		// Check dependencies
 		for _, dep := range task.DependsOn {
 			if _, ok := s.completedSubtasks[dep]; !ok {
@@ -484,24 +484,24 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 		result, err := r.SubAgentRunner.ExecuteSubAgent(taskCtx, modifiedTask)
 
 		if err != nil {
-			log.Printf("[delegation.subtask] FAILED task_id=%s error=%v", task.TaskID, err)
+			slog.Debug("delegation: subtask failed", "task_id", task.TaskID, "error", err)
 			s.completedSubtasks[task.TaskID] = "FAILED: " + err.Error()
 			continue
 		}
 
-		log.Printf("[delegation.subtask] COMPLETED task_id=%s success=%t output_len=%d", task.TaskID, result.Success, len(result.FinalText))
+		slog.Debug("delegation: subtask completed", "task_id", task.TaskID, "success", result.Success, "output_len", len(result.FinalText))
 		s.completedSubtasks[task.TaskID] = result.FinalText
 
 		// Store produced artifacts
 		for _, artifact := range task.Produces {
 			s.delegationArtifacts[artifact] = summarizeForArtifact(result.FinalText)
-			log.Printf("[delegation.artifact] STORED key=%s task_id=%s", artifact, task.TaskID)
+			slog.Debug("delegation: artifact stored", "key", artifact, "task_id", task.TaskID)
 		}
 	}
 
 	// Aggregate results into final output
 	s.out.FinalText = aggregateSubtaskResults(s.completedSubtasks)
-	log.Printf("[delegation] COMPLETED all subtasks. Final output length: %d", len(s.out.FinalText))
+	slog.Debug("delegation: all subtasks completed", "output_len", len(s.out.FinalText))
 	return nil
 }
 

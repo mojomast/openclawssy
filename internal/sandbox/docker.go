@@ -37,7 +37,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -157,7 +157,7 @@ func warnDockerSocketExposure(configuredHost string) {
 		host = os.Getenv("DOCKER_HOST")
 	}
 	if host != "" && host != "unix:///var/run/docker.sock" {
-		log.Printf("warning: DOCKER_HOST is set to %q — ensure this is intentional", host)
+		slog.Warn("DOCKER_HOST is set to a non-standard value — ensure this is intentional", "docker_host", host)
 	}
 }
 

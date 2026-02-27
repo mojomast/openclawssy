@@ -29,6 +29,7 @@ import (
 	"openclawssy/internal/channels/telegram"
 	"openclawssy/internal/chatstore"
 	"openclawssy/internal/config"
+	"openclawssy/internal/logger"
 	"openclawssy/internal/runtime"
 	"openclawssy/internal/scheduler"
 	"openclawssy/internal/secrets"
@@ -43,6 +44,7 @@ const (
 )
 
 func main() {
+	logger.Init()
 	ctx := context.Background()
 	engine, err := runtime.NewEngine(".")
 	if err != nil {

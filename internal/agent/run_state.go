@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/url"
 	"regexp"
 	"sort"
@@ -566,7 +566,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 					if s.toolRewriteCount >= maxToolRewriteBudget {
 						// Execute pending subtasks directly if we have them
 						if len(s.pendingSubtasks) > 0 {
-							log.Printf("[delegation] Executing %d pending subtasks directly (rewrite budget exceeded)", len(s.pendingSubtasks))
+							slog.Debug("delegation: executing pending subtasks (rewrite budget exceeded)", "pending_count", len(s.pendingSubtasks))
 							if err := r.executeDelegatedTasks(ctx, s, s.pendingSubtasks, input); err != nil {
 								s.out.FinalText = fmt.Sprintf("Delegation failed: %v", err)
 								s.out.Thinking = s.latestThinking
@@ -579,7 +579,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 							s.pendingSubtasks = nil
 							s.delegationLocked = false
 							s.delegationMode = ""
-							log.Printf("[delegation] Subtasks completed, unlocking delegation mode")
+							slog.Debug("delegation: subtasks completed, unlocking delegation mode")
 							continue
 						}
 						// Budget exceeded - fail fast with clear message
@@ -592,7 +592,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 					}
 					// Execute pending subtasks directly instead of rewriting
 					if len(s.pendingSubtasks) > 0 {
-						log.Printf("[delegation] Executing %d pending subtasks directly (model tried forbidden tool: %s)", len(s.pendingSubtasks), call.Name)
+						slog.Debug("delegation: executing pending subtasks (forbidden tool attempted)", "pending_count", len(s.pendingSubtasks), "tool", call.Name)
 						if err := r.executeDelegatedTasks(ctx, s, s.pendingSubtasks, input); err != nil {
 							s.out.FinalText = fmt.Sprintf("Delegation failed: %v", err)
 							s.out.Thinking = s.latestThinking
@@ -605,7 +605,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 						s.pendingSubtasks = nil
 						s.delegationLocked = false
 						s.delegationMode = ""
-						log.Printf("[delegation] Subtasks completed, unlocking delegation mode")
+						slog.Debug("delegation: subtasks completed, unlocking delegation mode")
 						continue
 					}
 					// Rewrite to delegation call (fallback when no pending subtasks)
@@ -621,7 +621,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 				s.noProgressIterations++
 				// Execute pending subtasks directly if we have them
 				if s.noProgressIterations >= 1 && len(s.pendingSubtasks) > 0 {
-					log.Printf("[delegation] Executing %d pending subtasks directly (model didn't call tools)", len(s.pendingSubtasks))
+					slog.Debug("delegation: executing pending subtasks (model produced no tool calls)", "pending_count", len(s.pendingSubtasks))
 					if err := r.executeDelegatedTasks(ctx, s, s.pendingSubtasks, input); err != nil {
 						s.out.FinalText = fmt.Sprintf("Delegation failed: %v", err)
 						s.out.Thinking = s.latestThinking
@@ -634,7 +634,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 					s.pendingSubtasks = nil
 					s.delegationLocked = false
 					s.delegationMode = ""
-					log.Printf("[delegation] Subtasks completed, unlocking delegation mode")
+					slog.Debug("delegation: subtasks completed, unlocking delegation mode")
 					continue
 				}
 				// Re-prompt once with stronger directive
@@ -1113,10 +1113,9 @@ func (s *runState) computeDelegationTrigger(promptTokens, contextWindow int, sna
 	trigger := ShouldTriggerDelegation(score, s, snapshot)
 
 	if trigger != nil {
-		log.Printf("[delegation.trigger] level=%d mode=%s triggers=%v score=%+v",
-			score.Level, trigger.Mode, score.Triggers, score)
+		slog.Debug("delegation: trigger fired", "level", score.Level, "mode", trigger.Mode, "triggers", score.Triggers, "score", score)
 		trigger.Subtasks = DecomposeTask(s.out.Prompt, score, snapshot)
-		log.Printf("[delegation.decompose] generated %d subtasks", len(trigger.Subtasks))
+		slog.Debug("delegation: task decomposed", "subtask_count", len(trigger.Subtasks))
 	}
 
 	return trigger
@@ -1135,7 +1134,7 @@ func (s *runState) isToolAllowedInDelegationMode(toolName string) bool {
 }
 
 func (s *runState) rewriteToDelegation(call ToolCallRequest) ToolCallRequest {
-	log.Printf("[delegation.rewrite] from=%s to=agent.run rewrite_count=%d/%d", call.Name, s.toolRewriteCount+1, maxToolRewriteBudget)
+	slog.Debug("delegation: rewriting tool call to agent.run", "from_tool", call.Name, "rewrite_count", s.toolRewriteCount+1, "max_rewrites", maxToolRewriteBudget)
 	message := fmt.Sprintf("Execute %s with args: %s", call.Name, string(call.Arguments))
 	newArgs, _ := json.Marshal(map[string]any{
 		"agent_id":      "default",

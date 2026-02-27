@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -194,7 +194,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		BufferSize: cfg.Memory.EventBufferSize,
 	})
 	if memoryErr != nil {
-		log.Printf("runtime: memory disabled for run %s (%v)", runID, memoryErr)
+		slog.Warn("runtime: memory disabled for run", "run_id", runID, "error", memoryErr)
 	}
 	defer func() {
 		if memoryManager == nil {
@@ -202,7 +202,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		}
 		go func(runID string, manager *memory.Manager) {
 			if err := manager.Close(); err != nil {
-				log.Printf("runtime: memory close failure for run %s: %v", runID, err)
+				slog.Warn("runtime: memory close failure", "run_id", runID, "error", err)
 			}
 		}(runID, memoryManager)
 	}()
@@ -468,7 +468,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		}
 		if runErr == nil && sessionID != "" {
 			if err := e.appendRunConversation(sessionID, runID, out, appendToolsAfterRun); err != nil {
-				log.Printf("runtime: failed to append run conversation (run=%s session=%s): %v", runID, sessionID, err)
+				slog.Warn("runtime: failed to append run conversation", "run_id", runID, "session_id", sessionID, "error", err)
 			}
 		}
 	}
@@ -485,12 +485,12 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	if memoryManager != nil {
 		stats := memoryManager.Stats()
 		if stats.DroppedEvents > 0 {
-			log.Printf("runtime: dropped %d memory events in run %s", stats.DroppedEvents, runID)
+			slog.Warn("runtime: dropped memory events", "dropped_events", stats.DroppedEvents, "run_id", runID)
 		}
 	}
 	if runErr != nil && sessionID != "" {
 		if err := e.appendRunFailureConversation(sessionID, runID, out, appendToolsAfterRun, runErr); err != nil {
-			log.Printf("runtime: failed to append run failure conversation (run=%s session=%s): %v", runID, sessionID, err)
+			slog.Warn("runtime: failed to append run failure conversation", "run_id", runID, "session_id", sessionID, "error", err)
 		}
 	}
 
@@ -671,7 +671,7 @@ func (e *Engine) acquireRunSlot(limit int) (func(), error) {
 	case slots <- struct{}{}:
 		return func() { <-slots }, nil
 	default:
-		log.Printf("runtime: rejected run due to max concurrent runs limit (%d)", activeCap)
+		slog.Warn("runtime: rejected run due to max concurrent runs limit", "limit", activeCap)
 		return nil, &RunLimitError{Limit: activeCap}
 	}
 }
@@ -1791,7 +1791,7 @@ func (e *Engine) memoryPromptExtender(cfg config.Config, agentID, runID string) 
 	return func(ctx context.Context, basePrompt string, messages []agent.ChatMessage, message string, _ []agent.ToolCallResult) string {
 		block, err := e.buildMemoryRecallBlock(ctx, cfg, agentID, message, messages)
 		if err != nil {
-			log.Printf("runtime: memory recall unavailable (run=%s): %v", runID, err)
+			slog.Warn("runtime: memory recall unavailable", "run_id", runID, "error", err)
 			return basePrompt
 		}
 		if strings.TrimSpace(block) == "" {
@@ -1966,7 +1966,7 @@ func (e *Engine) maybeTriggerProactiveMemoryHook(ctx context.Context, cfg config
 	}
 	sessionCtx, ok := e.proactiveContextFromSession(sessionID)
 	if !ok {
-		log.Printf("runtime: skip proactive hook (missing channel/user/session context) run=%s tool=%s", runID, rec.Request.Name)
+		slog.Debug("runtime: skip proactive hook (missing channel/user/session context)", "run_id", runID, "tool", rec.Request.Name)
 		return
 	}
 	toAgentID := strings.TrimSpace(cfg.Chat.DefaultAgentID)
@@ -1984,7 +1984,7 @@ func (e *Engine) maybeTriggerProactiveMemoryHook(ctx context.Context, cfg config
 		"message":     msg,
 	})
 	if err != nil {
-		log.Printf("runtime: proactive hook delivery failed run=%s tool=%s: %v", runID, rec.Request.Name, err)
+		slog.Warn("runtime: proactive hook delivery failed", "run_id", runID, "tool", rec.Request.Name, "error", err)
 	}
 }
 
@@ -2130,7 +2130,7 @@ func ingestRunMemoryEvents(ctx context.Context, manager *memory.Manager, in runM
 
 	ingest := func(event memory.Event) {
 		if err := manager.IngestEvent(ctx, event); err != nil && !errors.Is(err, memory.ErrQueueFull) {
-			log.Printf("runtime: memory ingest failure (run=%s type=%s): %v", in.RunID, event.Type, err)
+			slog.Warn("runtime: memory ingest failure", "run_id", in.RunID, "event_type", event.Type, "error", err)
 		}
 	}
 
