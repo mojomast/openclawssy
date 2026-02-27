@@ -673,7 +673,12 @@ export const sandboxPage = {
       sandboxState.sandboxApi = createSandboxApi(apiClient);
     }
 
-    renderSandboxPage();
+    try {
+      renderSandboxPage();
+    } catch (err) {
+      container.innerHTML = `<pre style="color:red;padding:1rem">Sandbox render error: ${err && err.message ? err.message : String(err)}\n${err && err.stack ? err.stack : ""}</pre>`;
+      return;
+    }
 
     if (firstLoad || !sandboxState.status) {
       // Load all data in parallel on first render
