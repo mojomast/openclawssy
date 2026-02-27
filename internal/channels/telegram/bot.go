@@ -3,7 +3,6 @@ package telegram
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -116,7 +115,8 @@ func (b *Bot) onUpdate(update tgbotapi.Update) {
 
 	userID := strconv.FormatInt(m.From.ID, 10)
 	chatID := strconv.FormatInt(m.Chat.ID, 10)
-	if b.allow != nil && !b.allow.MessageAllowed(userID, chatID) {
+	if b.allow != nil && !b.allow.MessageAllowed(userID, chatID) &&
+		!b.allow.MessageAllowed(m.From.UserName, chatID) {
 		return
 	}
 	if b.limiter != nil {
@@ -147,14 +147,12 @@ func (b *Bot) onUpdate(update tgbotapi.Update) {
 		return
 	}
 
-	if strings.TrimSpace(res.Response) != "" {
-		b.sendChunked(m.Chat.ID, m.MessageID, res.Response)
-	}
 	if strings.TrimSpace(res.ID) == "" {
+		// Synchronous response with no run ID — send it directly.
+		if strings.TrimSpace(res.Response) != "" {
+			b.sendChunked(m.Chat.ID, m.MessageID, res.Response)
+		}
 		return
-	}
-	if strings.TrimSpace(res.Response) == "" {
-		b.sendMessage(m.Chat.ID, m.MessageID, "queued run `"+res.ID+"`")
 	}
 	if b.runStatus == nil {
 		return
@@ -183,7 +181,27 @@ func (b *Bot) awaitAndPostResult(chatID int64, replyTo int, runID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultPollTimeout)
 	defer cancel()
 
+	// Send typing indicator every 4s while waiting for the run to complete.
+	// Telegram's typing indicator expires after ~5s so we refresh slightly before that.
+	stopTyping := make(chan struct{})
+	go func() {
+		b.sendTyping(chatID)
+		ticker := time.NewTicker(4 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				b.sendTyping(chatID)
+			case <-stopTyping:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	run, err := waitForTerminalRun(ctx, runID, b.runStatus, defaultPollInterval)
+	close(stopTyping)
 	if err != nil {
 		b.sendMessage(chatID, replyTo, "failed to fetch run `"+runID+"`: "+err.Error())
 		return
@@ -208,9 +226,6 @@ func (b *Bot) awaitAndPostResult(chatID int64, replyTo int, runID string) {
 	final := strings.TrimSpace(run.Output)
 	if final == "" {
 		final = "run completed without assistant output; check run trace/tool activity for details"
-	}
-	if strings.TrimSpace(run.ArtifactPath) != "" {
-		final = fmt.Sprintf("%s\n\nartifact: `%s`", final, run.ArtifactPath)
 	}
 	b.sendChunked(chatID, replyTo, final)
 }
@@ -250,4 +265,11 @@ func (b *Bot) sendMessage(chatID int64, replyTo int, text string) {
 		msg.ReplyToMessageID = replyTo
 	}
 	_, _ = b.api.Send(msg)
+}
+
+func (b *Bot) sendTyping(chatID int64) {
+	if b == nil || b.api == nil {
+		return
+	}
+	_, _ = b.api.Send(tgbotapi.NewChatAction(chatID, tgbotapi.ChatTyping))
 }

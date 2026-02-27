@@ -475,9 +475,6 @@ func (c *Config) ApplyDefaults() {
 	if c.Telegram.DefaultAgentID == "" {
 		c.Telegram.DefaultAgentID = d.Telegram.DefaultAgentID
 	}
-	if c.Telegram.CommandPrefix == "" {
-		c.Telegram.CommandPrefix = d.Telegram.CommandPrefix
-	}
 	if c.Telegram.RateLimitPerMin == 0 {
 		c.Telegram.RateLimitPerMin = d.Telegram.RateLimitPerMin
 	}

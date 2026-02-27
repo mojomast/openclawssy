@@ -3,7 +3,7 @@ import { captureFocusSnapshot, restoreFocusSnapshot } from "../ui/focus_restore.
 const CATEGORY_DEFS = [
   { key: "general", title: "General", summary: "Server, workspace, and output defaults." },
   { key: "model", title: "Model Provider", summary: "Model selection and provider endpoint settings." },
-  { key: "chat", title: "Chat/Discord", summary: "Runtime chat and Discord connector controls." },
+  { key: "chat", title: "Chat/Discord/Telegram", summary: "Runtime chat, Discord, and Telegram connector controls." },
   { key: "agents", title: "Agents", summary: "Per-agent activation, model overrides, and self-improvement controls." },
   { key: "memory", title: "Memory", summary: "Event persistence, working memory limits, and embeddings." },
   { key: "sandbox", title: "Sandbox/Shell", summary: "Sandbox and shell execution constraints." },
@@ -181,6 +181,16 @@ function normalizeConfigShape(input) {
   }
   if (!Array.isArray(cfg.discord.allow_users)) {
     cfg.discord.allow_users = [];
+  }
+
+  if (!cfg.telegram || typeof cfg.telegram !== "object") {
+    cfg.telegram = {};
+  }
+  if (!Array.isArray(cfg.telegram.allow_users)) {
+    cfg.telegram.allow_users = [];
+  }
+  if (!Array.isArray(cfg.telegram.allow_chats)) {
+    cfg.telegram.allow_chats = [];
   }
 
   if (!cfg.providers || typeof cfg.providers !== "object") {
@@ -425,6 +435,11 @@ function validateDraftConfig(draft) {
     setFieldError("discord.rate_limit_per_min", "Discord rate limit must be an integer >= 1.");
   }
 
+  const telegramRate = Number(draft?.telegram?.rate_limit_per_min);
+  if (draft?.telegram?.rate_limit_per_min !== undefined && (!Number.isInteger(telegramRate) || telegramRate < 1)) {
+    setFieldError("telegram.rate_limit_per_min", "Telegram rate limit must be an integer >= 1.");
+  }
+
   if (provider === "generic" && !asTrimmedString(draft?.providers?.generic?.base_url)) {
     setFieldError("providers.generic.base_url", "Generic provider base URL is required when model.provider is generic.");
   }
@@ -539,7 +554,7 @@ function getCategorySnapshot(categoryKey, draft) {
     case "model":
       return { model: draft.model, providers: draft.providers };
     case "chat":
-      return { chat: draft.chat, discord: draft.discord };
+      return { chat: draft.chat, discord: draft.discord, telegram: draft.telegram };
     case "agents":
       return { agents: draft.agents };
     case "memory":
@@ -554,6 +569,7 @@ function getCategorySnapshot(categoryKey, draft) {
       return {
         chat_enabled: draft.chat?.enabled,
         discord_enabled: draft.discord?.enabled,
+        telegram_enabled: draft.telegram?.enabled,
         network_enabled: draft.network?.enabled,
         sandbox_active: draft.sandbox?.active,
         shell_exec: draft.shell?.enable_exec,
@@ -984,6 +1000,72 @@ function buildChatCategory(panel, fieldErrors) {
     helpText: "Optional allowlist of user ids.",
     fieldErrors,
   });
+
+  const telegramHeader = document.createElement("h4");
+  telegramHeader.className = "settings-subheading";
+  telegramHeader.textContent = "Telegram";
+  panel.append(telegramHeader);
+
+  appendCheckboxField({
+    parent: panel,
+    query,
+    title: "Telegram enabled",
+    path: "telegram.enabled",
+    helpText: "Enables Telegram bot connector.",
+    fieldErrors,
+  });
+  appendTextField({
+    parent: panel,
+    query,
+    title: "Telegram default agent",
+    path: "telegram.default_agent_id",
+    helpText: "Agent used by Telegram messages.",
+    placeholder: "default",
+    fieldErrors,
+  });
+  appendTextField({
+    parent: panel,
+    query,
+    title: "Telegram token env",
+    path: "telegram.token_env",
+    helpText: "Environment variable containing Telegram bot token.",
+    placeholder: "TELEGRAM_BOT_TOKEN",
+    fieldErrors,
+  });
+  appendTextField({
+    parent: panel,
+    query,
+    title: "Telegram command prefix",
+    path: "telegram.command_prefix",
+    helpText: "Prefix used for Telegram bot commands.",
+    placeholder: "/ask",
+    fieldErrors,
+  });
+  appendNumberField({
+    parent: panel,
+    query,
+    title: "Telegram rate limit per minute",
+    path: "telegram.rate_limit_per_min",
+    helpText: "Per-user Telegram command budget.",
+    fieldErrors,
+  });
+  appendListField({
+    parent: panel,
+    query,
+    title: "Allowed Telegram users",
+    path: "telegram.allow_users",
+    helpText: "Optional allowlist of Telegram usernames.",
+    placeholder: "alice\nbob",
+    fieldErrors,
+  });
+  appendListField({
+    parent: panel,
+    query,
+    title: "Allowed Telegram chats",
+    path: "telegram.allow_chats",
+    helpText: "Optional allowlist of Telegram chat ids.",
+    fieldErrors,
+  });
 }
 
 function buildSandboxCategory(panel, fieldErrors) {
@@ -1387,6 +1469,11 @@ function buildCapabilitiesCategory(panel) {
       name: "Discord Connector",
       status: settingsState.draftConfig?.discord?.enabled ? "enabled" : "disabled",
       detail: "Controlled by discord.enabled",
+    },
+    {
+      name: "Telegram Connector",
+      status: settingsState.draftConfig?.telegram?.enabled ? "enabled" : "disabled",
+      detail: "Controlled by telegram.enabled",
     },
     {
       name: "Network Tools",

@@ -41,15 +41,9 @@ func ParseThinkingOverride(content string) (string, string, error) {
 	if clean == "" {
 		return "", "", errors.New("message is required")
 	}
-	lower := strings.ToLower(clean)
-	if strings.HasPrefix(clean, "/") && !strings.HasPrefix(lower, "/ask") {
+	// Pass through slash commands (e.g. /start, /help) without thinking-mode parsing.
+	if strings.HasPrefix(clean, "/") {
 		return clean, "", nil
-	}
-	if strings.HasPrefix(lower, "/ask") {
-		clean = strings.TrimSpace(strings.TrimSpace(clean[4:]))
-	}
-	if clean == "" {
-		return "", "", errors.New("message is required")
 	}
 	parts := strings.Fields(clean)
 	if len(parts) == 0 {

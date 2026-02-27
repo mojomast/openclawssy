@@ -29,6 +29,14 @@ const CONVENTIONS = [
     key: "discord/bot_token",
     note: "Legacy slash-path naming pattern also supported by existing admin flows.",
   },
+  {
+    key: "TELEGRAM_BOT_TOKEN",
+    note: "Env-style Telegram bot token key; keep token private and rotate regularly.",
+  },
+  {
+    key: "telegram/bot_token",
+    note: "Slash-path Telegram bot token key used by the encrypted secret store.",
+  },
 ];
 
 const secretsState = {
