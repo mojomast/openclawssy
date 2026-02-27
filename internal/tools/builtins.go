@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -691,13 +692,13 @@ func shellExec(ctx context.Context, req Request) (map[string]any, error) {
 	}
 	invocation := strings.TrimSpace(strings.Join(append([]string{command}, args...), " "))
 	allowed := false
-	for _, prefix := range req.ShellAllowedCommands {
-		if commandMatchesPrefix(invocation, prefix) {
+	for _, pattern := range req.ShellAllowedCommands {
+		if matched, ok := commandMatchesPattern(invocation, pattern); ok && matched {
 			allowed = true
-			break
 		}
 	}
 	if !allowed {
+		slog.Debug("shell.exec: command denied by allowlist", "agent_id", req.AgentID, "invocation", invocation)
 		return nil, &ToolError{Code: ErrCodePolicyDenied, Tool: req.Tool, Message: "command is not allowed"}
 	}
 
@@ -710,6 +711,8 @@ func shellExec(ctx context.Context, req Request) (map[string]any, error) {
 		execCtx, cancel = context.WithTimeout(ctx, time.Duration(timeoutMS)*time.Millisecond)
 		defer cancel()
 	}
+
+	slog.Debug("shell.exec: executing", "agent_id", req.AgentID, "invocation", invocation, "timeout_ms", timeoutMS)
 
 	stdout, stderr, exitCode, execErr := req.Shell.Exec(execCtx, command, args)
 	fallbackUsed := ""
@@ -725,15 +728,20 @@ func shellExec(ctx context.Context, req Request) (map[string]any, error) {
 	}
 	res := map[string]any{"stdout": stdout, "stderr": stderr, "exit_code": exitCode, "captured": true}
 	if fallbackUsed != "" {
+		slog.Debug("shell.exec: used shell fallback", "agent_id", req.AgentID, "invocation", invocation, "fallback", fallbackUsed)
 		res["shell_fallback"] = fallbackUsed
 	}
 	if execErr != nil {
+		slog.Debug("shell.exec: exec error", "agent_id", req.AgentID, "invocation", invocation, "error", execErr)
 		res["error"] = execErr.Error()
 	}
 	if strings.TrimSpace(stdout) == "" && strings.TrimSpace(stderr) == "" && exitCode == 0 && !allowEmptyOutput {
+		slog.Debug("shell.exec: output capture bug (empty stdout/stderr on exit 0)", "agent_id", req.AgentID, "invocation", invocation)
 		res["error"] = "output_capture_bug: command exited 0 with empty stdout/stderr"
 		res["error_code"] = "output_capture_bug"
 	}
+
+	slog.Debug("shell.exec: done", "agent_id", req.AgentID, "invocation", invocation, "exit_code", exitCode)
 	if timeoutMS > 0 {
 		res["timeout_ms"] = timeoutMS
 	}
@@ -745,19 +753,22 @@ func shellExec(ctx context.Context, req Request) (map[string]any, error) {
 	return res, nil
 }
 
-func commandMatchesPrefix(invocation, prefix string) bool {
+// commandMatchesPattern reports whether invocation matches the given pattern
+// using OpenCode-style wildcard matching: * matches zero or more of any
+// character, ? matches exactly one character, all other characters are literal.
+// The second return value is false only when the pattern itself is malformed.
+func commandMatchesPattern(invocation, pattern string) (matched bool, ok bool) {
 	invocation = strings.TrimSpace(invocation)
-	prefix = strings.TrimSpace(prefix)
-	if invocation == "" || prefix == "" {
-		return false
+	pattern = strings.TrimSpace(pattern)
+	if invocation == "" || pattern == "" {
+		return false, true
 	}
-	if prefix == "*" {
-		return true
+	m, err := filepath.Match(pattern, invocation)
+	if err != nil {
+		// malformed pattern (e.g. unclosed bracket) — treat as no match
+		return false, false
 	}
-	if invocation == prefix {
-		return true
-	}
-	return strings.HasPrefix(invocation, prefix+" ")
+	return m, true
 }
 
 func isExecutableNotFound(err error) bool {

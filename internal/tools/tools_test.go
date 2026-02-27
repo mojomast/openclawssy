@@ -381,7 +381,7 @@ func TestCoreFsTools(t *testing.T) {
 func TestShellExecTool(t *testing.T) {
 	reg := NewRegistry(fakePolicy{}, nil)
 	reg.SetShellExecutor(fakeShell{})
-	reg.SetShellAllowedCommands([]string{"echo"})
+	reg.SetShellAllowedCommands([]string{"echo *"})
 	if err := RegisterCore(reg); err != nil {
 		t.Fatalf("register core: %v", err)
 	}
@@ -401,7 +401,7 @@ func TestShellExecFallsBackToShWhenBashUnavailable(t *testing.T) {
 	reg := NewRegistry(fakePolicy{}, nil)
 	shell := &fallbackShell{}
 	reg.SetShellExecutor(shell)
-	reg.SetShellAllowedCommands([]string{"bash"})
+	reg.SetShellAllowedCommands([]string{"bash *"})
 	if err := RegisterCore(reg); err != nil {
 		t.Fatalf("register core: %v", err)
 	}
@@ -427,7 +427,7 @@ func TestShellExecFallsBackToShWhenBashBinaryMissing(t *testing.T) {
 	reg := NewRegistry(fakePolicy{}, nil)
 	shell := &shOnlyFallbackShell{}
 	reg.SetShellExecutor(shell)
-	reg.SetShellAllowedCommands([]string{"bash"})
+	reg.SetShellAllowedCommands([]string{"bash *"})
 	if err := RegisterCore(reg); err != nil {
 		t.Fatalf("register core: %v", err)
 	}
@@ -452,7 +452,7 @@ func TestShellExecFallsBackToShWhenBashBinaryMissing(t *testing.T) {
 func TestShellExecTreatsExitStatusAsResultNotToolFailure(t *testing.T) {
 	reg := NewRegistry(fakePolicy{}, nil)
 	reg.SetShellExecutor(exitStatusShell{})
-	reg.SetShellAllowedCommands([]string{"bash"})
+	reg.SetShellAllowedCommands([]string{"bash *"})
 	if err := RegisterCore(reg); err != nil {
 		t.Fatalf("register core: %v", err)
 	}
@@ -475,7 +475,7 @@ func TestShellExecTreatsExitStatusAsResultNotToolFailure(t *testing.T) {
 func TestShellExecDetectsSilentSuccessAsOutputCaptureBug(t *testing.T) {
 	reg := NewRegistry(fakePolicy{}, nil)
 	reg.SetShellExecutor(silentSuccessShell{})
-	reg.SetShellAllowedCommands([]string{"bash"})
+	reg.SetShellAllowedCommands([]string{"bash *"})
 	if err := RegisterCore(reg); err != nil {
 		t.Fatalf("register core: %v", err)
 	}
@@ -494,7 +494,7 @@ func TestShellExecDetectsSilentSuccessAsOutputCaptureBug(t *testing.T) {
 func TestShellExecPreservesCapturedOutputOnExecFailure(t *testing.T) {
 	reg := NewRegistry(fakePolicy{}, nil)
 	reg.SetShellExecutor(failedExecShell{})
-	reg.SetShellAllowedCommands([]string{"bash"})
+	reg.SetShellAllowedCommands([]string{"bash *"})
 	if err := RegisterCore(reg); err != nil {
 		t.Fatalf("register core: %v", err)
 	}
