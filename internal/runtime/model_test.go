@@ -18,10 +18,12 @@ import (
 )
 
 type requestCapture struct {
-	Model     string `json:"model"`
-	MaxTokens int    `json:"max_tokens"`
-	Stream    bool   `json:"stream,omitempty"`
-	Messages  []struct {
+	Model      string `json:"model"`
+	MaxTokens  int    `json:"max_tokens"`
+	Stream     bool   `json:"stream,omitempty"`
+	Tools      []any  `json:"tools,omitempty"`
+	ToolChoice any    `json:"tool_choice,omitempty"`
+	Messages   []struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
 	} `json:"messages"`
@@ -1624,6 +1626,93 @@ func TestProviderModelStreamingParsesDeltasAndReturnsFinalText(t *testing.T) {
 	}
 	if strings.Join(deltas, "") != "Hello world!" {
 		t.Fatalf("unexpected streamed deltas: %#v", deltas)
+	}
+}
+
+func TestProviderModelStreamingParsesNativeToolCalls(t *testing.T) {
+	var captured requestCapture
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"fs.list\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n\n")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\".\\\"}\"}}]}}]}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	model := testProviderModel(t, server.URL)
+	deltaCalls := 0
+	resp, err := model.Generate(context.Background(), agent.ModelRequest{
+		Prompt:       "system",
+		Message:      "list files",
+		AllowedTools: []string{"fs.list"},
+		ToolSchemas: []agent.ToolSchema{{
+			Name:        "fs.list",
+			Description: "List files",
+			Parameters: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"path": map[string]any{"type": "string"}},
+			},
+		}},
+		OnTextDelta: func(_ string) error {
+			deltaCalls++
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("generate failed: %v", err)
+	}
+	if !captured.Stream {
+		t.Fatal("expected streaming request payload to set stream=true")
+	}
+	if len(captured.Tools) != 1 {
+		t.Fatalf("expected tools array in streaming request, got %d", len(captured.Tools))
+	}
+	if deltaCalls != 0 {
+		t.Fatalf("expected no text deltas for pure tool-call stream, got %d", deltaCalls)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("expected one tool call, got %d", len(resp.ToolCalls))
+	}
+	if resp.ToolCalls[0].Name != "fs.list" {
+		t.Fatalf("expected fs.list tool, got %q", resp.ToolCalls[0].Name)
+	}
+	args := decodeToolArgs(t, resp.ToolCalls[0].Arguments)
+	if args["path"] != "." {
+		t.Fatalf("expected path='.', got %#v", args["path"])
+	}
+}
+
+func TestProviderModelStreamingToolCallsWithoutIndexDoNotCollide(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"fs.list\",\"arguments\":\"{\\\"path\\\":\\\".\\\"}\"}}]}}]}\n\n")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_2\",\"type\":\"function\",\"function\":{\"name\":\"fs.read\",\"arguments\":\"{\\\"path\\\":\\\"README.md\\\"}\"}}]}}]}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	model := testProviderModel(t, server.URL)
+	resp, err := model.Generate(context.Background(), agent.ModelRequest{
+		Prompt:       "system",
+		Message:      "inspect files",
+		AllowedTools: []string{"fs.list", "fs.read"},
+		ToolSchemas: []agent.ToolSchema{
+			{Name: "fs.list", Parameters: map[string]any{"type": "object"}},
+			{Name: "fs.read", Parameters: map[string]any{"type": "object"}},
+		},
+		OnTextDelta: func(_ string) error { return nil },
+	})
+	if err != nil {
+		t.Fatalf("generate failed: %v", err)
+	}
+	if len(resp.ToolCalls) != 2 {
+		t.Fatalf("expected two tool calls, got %d", len(resp.ToolCalls))
+	}
+	if resp.ToolCalls[0].Name != "fs.list" || resp.ToolCalls[1].Name != "fs.read" {
+		t.Fatalf("unexpected parsed tools: %+v", resp.ToolCalls)
 	}
 }
 

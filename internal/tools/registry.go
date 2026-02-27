@@ -36,7 +36,7 @@ const (
 )
 
 type ShellExecutor interface {
-	Exec(ctx context.Context, command string, args []string) (stdout string, stderr string, exitCode int, err error)
+	Exec(ctx context.Context, command string, args []string, workDir string) (stdout string, stderr string, exitCode int, err error)
 }
 
 type Handler func(ctx context.Context, req Request) (map[string]any, error)

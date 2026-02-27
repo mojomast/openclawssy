@@ -14,8 +14,7 @@ func TestShellExecDefaultDenyAndAllowlist(t *testing.T) {
 	}
 
 	_, err := reg.Execute(context.Background(), "agent", "shell.exec", ".", map[string]any{
-		"command": "echo",
-		"args":    []any{"should be denied"},
+		"command": "echo should be denied",
 	})
 	if err == nil {
 		t.Fatal("expected policy denied error for empty allowlist")
@@ -27,8 +26,7 @@ func TestShellExecDefaultDenyAndAllowlist(t *testing.T) {
 	// "*" glob matches any invocation
 	reg.SetShellAllowedCommands([]string{"*"})
 	if _, err := reg.Execute(context.Background(), "agent", "shell.exec", ".", map[string]any{
-		"command": "echo",
-		"args":    []any{"allowed by wildcard"},
+		"command": "echo allowed by wildcard",
 	}); err != nil {
 		t.Fatalf("expected wildcard allowlist to allow command, got %v", err)
 	}
@@ -36,30 +34,26 @@ func TestShellExecDefaultDenyAndAllowlist(t *testing.T) {
 	// "ls *" matches ls with any arguments
 	reg.SetShellAllowedCommands([]string{"ls *"})
 	if _, err := reg.Execute(context.Background(), "agent", "shell.exec", ".", map[string]any{
-		"command": "ls",
-		"args":    []any{"-la"},
+		"command": "ls -la",
 	}); err != nil {
 		t.Fatalf("expected 'ls *' to allow 'ls -la', got %v", err)
 	}
 	if _, err := reg.Execute(context.Background(), "agent", "shell.exec", ".", map[string]any{
-		"command": "echo",
-		"args":    []any{"still denied"},
+		"command": "echo still denied",
 	}); err == nil {
 		t.Fatal("expected echo to be denied when only 'ls *' is allowlisted")
 	}
 
-	// exact match without wildcards — use an argument so fakeShell doesn't panic
+	// exact match without wildcards
 	reg.SetShellAllowedCommands([]string{"ls ."})
 	if _, err := reg.Execute(context.Background(), "agent", "shell.exec", ".", map[string]any{
-		"command": "ls",
-		"args":    []any{"."},
+		"command": "ls .",
 	}); err != nil {
 		t.Fatalf("expected exact 'ls .' pattern to match 'ls .', got %v", err)
 	}
 	// bare "ls ." pattern must not match "ls -la" (no wildcard)
 	if _, err := reg.Execute(context.Background(), "agent", "shell.exec", ".", map[string]any{
-		"command": "ls",
-		"args":    []any{"-la"},
+		"command": "ls -la",
 	}); err == nil {
 		t.Fatal("expected 'ls .' (no wildcard) to NOT match 'ls -la'")
 	}
@@ -67,14 +61,12 @@ func TestShellExecDefaultDenyAndAllowlist(t *testing.T) {
 	// "?" matches exactly one character
 	reg.SetShellAllowedCommands([]string{"l? ."})
 	if _, err := reg.Execute(context.Background(), "agent", "shell.exec", ".", map[string]any{
-		"command": "ls",
-		"args":    []any{"."},
+		"command": "ls .",
 	}); err != nil {
 		t.Fatalf("expected 'l? .' to match 'ls .', got %v", err)
 	}
 	if _, err := reg.Execute(context.Background(), "agent", "shell.exec", ".", map[string]any{
-		"command": "echo",
-		"args":    []any{"hello"},
+		"command": "echo hello",
 	}); err == nil {
 		t.Fatal("expected 'l? .' to NOT match 'echo hello'")
 	}
@@ -83,15 +75,13 @@ func TestShellExecDefaultDenyAndAllowlist(t *testing.T) {
 	reg.SetShellAllowedCommands([]string{"git *", "git commit *"})
 	// "git status" matches "git *" → allowed
 	if _, err := reg.Execute(context.Background(), "agent", "shell.exec", ".", map[string]any{
-		"command": "git",
-		"args":    []any{"status"},
+		"command": "git status",
 	}); err != nil {
 		t.Fatalf("expected 'git status' to be allowed, got %v", err)
 	}
 	// "git commit -m msg" matches both "git *" (allow) and "git commit *" (allow) — still allowed
 	if _, err := reg.Execute(context.Background(), "agent", "shell.exec", ".", map[string]any{
-		"command": "git",
-		"args":    []any{"commit", "-m", "msg"},
+		"command": "git commit -m msg",
 	}); err != nil {
 		t.Fatalf("expected 'git commit' to be allowed, got %v", err)
 	}
@@ -116,6 +106,10 @@ func TestCommandMatchesPattern(t *testing.T) {
 		{"any command", "*", true},
 		{"", "git *", false},
 		{"git status", "", false},
+		// URLs and paths contain slashes — * must match across them.
+		{"bash -lc curl -I https://1.1.1.1 --connect-timeout 5", "*", true},
+		{"bash -lc curl -I https://1.1.1.1 --connect-timeout 5", "bash *", true},
+		{"bash -lc ping -c 4 1.1.1.1", "bash *", true},
 	}
 	for _, tc := range cases {
 		got, ok := commandMatchesPattern(tc.invocation, tc.pattern)

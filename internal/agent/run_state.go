@@ -437,6 +437,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 				SystemPrompt:  systemPrompt,
 				Messages:      append([]ChatMessage(nil), s.messages...),
 				AllowedTools:  append([]string(nil), input.AllowedTools...),
+				ToolSchemas:   append([]ToolSchema(nil), input.ToolSchemas...),
 				ToolTimeoutMS: input.ToolTimeoutMS,
 				Prompt:        systemPrompt,
 				Message:       input.Message,

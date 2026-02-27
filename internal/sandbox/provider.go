@@ -36,8 +36,9 @@ type ExecOptions struct {
 }
 
 type Command struct {
-	Name string
-	Args []string
+	Name    string
+	Args    []string
+	WorkDir string // optional; overrides the provider default working directory
 }
 
 type Result struct {
@@ -232,7 +233,11 @@ func (p *LocalProvider) Exec(cmd Command) (Result, error) {
 	}
 
 	proc := exec.CommandContext(runCtx, cmd.Name, cmd.Args...)
-	proc.Dir = workspace
+	if cmd.WorkDir != "" {
+		proc.Dir = cmd.WorkDir
+	} else {
+		proc.Dir = workspace
+	}
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

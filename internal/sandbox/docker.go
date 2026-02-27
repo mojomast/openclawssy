@@ -378,7 +378,7 @@ func (p *DockerProvider) Exec(cmd Command) (Result, error) {
 		return Result{}, errors.New("sandbox: command name is required")
 	}
 
-	stdout, stderr, exitCode, err := p.execInContainer(runCtx, containerName, "", append([]string{cmd.Name}, cmd.Args...))
+	stdout, stderr, exitCode, err := p.execInContainer(runCtx, containerName, "", cmd.WorkDir, append([]string{cmd.Name}, cmd.Args...))
 	result := Result{Stdout: stdout, Stderr: stderr, ExitCode: exitCode}
 	if err != nil {
 		return result, err
@@ -742,7 +742,7 @@ func (p *DockerProvider) runInContainerWithResult(ctx context.Context, argv ...s
 	p.mu.RLock()
 	containerName := p.containerName
 	p.mu.RUnlock()
-	return p.execInContainer(ctx, containerName, "", argv)
+	return p.execInContainer(ctx, containerName, "", "", argv)
 }
 
 func (p *DockerProvider) runAsRoot(ctx context.Context, cmd string, args ...string) error {
@@ -757,10 +757,10 @@ func (p *DockerProvider) execAsRoot(ctx context.Context, argv ...string) (string
 	p.mu.RLock()
 	containerName := p.containerName
 	p.mu.RUnlock()
-	return p.execInContainer(ctx, containerName, "0", argv)
+	return p.execInContainer(ctx, containerName, "0", "", argv)
 }
 
-func (p *DockerProvider) execInContainer(ctx context.Context, containerName, user string, argv []string) (string, string, int, error) {
+func (p *DockerProvider) execInContainer(ctx context.Context, containerName, user, workDir string, argv []string) (string, string, int, error) {
 	cli, err := p.dockerClient()
 	if err != nil {
 		return "", "", -1, err
@@ -771,6 +771,7 @@ func (p *DockerProvider) execInContainer(ctx context.Context, containerName, use
 		AttachStdout: true,
 		AttachStderr: true,
 		Cmd:          argv,
+		WorkingDir:   workDir,
 	})
 	if err != nil {
 		return "", "", -1, err

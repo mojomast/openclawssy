@@ -42,6 +42,25 @@ type completionUsage struct {
 	} `json:"prompt_tokens_details"`
 }
 
+type providerToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+type providerStreamingToolCallDelta struct {
+	Index    *int   `json:"index"`
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
 const (
 	defaultProviderTimeout = 90 * time.Second
 	providerMaxAttempts    = 3
@@ -239,6 +258,10 @@ func (m *ProviderModel) Generate(ctx context.Context, req agent.ModelRequest) (a
 		"messages":   chatMessages,
 		"max_tokens": m.responseMaxTokens,
 	}
+	if len(req.ToolSchemas) > 0 {
+		body["tools"] = buildProviderTools(req.ToolSchemas)
+		body["tool_choice"] = "auto"
+	}
 	if req.OnTextDelta != nil {
 		body["stream"] = true
 	}
@@ -256,7 +279,8 @@ func (m *ProviderModel) Generate(ctx context.Context, req agent.ModelRequest) (a
 		var payload struct {
 			Choices []struct {
 				Message struct {
-					Content string `json:"content"`
+					Content   string             `json:"content"`
+					ToolCalls []providerToolCall `json:"tool_calls"`
 				} `json:"message"`
 			} `json:"choices"`
 			Usage completionUsage `json:"usage"`
@@ -275,7 +299,20 @@ func (m *ProviderModel) Generate(ctx context.Context, req agent.ModelRequest) (a
 		if len(payload.Choices) == 0 {
 			return agent.ModelResponse{}, errors.New("provider returned no choices")
 		}
-		content = strings.TrimSpace(payload.Choices[0].Message.Content)
+		choiceMessage := payload.Choices[0].Message
+		if len(choiceMessage.ToolCalls) > 0 {
+			toolCalls, parseFailure, parseFailureReason := parseNativeProviderToolCalls(choiceMessage.ToolCalls, req.AllowedTools)
+			if len(toolCalls) > 0 {
+				return agent.ModelResponse{ToolCalls: toolCalls}, nil
+			}
+			if parseFailure {
+				return agent.ModelResponse{
+					FinalText:        formatNativeToolCallParseFailureUserMessage(parseFailureReason),
+					ToolParseFailure: true,
+				}, nil
+			}
+		}
+		content = strings.TrimSpace(choiceMessage.Content)
 	} else {
 		streamResult, err := m.doStreamingChatCompletionWithRetry(ctx, raw, req.OnTextDelta)
 		if err != nil {
@@ -286,6 +323,18 @@ func (m *ProviderModel) Generate(ctx context.Context, req agent.ModelRequest) (a
 		}
 		if trace := runTraceCollectorFromContext(ctx); trace != nil {
 			trace.RecordModelUsage(streamResult.Usage.PromptTokens, streamResult.Usage.PromptTokensDetail.CachedTokens, streamResult.Usage.CompletionTokens, streamResult.Usage.TotalTokens)
+		}
+		if len(streamResult.ToolCalls) > 0 {
+			toolCalls, parseFailure, parseFailureReason := parseNativeProviderToolCalls(streamResult.ToolCalls, req.AllowedTools)
+			if len(toolCalls) > 0 {
+				return agent.ModelResponse{ToolCalls: toolCalls}, nil
+			}
+			if parseFailure {
+				return agent.ModelResponse{
+					FinalText:        formatNativeToolCallParseFailureUserMessage(parseFailureReason),
+					ToolParseFailure: true,
+				}, nil
+			}
 		}
 		content = strings.TrimSpace(streamResult.Content)
 		if content == "" {
@@ -367,6 +416,7 @@ func (m *ProviderModel) doChatCompletionWithRetry(ctx context.Context, raw []byt
 type streamingChatCompletionResult struct {
 	StatusCode   int
 	Content      string
+	ToolCalls    []providerToolCall
 	Error        any
 	DeltaEmitted bool
 	Usage        completionUsage
@@ -444,8 +494,9 @@ func (m *ProviderModel) doStreamingChatCompletionOnce(ctx context.Context, raw [
 		return result, nil
 	}
 
-	content, emitted, usage, err := consumeProviderSSE(resp.Body, onDelta)
+	content, toolCalls, emitted, usage, err := consumeProviderSSE(resp.Body, onDelta)
 	result.Content = content
+	result.ToolCalls = toolCalls
 	result.DeltaEmitted = emitted
 	result.Usage = usage
 	if err != nil {
@@ -454,15 +505,20 @@ func (m *ProviderModel) doStreamingChatCompletionOnce(ctx context.Context, raw [
 	return result, nil
 }
 
-func consumeProviderSSE(reader io.Reader, onDelta func(string) error) (string, bool, completionUsage, error) {
+func consumeProviderSSE(reader io.Reader, onDelta func(string) error) (string, []providerToolCall, bool, completionUsage, error) {
 	br := bufio.NewReader(reader)
 	var content strings.Builder
 	emitted := false
 	latestUsage := completionUsage{}
+	var toolCalls []providerToolCall
+	toolCallByIndex := map[int]providerToolCall{}
+	toolCallOrder := make([]int, 0, 4)
+	toolCallIndexByID := map[string]int{}
+	nextToolCallIndex := 0
 	for {
 		data, done, err := readNextSSEData(br)
 		if err != nil {
-			return content.String(), emitted, latestUsage, err
+			return content.String(), toolCalls, emitted, latestUsage, err
 		}
 		if done {
 			break
@@ -475,13 +531,86 @@ func consumeProviderSSE(reader io.Reader, onDelta func(string) error) (string, b
 			break
 		}
 		if usage, ok, err := extractStreamingUsage(trimmed); err != nil {
-			return content.String(), emitted, latestUsage, err
+			return content.String(), toolCalls, emitted, latestUsage, err
 		} else if ok {
 			latestUsage = usage
 		}
+		if update, ok, err := extractStreamingToolCallUpdate(trimmed); err != nil {
+			return content.String(), toolCalls, emitted, latestUsage, err
+		} else if ok {
+			if len(update.MessageToolCalls) > 0 {
+				toolCallByIndex = map[int]providerToolCall{}
+				toolCallOrder = toolCallOrder[:0]
+				toolCallIndexByID = map[string]int{}
+				nextToolCallIndex = 0
+				for i, call := range update.MessageToolCalls {
+					idx := i
+					toolCallByIndex[idx] = call
+					toolCallOrder = append(toolCallOrder, idx)
+					if id := strings.TrimSpace(call.ID); id != "" {
+						toolCallIndexByID[id] = idx
+					}
+					nextToolCallIndex = idx + 1
+				}
+			}
+			if len(update.DeltaToolCalls) > 0 {
+				for rawIdx, deltaCall := range update.DeltaToolCalls {
+					idx := rawIdx
+					callID := strings.TrimSpace(deltaCall.ID)
+					if deltaCall.Index != nil {
+						idx = *deltaCall.Index
+						if idx >= nextToolCallIndex {
+							nextToolCallIndex = idx + 1
+						}
+					} else if callID != "" {
+						if knownIdx, ok := toolCallIndexByID[callID]; ok {
+							idx = knownIdx
+						} else {
+							for {
+								if _, exists := toolCallByIndex[nextToolCallIndex]; !exists {
+									break
+								}
+								nextToolCallIndex++
+							}
+							idx = nextToolCallIndex
+							nextToolCallIndex++
+							toolCallIndexByID[callID] = idx
+						}
+					} else {
+						for {
+							if _, exists := toolCallByIndex[nextToolCallIndex]; !exists {
+								break
+							}
+							nextToolCallIndex++
+						}
+						idx = nextToolCallIndex
+						nextToolCallIndex++
+					}
+					call, exists := toolCallByIndex[idx]
+					if !exists {
+						call = providerToolCall{}
+						toolCallOrder = append(toolCallOrder, idx)
+					}
+					if callID != "" {
+						call.ID = callID
+						toolCallIndexByID[callID] = idx
+					}
+					if callType := strings.TrimSpace(deltaCall.Type); callType != "" {
+						call.Type = callType
+					}
+					if name := strings.TrimSpace(deltaCall.Function.Name); name != "" {
+						call.Function.Name = name
+					}
+					if argsChunk := deltaCall.Function.Arguments; argsChunk != "" {
+						call.Function.Arguments += argsChunk
+					}
+					toolCallByIndex[idx] = call
+				}
+			}
+		}
 		delta, err := extractStreamingDeltaText(trimmed)
 		if err != nil {
-			return content.String(), emitted, latestUsage, err
+			return content.String(), toolCalls, emitted, latestUsage, err
 		}
 		if delta == "" {
 			continue
@@ -490,11 +619,65 @@ func consumeProviderSSE(reader io.Reader, onDelta func(string) error) (string, b
 		emitted = true
 		if onDelta != nil {
 			if err := onDelta(delta); err != nil {
-				return content.String(), emitted, latestUsage, err
+				return content.String(), toolCalls, emitted, latestUsage, err
 			}
 		}
 	}
-	return content.String(), emitted, latestUsage, nil
+	if len(toolCallOrder) > 0 {
+		toolCalls = make([]providerToolCall, 0, len(toolCallOrder))
+		for _, idx := range toolCallOrder {
+			call, ok := toolCallByIndex[idx]
+			if !ok {
+				continue
+			}
+			toolCalls = append(toolCalls, call)
+		}
+	}
+	return content.String(), toolCalls, emitted, latestUsage, nil
+}
+
+func extractStreamingToolCallUpdate(raw string) (struct {
+	DeltaToolCalls   []providerStreamingToolCallDelta
+	MessageToolCalls []providerToolCall
+}, bool, error) {
+	payload := strings.TrimSpace(raw)
+	if payload == "" {
+		return struct {
+			DeltaToolCalls   []providerStreamingToolCallDelta
+			MessageToolCalls []providerToolCall
+		}{}, false, nil
+	}
+	var envelope struct {
+		Choices []struct {
+			Delta struct {
+				ToolCalls []providerStreamingToolCallDelta `json:"tool_calls"`
+			} `json:"delta"`
+			Message struct {
+				ToolCalls []providerToolCall `json:"tool_calls"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
+		return struct {
+			DeltaToolCalls   []providerStreamingToolCallDelta
+			MessageToolCalls []providerToolCall
+		}{}, false, err
+	}
+	if len(envelope.Choices) == 0 {
+		return struct {
+			DeltaToolCalls   []providerStreamingToolCallDelta
+			MessageToolCalls []providerToolCall
+		}{}, false, nil
+	}
+	choice := envelope.Choices[0]
+	hasToolCalls := len(choice.Delta.ToolCalls) > 0 || len(choice.Message.ToolCalls) > 0
+	return struct {
+		DeltaToolCalls   []providerStreamingToolCallDelta
+		MessageToolCalls []providerToolCall
+	}{
+		DeltaToolCalls:   choice.Delta.ToolCalls,
+		MessageToolCalls: choice.Message.ToolCalls,
+	}, hasToolCalls, nil
 }
 
 func extractStreamingUsage(raw string) (completionUsage, bool, error) {
@@ -1880,6 +2063,83 @@ func parseArgsString(argsStr string) map[string]any {
 	}
 
 	return args
+}
+
+func buildProviderTools(schemas []agent.ToolSchema) []map[string]any {
+	if len(schemas) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(schemas))
+	for _, schema := range schemas {
+		name := strings.TrimSpace(schema.Name)
+		if name == "" {
+			continue
+		}
+		fn := map[string]any{
+			"name":       name,
+			"parameters": schema.Parameters,
+		}
+		if desc := strings.TrimSpace(schema.Description); desc != "" {
+			fn["description"] = desc
+		}
+		if _, ok := fn["parameters"]; !ok || fn["parameters"] == nil {
+			fn["parameters"] = map[string]any{"type": "object", "properties": map[string]any{}}
+		}
+		out = append(out, map[string]any{
+			"type":     "function",
+			"function": fn,
+		})
+	}
+	return out
+}
+
+func parseNativeProviderToolCalls(rawCalls []providerToolCall, allowed []string) ([]agent.ToolCallRequest, bool, string) {
+	if len(rawCalls) == 0 {
+		return nil, false, ""
+	}
+	calls := make([]agent.ToolCallRequest, 0, len(rawCalls))
+	parseFailure := false
+	parseReasons := make([]string, 0, len(rawCalls))
+	for i, raw := range rawCalls {
+		toolName, ok := canonicalToolName(raw.Function.Name)
+		if !ok || toolName == "" {
+			parseFailure = true
+			parseReasons = append(parseReasons, "unsupported tool name from provider tool_calls")
+			continue
+		}
+		if !isToolAllowed(toolName, allowed) {
+			parseFailure = true
+			parseReasons = append(parseReasons, fmt.Sprintf("tool \"%s\" not allowed", toolName))
+			continue
+		}
+		argsRaw := strings.TrimSpace(raw.Function.Arguments)
+		if argsRaw == "" {
+			argsRaw = "{}"
+		}
+		if !json.Valid([]byte(argsRaw)) {
+			parseFailure = true
+			parseReasons = append(parseReasons, fmt.Sprintf("invalid JSON arguments for tool \"%s\"", toolName))
+			continue
+		}
+		callID := strings.TrimSpace(raw.ID)
+		if callID == "" {
+			callID = fmt.Sprintf("tool-native-%d", i+1)
+		}
+		calls = append(calls, agent.ToolCallRequest{
+			ID:        callID,
+			Name:      toolName,
+			Arguments: json.RawMessage(argsRaw),
+		})
+	}
+	return calls, parseFailure, strings.Join(parseReasons, "; ")
+}
+
+func formatNativeToolCallParseFailureUserMessage(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "provider emitted invalid native tool_calls payload"
+	}
+	return "The previous tool call payload could not be parsed safely. Retry with a strict JSON tool call payload. Reason: " + reason
 }
 
 func requestMessages(req agent.ModelRequest) []agent.ChatMessage {

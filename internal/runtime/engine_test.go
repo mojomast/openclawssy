@@ -485,13 +485,10 @@ func TestNormalizeToolArgsSanitizesMarkdownFencePath(t *testing.T) {
 }
 
 func TestNormalizeToolArgsShellCommandFallbackToBashLC(t *testing.T) {
+	// command strings with spaces are preserved as-is; bash -lc wrapping happens in the tool handler
 	args := normalizeToolArgs("shell.exec", map[string]any{"command": "ls -la"})
-	if args["command"] != "bash" {
-		t.Fatalf("expected command to normalize to bash, got %#v", args["command"])
-	}
-	list, ok := args["args"].([]string)
-	if !ok || len(list) != 2 || list[0] != "-lc" || list[1] != "ls -la" {
-		t.Fatalf("unexpected shell args normalization: %#v", args["args"])
+	if args["command"] != "ls -la" {
+		t.Fatalf("expected command to be preserved as-is, got %#v", args["command"])
 	}
 }
 
@@ -1950,7 +1947,7 @@ func TestGetStringSliceArgSupportsStringAndAnySlices(t *testing.T) {
 
 func TestSandboxShellExecutorPassesThroughProviderResult(t *testing.T) {
 	exec := &sandboxShellExecutor{provider: stubSandboxProvider{result: sandbox.Result{Stdout: "ok", Stderr: "warn", ExitCode: 9}, err: errors.New("boom")}}
-	stdout, stderr, code, err := exec.Exec(context.Background(), "echo", []string{"hello"})
+	stdout, stderr, code, err := exec.Exec(context.Background(), "echo", []string{"hello"}, "")
 	if stdout != "ok" || stderr != "warn" || code != 9 {
 		t.Fatalf("unexpected passthrough output: stdout=%q stderr=%q code=%d", stdout, stderr, code)
 	}
@@ -2001,12 +1998,8 @@ func TestNormalizeToolArgsCoversFieldMappings(t *testing.T) {
 	}
 
 	wrapped := normalizeToolArgs("shell.exec", map[string]any{"command": "ls -la"})
-	if wrapped["command"] != "bash" {
-		t.Fatalf("expected shell command to wrap in bash, got %#v", wrapped)
-	}
-	args, ok := wrapped["args"].([]string)
-	if !ok || len(args) != 2 || args[0] != "-lc" || args[1] != "ls -la" {
-		t.Fatalf("expected bash -lc wrapping args, got %#v", wrapped["args"])
+	if wrapped["command"] != "ls -la" {
+		t.Fatalf("expected shell command to be preserved as-is, got %#v", wrapped)
 	}
 }
 

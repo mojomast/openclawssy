@@ -112,7 +112,7 @@ func RegisterCoreWithOptions(reg *Registry, opts CoreOptions) error {
 		return err
 	}
 	if opts.EnableShellExec {
-		if err := reg.Register(ToolSpec{Name: "shell.exec", Description: "Run command in sandbox", Required: []string{"command"}, ArgTypes: map[string]ArgType{"command": ArgTypeString, "args": ArgTypeArray, "timeout_ms": ArgTypeNumber}}, shellExec); err != nil {
+		if err := reg.Register(ToolSpec{Name: "shell.exec", Description: "Executes a given bash command in the sandbox with optional timeout, workdir, and description. Use workdir instead of 'cd <dir> && <cmd>' patterns. For terminal operations (git, npm, build scripts) only — use fs.* tools for file operations.", Required: []string{"command"}, ArgTypes: map[string]ArgType{"command": ArgTypeString, "workdir": ArgTypeString, "description": ArgTypeString, "timeout_ms": ArgTypeNumber}}, shellExec); err != nil {
 			return err
 		}
 	}
@@ -677,20 +677,12 @@ func shellExec(ctx context.Context, req Request) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	args := []string{}
-	if raw, ok := req.Args["args"]; ok {
-		switch t := raw.(type) {
-		case []any:
-			for _, item := range t {
-				args = append(args, fmt.Sprintf("%v", item))
-			}
-		case []string:
-			args = append(args, t...)
-		default:
-			return nil, fmt.Errorf("args must be an array")
-		}
-	}
-	invocation := strings.TrimSpace(strings.Join(append([]string{command}, args...), " "))
+	workDir, _ := getString(req.Args, "workdir")
+
+	// Build argv: pass the full command string to bash -lc for shell interpretation.
+	args := []string{"-lc", command}
+	invocation := strings.TrimSpace(command)
+
 	allowed := false
 	for _, pattern := range req.ShellAllowedCommands {
 		if matched, ok := commandMatchesPattern(invocation, pattern); ok && matched {
@@ -714,11 +706,12 @@ func shellExec(ctx context.Context, req Request) (map[string]any, error) {
 
 	slog.Debug("shell.exec: executing", "agent_id", req.AgentID, "invocation", invocation, "timeout_ms", timeoutMS)
 
-	stdout, stderr, exitCode, execErr := req.Shell.Exec(execCtx, command, args)
+	bashCmd := "bash"
+	stdout, stderr, exitCode, execErr := req.Shell.Exec(execCtx, bashCmd, args, workDir)
 	fallbackUsed := ""
-	if execErr != nil && command == "bash" && isExecutableNotFound(execErr) {
+	if execErr != nil && isExecutableNotFound(execErr) {
 		for _, candidate := range []string{"/bin/bash", "/usr/bin/bash", "sh"} {
-			fbStdout, fbStderr, fbExitCode, fbErr := req.Shell.Exec(execCtx, candidate, args)
+			fbStdout, fbStderr, fbExitCode, fbErr := req.Shell.Exec(execCtx, candidate, args, workDir)
 			if fbErr == nil || !isExecutableNotFound(fbErr) {
 				stdout, stderr, exitCode, execErr = fbStdout, fbStderr, fbExitCode, fbErr
 				fallbackUsed = candidate
@@ -757,18 +750,35 @@ func shellExec(ctx context.Context, req Request) (map[string]any, error) {
 // using OpenCode-style wildcard matching: * matches zero or more of any
 // character, ? matches exactly one character, all other characters are literal.
 // The second return value is false only when the pattern itself is malformed.
+// commandMatchesPattern matches an invocation string against a glob pattern.
+// It uses regex conversion (ported from OpenCode's Wildcard.match) so that *
+// matches across slashes and spaces — making patterns like "*" or "bash *" work
+// correctly even when the invocation contains URLs or paths.
 func commandMatchesPattern(invocation, pattern string) (matched bool, ok bool) {
 	invocation = strings.TrimSpace(invocation)
 	pattern = strings.TrimSpace(pattern)
 	if invocation == "" || pattern == "" {
 		return false, true
 	}
-	m, err := filepath.Match(pattern, invocation)
+
+	// Escape all regex special chars except * and ?.
+	escaped := regexp.QuoteMeta(pattern)
+	// QuoteMeta escapes * as \* and ? as \? — undo those and replace with regex equivalents.
+	escaped = strings.ReplaceAll(escaped, `\*`, `.*`)
+	escaped = strings.ReplaceAll(escaped, `\?`, `.`)
+
+	// "cmd *" — trailing space+wildcard: make the trailing part optional so
+	// the pattern matches both "cmd" (no args) and "cmd arg1 arg2".
+	if strings.HasSuffix(escaped, ` .*`) {
+		escaped = escaped[:len(escaped)-3] + `( .*)?`
+	}
+
+	re, err := regexp.Compile(`(?s)^` + escaped + `$`)
 	if err != nil {
-		// malformed pattern (e.g. unclosed bracket) — treat as no match
+		// malformed pattern — treat as no match
 		return false, false
 	}
-	return m, true
+	return re.MatchString(invocation), true
 }
 
 func isExecutableNotFound(err error) bool {

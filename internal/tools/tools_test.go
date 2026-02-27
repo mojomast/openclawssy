@@ -60,8 +60,9 @@ type auditRecord struct {
 
 type fakeShell struct{}
 
-func (fakeShell) Exec(ctx context.Context, command string, args []string) (string, string, int, error) {
+func (fakeShell) Exec(ctx context.Context, command string, args []string, workDir string) (string, string, int, error) {
 	_ = ctx
+	_ = workDir
 	return command + " " + args[0], "", 0, nil
 }
 
@@ -69,8 +70,9 @@ type fallbackShell struct {
 	calls []string
 }
 
-func (s *fallbackShell) Exec(ctx context.Context, command string, args []string) (string, string, int, error) {
+func (s *fallbackShell) Exec(ctx context.Context, command string, args []string, workDir string) (string, string, int, error) {
 	_ = ctx
+	_ = workDir
 	s.calls = append(s.calls, command)
 	if command == "bash" {
 		return "", "", -1, errors.New(`exec: "bash": executable file not found in $PATH`)
@@ -105,8 +107,9 @@ func (f *fakeAgentRunner) ExecuteSubAgent(_ context.Context, input AgentRunInput
 	return f.result, nil
 }
 
-func (s *shOnlyFallbackShell) Exec(ctx context.Context, command string, args []string) (string, string, int, error) {
+func (s *shOnlyFallbackShell) Exec(ctx context.Context, command string, args []string, workDir string) (string, string, int, error) {
 	_ = ctx
+	_ = workDir
 	s.calls = append(s.calls, command)
 	if command == "bash" {
 		return "", "", -1, errors.New(`exec: "bash": executable file not found in $PATH`)
@@ -125,28 +128,31 @@ func (s *shOnlyFallbackShell) Exec(ctx context.Context, command string, args []s
 
 type exitStatusShell struct{}
 
-func (exitStatusShell) Exec(ctx context.Context, command string, args []string) (string, string, int, error) {
+func (exitStatusShell) Exec(ctx context.Context, command string, args []string, workDir string) (string, string, int, error) {
 	_ = ctx
 	_ = command
 	_ = args
+	_ = workDir
 	return "scan partial output", "permission denied", 1, errors.New("exit status 1")
 }
 
 type silentSuccessShell struct{}
 
-func (silentSuccessShell) Exec(ctx context.Context, command string, args []string) (string, string, int, error) {
+func (silentSuccessShell) Exec(ctx context.Context, command string, args []string, workDir string) (string, string, int, error) {
 	_ = ctx
 	_ = command
 	_ = args
+	_ = workDir
 	return "", "", 0, nil
 }
 
 type failedExecShell struct{}
 
-func (failedExecShell) Exec(ctx context.Context, command string, args []string) (string, string, int, error) {
+func (failedExecShell) Exec(ctx context.Context, command string, args []string, workDir string) (string, string, int, error) {
 	_ = ctx
 	_ = command
 	_ = args
+	_ = workDir
 	return "partial", "failed", -1, errors.New("fork/exec bash: no such file or directory")
 }
 
@@ -381,18 +387,18 @@ func TestCoreFsTools(t *testing.T) {
 func TestShellExecTool(t *testing.T) {
 	reg := NewRegistry(fakePolicy{}, nil)
 	reg.SetShellExecutor(fakeShell{})
-	reg.SetShellAllowedCommands([]string{"echo *"})
+	reg.SetShellAllowedCommands([]string{"echo ok"})
 	if err := RegisterCore(reg); err != nil {
 		t.Fatalf("register core: %v", err)
 	}
 	res, err := reg.Execute(context.Background(), "agent", "shell.exec", ".", map[string]any{
-		"command": "echo",
-		"args":    []any{"ok"},
+		"command": "echo ok",
 	})
 	if err != nil {
 		t.Fatalf("shell.exec: %v", err)
 	}
-	if res["stdout"] != "echo ok" {
+	// fakeShell returns command+" "+args[0] where command="bash" and args[0]="-lc"
+	if res["stdout"] != "bash -lc" {
 		t.Fatalf("unexpected stdout: %#v", res["stdout"])
 	}
 }
@@ -401,13 +407,12 @@ func TestShellExecFallsBackToShWhenBashUnavailable(t *testing.T) {
 	reg := NewRegistry(fakePolicy{}, nil)
 	shell := &fallbackShell{}
 	reg.SetShellExecutor(shell)
-	reg.SetShellAllowedCommands([]string{"bash *"})
+	reg.SetShellAllowedCommands([]string{"python -m venv .venv"})
 	if err := RegisterCore(reg); err != nil {
 		t.Fatalf("register core: %v", err)
 	}
 	res, err := reg.Execute(context.Background(), "agent", "shell.exec", ".", map[string]any{
-		"command": "bash",
-		"args":    []any{"-lc", "python -m venv .venv"},
+		"command": "python -m venv .venv",
 	})
 	if err != nil {
 		t.Fatalf("shell.exec expected fallback success, got error: %v", err)
@@ -427,13 +432,12 @@ func TestShellExecFallsBackToShWhenBashBinaryMissing(t *testing.T) {
 	reg := NewRegistry(fakePolicy{}, nil)
 	shell := &shOnlyFallbackShell{}
 	reg.SetShellExecutor(shell)
-	reg.SetShellAllowedCommands([]string{"bash *"})
+	reg.SetShellAllowedCommands([]string{"python -m venv .venv"})
 	if err := RegisterCore(reg); err != nil {
 		t.Fatalf("register core: %v", err)
 	}
 	res, err := reg.Execute(context.Background(), "agent", "shell.exec", ".", map[string]any{
-		"command": "bash",
-		"args":    []any{"-lc", "python -m venv .venv"},
+		"command": "python -m venv .venv",
 	})
 	if err != nil {
 		t.Fatalf("shell.exec expected sh fallback success, got error: %v", err)
@@ -452,14 +456,13 @@ func TestShellExecFallsBackToShWhenBashBinaryMissing(t *testing.T) {
 func TestShellExecTreatsExitStatusAsResultNotToolFailure(t *testing.T) {
 	reg := NewRegistry(fakePolicy{}, nil)
 	reg.SetShellExecutor(exitStatusShell{})
-	reg.SetShellAllowedCommands([]string{"bash *"})
+	reg.SetShellAllowedCommands([]string{"nmap -sS 127.0.0.1"})
 	if err := RegisterCore(reg); err != nil {
 		t.Fatalf("register core: %v", err)
 	}
 
 	res, err := reg.Execute(context.Background(), "agent", "shell.exec", ".", map[string]any{
-		"command": "bash",
-		"args":    []any{"-lc", "nmap -sS 127.0.0.1"},
+		"command": "nmap -sS 127.0.0.1",
 	})
 	if err != nil {
 		t.Fatalf("expected non-zero exit status to return structured result without tool failure, got: %v", err)
@@ -475,13 +478,12 @@ func TestShellExecTreatsExitStatusAsResultNotToolFailure(t *testing.T) {
 func TestShellExecDetectsSilentSuccessAsOutputCaptureBug(t *testing.T) {
 	reg := NewRegistry(fakePolicy{}, nil)
 	reg.SetShellExecutor(silentSuccessShell{})
-	reg.SetShellAllowedCommands([]string{"bash *"})
+	reg.SetShellAllowedCommands([]string{"true"})
 	if err := RegisterCore(reg); err != nil {
 		t.Fatalf("register core: %v", err)
 	}
 	res, err := reg.Execute(context.Background(), "agent", "shell.exec", ".", map[string]any{
-		"command": "bash",
-		"args":    []any{"-lc", "true"},
+		"command": "true",
 	})
 	if err != nil {
 		t.Fatalf("expected structured silent output failure without tool error, got: %v", err)
@@ -494,13 +496,12 @@ func TestShellExecDetectsSilentSuccessAsOutputCaptureBug(t *testing.T) {
 func TestShellExecPreservesCapturedOutputOnExecFailure(t *testing.T) {
 	reg := NewRegistry(fakePolicy{}, nil)
 	reg.SetShellExecutor(failedExecShell{})
-	reg.SetShellAllowedCommands([]string{"bash *"})
+	reg.SetShellAllowedCommands([]string{"echo test"})
 	if err := RegisterCore(reg); err != nil {
 		t.Fatalf("register core: %v", err)
 	}
 	res, err := reg.Execute(context.Background(), "agent", "shell.exec", ".", map[string]any{
-		"command": "bash",
-		"args":    []any{"-lc", "echo test"},
+		"command": "echo test",
 	})
 	if err != nil {
 		t.Fatalf("expected captured payload on exec failure, got: %v", err)

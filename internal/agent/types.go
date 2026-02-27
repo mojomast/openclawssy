@@ -25,6 +25,7 @@ type RunInput struct {
 	MaxToolIterations int                        `json:"max_tool_iterations"`
 	ToolTimeoutMS     int                        `json:"tool_timeout_ms,omitempty"`
 	AllowedTools      []string                   `json:"allowed_tools,omitempty"`
+	ToolSchemas       []ToolSchema               `json:"tool_schemas,omitempty"`
 	AutoDelegate      bool                       `json:"auto_delegate,omitempty"`
 	OnToolCall        func(ToolCallRecord) error `json:"-"`
 	SystemPromptExt   SystemPromptExtender       `json:"-"`
@@ -50,11 +51,19 @@ type ModelRequest struct {
 	SystemPrompt  string                   `json:"system_prompt,omitempty"`
 	Messages      []ChatMessage            `json:"messages,omitempty"`
 	AllowedTools  []string                 `json:"allowed_tools,omitempty"`
+	ToolSchemas   []ToolSchema             `json:"tool_schemas,omitempty"`
 	ToolTimeoutMS int                      `json:"tool_timeout_ms,omitempty"`
 	Prompt        string                   `json:"prompt,omitempty"`
 	Message       string                   `json:"message,omitempty"`
 	ToolResults   []ToolCallResult         `json:"tool_results"`
 	OnTextDelta   func(delta string) error `json:"-"`
+}
+
+// ToolSchema describes an LLM-callable tool and its JSON schema parameters.
+type ToolSchema struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
 }
 
 // ChatMessage is a role-tagged conversational turn passed to the model.

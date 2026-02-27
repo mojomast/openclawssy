@@ -336,6 +336,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		MaxToolIterations: agent.DefaultToolIterationCap,
 		SubAgentRunner:    adapter,
 	}
+	toolSchemas := e.allowedToolSchemas(registry.List(), allowedTools)
 
 	modelMessages := []agent.ChatMessage{{Role: "user", Content: runMessage}}
 	var conversationStore *chatstore.Store
@@ -416,6 +417,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		MaxToolIterations: maxToolIterations,
 		ToolTimeoutMS:     int(agent.DefaultToolTimeout / time.Millisecond),
 		AllowedTools:      allowedTools,
+		ToolSchemas:       toolSchemas,
 		OnToolCall:        onToolCall,
 		SystemPromptExt:   e.memoryPromptExtender(cfg, agentID, runID),
 		OnTextDelta:       onTextDelta,
@@ -1054,7 +1056,7 @@ func identityBootstrapDoc() string {
 
 func runtimeContextDoc(workspaceDir string) string {
 	doc := fmt.Sprintf(
-		"# RUNTIME_CONTEXT\n\n- Workspace root: %s\n- File tools (fs.read/fs.list/fs.write/fs.append/fs.delete/fs.move/fs.edit/code.search) can only access paths inside workspace root.\n- Config tools (config.get/config.set) can only read redacted config and mutate an allowlisted safe field subset.\n- Secret tools (secrets.get/secrets.set/secrets.list) use encrypted secret storage; secret values are never written to audit fields in plaintext.\n- Scheduler tools (scheduler.list/add/remove/pause/resume) persist jobs in .openclawssy/scheduler/jobs.json and enforce scheduler validation rules.\n- Session tools (session.list/session.close) manage chat sessions persisted under .openclawssy/agents/*/memory/chats and closed sessions are not reused for routing.\n- Run tools (run.list/run.get) retrieve run traces and summaries from the run store; use filtering and pagination for large result sets.\n- Network tool (http.request/net.fetch) is enabled only when network.enabled=true, enforces scheme checks, allowlisted domains, redirect rechecks, and localhost policy.\n- Paths outside workspace (for example /home, ~, ..) are blocked by policy.\n- If shell.exec is enabled by policy, run shell commands through `bash -lc` in shell.exec args.\n- If `bash` is unavailable in PATH, runtime retries `/bin/bash`, then `/usr/bin/bash`, then `sh`.\n- Shell commands can use environment tools available in the runtime image (for example: python3/pip, node/npm, git, curl/wget, jq, nmap, dig/nslookup, ip/ss/netstat, traceroute, tcpdump).\n- Some network commands may require container capabilities or host mounts (for example docker socket, NET_RAW, NET_ADMIN). If unavailable, report the exact error and continue with the best available diagnostic command.\n- Paths outside workspace (for example /home, ~, ..) are blocked by policy even when using shell.exec.\n- If the user asks about files in home directory, explain this limitation and offer to list the workspace instead.\n- Keep responses task-focused; do not mention HANDOFF/SPECPLAN/DEVPLAN unless the user explicitly asks about them.\n",
+		"# RUNTIME_CONTEXT\n\n- Workspace root: %s\n- File tools (fs.read/fs.list/fs.write/fs.append/fs.delete/fs.move/fs.edit/code.search) can only access paths inside workspace root.\n- Config tools (config.get/config.set) can only read redacted config and mutate an allowlisted safe field subset.\n- Secret tools (secrets.get/secrets.set/secrets.list) use encrypted secret storage; secret values are never written to audit fields in plaintext.\n- Scheduler tools (scheduler.list/add/remove/pause/resume) persist jobs in .openclawssy/scheduler/jobs.json and enforce scheduler validation rules.\n- Session tools (session.list/session.close) manage chat sessions persisted under .openclawssy/agents/*/memory/chats and closed sessions are not reused for routing.\n- Run tools (run.list/run.get) retrieve run traces and summaries from the run store; use filtering and pagination for large result sets.\n- Network tool (http.request/net.fetch) is enabled only when network.enabled=true, enforces scheme checks, allowlisted domains, redirect rechecks, and localhost policy.\n- Paths outside workspace (for example /home, ~, ..) are blocked by policy.\n- If shell.exec is enabled by policy, use shell.exec with command=`<shell script>` (the full command string; runtime passes it to bash -lc automatically).\n- Optionally provide workdir to set the working directory for the command; omit to use the sandbox default.\n- If `bash` is unavailable in PATH, runtime retries `/bin/bash`, then `/usr/bin/bash`, then `sh`.\n- Shell commands can use environment tools available in the runtime image (for example: python3/pip, node/npm, git, curl/wget, jq, nmap, dig/nslookup, ip/ss/netstat, traceroute, tcpdump).\n- Some network commands may require container capabilities or host mounts (for example docker socket, NET_RAW, NET_ADMIN). If unavailable, report the exact error and continue with the best available diagnostic command.\n- Paths outside workspace (for example /home, ~, ..) are blocked by policy even when using shell.exec.\n- If the user asks about files in home directory, explain this limitation and offer to list the workspace instead.\n- Keep responses task-focused; do not mention HANDOFF/SPECPLAN/DEVPLAN unless the user explicitly asks about them.\n",
 		workspaceDir,
 	)
 	doc = strings.Replace(doc,
@@ -1076,7 +1078,7 @@ func runtimeContextDoc(workspaceDir string) string {
 }
 
 func toolCallingBestPracticesDoc() string {
-	return "# TOOL_CALLING_BEST_PRACTICES\n\n- Use only registered tool names: fs.read, fs.list, fs.write, fs.append, fs.delete, fs.move, fs.edit, code.search, config.get, config.set, secrets.get, secrets.set, secrets.list, scheduler.list, scheduler.add, scheduler.remove, scheduler.pause, scheduler.resume, session.list, session.close, run.list, run.get, http.request, time.now, shell.exec.\n- Preferred format for tool calls is a fenced JSON object with tool_name and arguments.\n- Example:\n```json\n{\"tool_name\":\"fs.list\",\"arguments\":{\"path\":\".\"}}\n```\n- For shell commands use shell.exec with command=`bash` and args=[\"-lc\", \"<script>\"].\n- Runtime retries `/bin/bash` and `/usr/bin/bash` before fallback to `sh`; keep scripts POSIX-compatible when possible.\n- Common runtime shell tools include: python3/pip, node/npm, git, curl, wget, jq, nmap, dig/nslookup, ip, ss, netstat, traceroute, tcpdump.\n- For connectivity checks, prefer read-only diagnostics first (for example `ip addr`, `ss -tulpen`, `dig`, `curl -I`, `nmap -sT`).\n- For multi-step shell tasks, prefer one well-structured script in a single `shell.exec` call over many tiny probe commands.\n- Use fs.append to add content to existing files without replacing prior content.\n- Use fs.delete for removals; pass recursive=true only when deleting directories intentionally.\n- Use fs.move for renames/moves. Pass overwrite=true only when destination replacement is intentional.\n- Use config.set only for safe runtime knobs; do not use it for provider API keys or secret values.\n- Use secrets.set for secret writes and secrets.get for reads; never echo secret values in plain text summaries.\n- Use scheduler.add/list/remove/pause/resume for job lifecycle; keep schedules valid (`@every` or RFC3339 one-shot).\n- Use session.list to inspect recent sessions and session.close to retire a session so future chat routing creates a new one.\n- Use run.list to enumerate runs with filtering (agent_id, status) and pagination (limit, offset); use run.get to retrieve a specific run by ID.\n- Use http.request only for http/https targets allowed by network config; keep timeout and response size bounded.\n- If the user asks you to do work, continue executing the plan directly; do not ask permission-style follow-up questions.\n- If a command fails due to permissions/capabilities, surface the exact stderr and try a safer fallback command when possible.\n- If you already have enough evidence from tool results, stop calling tools and provide the final answer.\n- Avoid running the exact same failing command repeatedly; adjust flags or explain the failure instead.\n- Do not invent tool names (for example time.sleep is invalid).\n- Do not claim file edits or command results until a matching tool.result is observed.\n- For multi-step requests, chain tool calls until the task is complete instead of stopping after the first step.\n- **ALWAYS proactively report progress**: After each tool result, immediately tell the user what you discovered or accomplished. Never make the user ask SO WHAT HAPPENED or DID THAT WORK - anticipate their need for status updates.\n"
+	return "# TOOL_CALLING_BEST_PRACTICES\n\n- Use only registered tool names: fs.read, fs.list, fs.write, fs.append, fs.delete, fs.move, fs.edit, code.search, config.get, config.set, secrets.get, secrets.set, secrets.list, scheduler.list, scheduler.add, scheduler.remove, scheduler.pause, scheduler.resume, session.list, session.close, run.list, run.get, http.request, time.now, shell.exec.\n- Preferred format for tool calls is a fenced JSON object with tool_name and arguments.\n- Example:\n```json\n{\"tool_name\":\"fs.list\",\"arguments\":{\"path\":\".\"}}\n```\n- For shell commands use shell.exec with command=`<shell script>` (the full command string; runtime automatically passes it to bash -lc). Optionally set workdir to change the working directory.\n- Runtime retries `/bin/bash` and `/usr/bin/bash` before fallback to `sh`; keep scripts POSIX-compatible when possible.\n- Common runtime shell tools include: python3/pip, node/npm, git, curl, wget, jq, nmap, dig/nslookup, ip, ss, netstat, traceroute, tcpdump.\n- For connectivity checks, prefer read-only diagnostics first (for example `ip addr`, `ss -tulpen`, `dig`, `curl -I`, `nmap -sT`).\n- For multi-step shell tasks, prefer one well-structured script in a single `shell.exec` call over many tiny probe commands.\n- Use fs.append to add content to existing files without replacing prior content.\n- Use fs.delete for removals; pass recursive=true only when deleting directories intentionally.\n- Use fs.move for renames/moves. Pass overwrite=true only when destination replacement is intentional.\n- Use config.set only for safe runtime knobs; do not use it for provider API keys or secret values.\n- Use secrets.set for secret writes and secrets.get for reads; never echo secret values in plain text summaries.\n- Use scheduler.add/list/remove/pause/resume for job lifecycle; keep schedules valid (`@every` or RFC3339 one-shot).\n- Use session.list to inspect recent sessions and session.close to retire a session so future chat routing creates a new one.\n- Use run.list to enumerate runs with filtering (agent_id, status) and pagination (limit, offset); use run.get to retrieve a specific run by ID.\n- Use http.request only for http/https targets allowed by network config; keep timeout and response size bounded.\n- If the user asks you to do work, continue executing the plan directly; do not ask permission-style follow-up questions.\n- If a command fails due to permissions/capabilities, surface the exact stderr and try a safer fallback command when possible.\n- If you already have enough evidence from tool results, stop calling tools and provide the final answer.\n- Avoid running the exact same failing command repeatedly; adjust flags or explain the failure instead.\n- Do not invent tool names (for example time.sleep is invalid).\n- Do not claim file edits or command results until a matching tool.result is observed.\n- For multi-step requests, chain tool calls until the task is complete instead of stopping after the first step.\n- **ALWAYS proactively report progress**: After each tool result, immediately tell the user what you discovered or accomplished. Never make the user ask SO WHAT HAPPENED or DID THAT WORK - anticipate their need for status updates.\n"
 }
 
 func toolCallingBestPracticesDocWithAgentTools() string {
@@ -1390,11 +1392,6 @@ func normalizeToolArgs(toolName string, args map[string]any) map[string]any {
 				args["command"] = value
 			}
 		}
-		command := getStringArg(args, "command")
-		if command != "" && strings.Contains(command, " ") && len(getStringSliceArg(args, "args")) == 0 {
-			args["command"] = "bash"
-			args["args"] = []string{"-lc", command}
-		}
 	}
 
 	return args
@@ -1498,6 +1495,66 @@ func (e *Engine) allowedTools(cfg config.Config) []string {
 		toolsList = append(toolsList, "shell.exec")
 	}
 	return toolsList
+}
+
+func (e *Engine) allowedToolSchemas(specs []tools.ToolSpec, allowed []string) []agent.ToolSchema {
+	if len(specs) == 0 || len(allowed) == 0 {
+		return nil
+	}
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, name := range allowed {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		allowedSet[name] = struct{}{}
+	}
+	out := make([]agent.ToolSchema, 0, len(allowedSet))
+	for _, spec := range specs {
+		if _, ok := allowedSet[spec.Name]; !ok {
+			continue
+		}
+		out = append(out, agent.ToolSchema{
+			Name:        spec.Name,
+			Description: strings.TrimSpace(spec.Description),
+			Parameters: map[string]any{
+				"type":                 "object",
+				"properties":           toolArgProperties(spec.ArgTypes),
+				"required":             append([]string(nil), spec.Required...),
+				"additionalProperties": false,
+			},
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func toolArgProperties(argTypes map[string]tools.ArgType) map[string]any {
+	if len(argTypes) == 0 {
+		return map[string]any{}
+	}
+	props := make(map[string]any, len(argTypes))
+	for name, argType := range argTypes {
+		props[name] = map[string]any{"type": jsonTypeForArgType(argType)}
+	}
+	return props
+}
+
+func jsonTypeForArgType(argType tools.ArgType) string {
+	switch argType {
+	case tools.ArgTypeString:
+		return "string"
+	case tools.ArgTypeNumber:
+		return "number"
+	case tools.ArgTypeBool:
+		return "boolean"
+	case tools.ArgTypeArray:
+		return "array"
+	case tools.ArgTypeObject:
+		return "object"
+	default:
+		return "string"
+	}
 }
 
 func (e *Engine) effectiveCapabilities(agentID string, allowedTools []string) []string {
@@ -1715,8 +1772,8 @@ func (a *agentSubAgentRunnerAdapter) ExecuteSubAgent(ctx context.Context, task a
 	}, nil
 }
 
-func (s *sandboxShellExecutor) Exec(_ context.Context, command string, args []string) (string, string, int, error) {
-	result, err := s.provider.Exec(sandbox.Command{Name: command, Args: args})
+func (s *sandboxShellExecutor) Exec(_ context.Context, command string, args []string, workDir string) (string, string, int, error) {
+	result, err := s.provider.Exec(sandbox.Command{Name: command, Args: args, WorkDir: workDir})
 	return result.Stdout, result.Stderr, result.ExitCode, err
 }
 
