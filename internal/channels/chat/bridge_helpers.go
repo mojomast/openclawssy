@@ -41,8 +41,16 @@ func ParseThinkingOverride(content string) (string, string, error) {
 	if clean == "" {
 		return "", "", errors.New("message is required")
 	}
-	// Pass through slash commands (e.g. /start, /help) without thinking-mode parsing.
-	if strings.HasPrefix(clean, "/") {
+	// Strip optional /ask prefix so thinking= overrides still work when the
+	// command is sent (e.g. "/ask thinking=always summarize").
+	lower := strings.ToLower(clean)
+	if strings.HasPrefix(lower, "/ask") {
+		clean = strings.TrimSpace(clean[4:])
+		if clean == "" {
+			return "", "", errors.New("message is required")
+		}
+	} else if strings.HasPrefix(clean, "/") {
+		// Any other slash command passes through without thinking-mode parsing.
 		return clean, "", nil
 	}
 	parts := strings.Fields(clean)
