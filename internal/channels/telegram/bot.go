@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -39,6 +40,17 @@ type Response struct {
 
 type RunStatus = chat.RunStatus
 
+type OutcomeInput struct {
+	RunID        string
+	Status       string
+	Output       string
+	Error        string
+	ArtifactPath string
+	ToolSummary  string
+}
+
+type OutcomeResponder func(ctx context.Context, input OutcomeInput) (string, error)
+
 type MessageHandler func(ctx context.Context, msg Message) (Response, error)
 type RunStatusFunc = chat.RunStatusFunc
 
@@ -48,6 +60,7 @@ type Bot struct {
 	limiter   *chat.RateLimiter
 	handler   MessageHandler
 	runStatus RunStatusFunc
+	outcome   OutcomeResponder
 	api       *tgbotapi.BotAPI
 	closeOnce sync.Once
 	wg        sync.WaitGroup
@@ -98,17 +111,29 @@ func (b *Bot) Stop() error {
 	return nil
 }
 
+func (b *Bot) SetOutcomeResponder(responder OutcomeResponder) {
+	if b == nil {
+		return
+	}
+	b.outcome = responder
+}
+
 func (b *Bot) onUpdate(update tgbotapi.Update) {
 	m := update.Message
 	if m == nil || m.From == nil || m.From.IsBot {
+		slog.Debug("telegram: skipping update", "has_message", m != nil)
 		return
 	}
-	content := normalizeInboundMessage(strings.TrimSpace(m.Text), b.cfg.CommandPrefix)
+	rawText := strings.TrimSpace(m.Text)
+	slog.Debug("telegram: received message", "from", m.From.UserName, "from_id", m.From.ID, "chat_id", m.Chat.ID, "text", rawText, "command_prefix", b.cfg.CommandPrefix)
+	content := normalizeInboundMessage(rawText, b.cfg.CommandPrefix)
 	if content == "" {
+		slog.Debug("telegram: message filtered out by normalizeInboundMessage", "raw", rawText, "prefix", b.cfg.CommandPrefix)
 		return
 	}
 	content, thinkingMode, parseErr := parseThinkingOverride(content)
 	if parseErr != nil {
+		slog.Debug("telegram: thinking parse error", "err", parseErr)
 		b.sendMessage(m.Chat.ID, m.MessageID, formatTelegramError(parseErr))
 		return
 	}
@@ -117,6 +142,7 @@ func (b *Bot) onUpdate(update tgbotapi.Update) {
 	chatID := strconv.FormatInt(m.Chat.ID, 10)
 	if b.allow != nil && !b.allow.MessageAllowed(userID, chatID) &&
 		!b.allow.MessageAllowed(m.From.UserName, chatID) {
+		slog.Debug("telegram: message blocked by allowlist", "user_id", userID, "username", m.From.UserName, "chat_id", chatID)
 		return
 	}
 	if b.limiter != nil {
@@ -203,31 +229,30 @@ func (b *Bot) awaitAndPostResult(chatID int64, replyTo int, runID string) {
 	run, err := waitForTerminalRun(ctx, runID, b.runStatus, defaultPollInterval)
 	close(stopTyping)
 	if err != nil {
-		b.sendMessage(chatID, replyTo, "failed to fetch run `"+runID+"`: "+err.Error())
+		msg := b.renderOutcomeText(context.Background(), runID, RunStatus{Status: "status_lookup_error", Error: err.Error()}, "I hit a temporary issue while checking your result. Please try again.")
+		b.sendMessage(chatID, replyTo, msg)
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(run.Status), "timeout") {
+		msg := b.renderOutcomeText(context.Background(), runID, run, "Thanks for your patience - I am still working on your request.")
+		b.sendChunked(chatID, replyTo, msg)
 		return
 	}
 
 	if strings.EqualFold(strings.TrimSpace(run.Status), "failed") {
-		msg := "run `" + runID + "` failed"
-		if strings.TrimSpace(run.Error) != "" {
-			msg += ": " + run.Error
-		}
-		if toolSummary := formatToolActivity(runID, run.Trace); toolSummary != "" {
-			b.sendChunked(chatID, replyTo, toolSummary)
-		}
+		msg := b.renderOutcomeText(ctx, runID, run, "I ran into an issue while working on that request. Please try again.")
 		b.sendMessage(chatID, replyTo, msg)
 		return
 	}
 
-	if toolSummary := formatToolActivity(runID, run.Trace); toolSummary != "" {
-		b.sendChunked(chatID, replyTo, toolSummary)
-	}
-
 	final := strings.TrimSpace(run.Output)
 	if final == "" {
-		final = "run completed without assistant output; check run trace/tool activity for details"
+		renderRun := run
+		renderRun.Status = "completed_no_output"
+		final = b.renderOutcomeText(ctx, runID, renderRun, "I could not produce a useful response this time. Please try again.")
 	}
 	b.sendChunked(chatID, replyTo, final)
+	return
 }
 
 func formatToolActivity(runID string, trace map[string]any) string {
@@ -236,6 +261,33 @@ func formatToolActivity(runID string, trace map[string]any) string {
 
 func waitForTerminalRun(ctx context.Context, runID string, runStatus RunStatusFunc, interval time.Duration) (RunStatus, error) {
 	return chat.WaitForTerminalRun(ctx, runID, runStatus, interval, defaultPollInterval)
+}
+
+func (b *Bot) renderOutcomeText(ctx context.Context, runID string, run RunStatus, fallback string) string {
+	fallback = strings.TrimSpace(fallback)
+	if b == nil || b.outcome == nil {
+		return fallback
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	out, err := b.outcome(reqCtx, OutcomeInput{
+		RunID:        strings.TrimSpace(runID),
+		Status:       strings.TrimSpace(run.Status),
+		Output:       strings.TrimSpace(run.Output),
+		Error:        strings.TrimSpace(run.Error),
+		ArtifactPath: "",
+		ToolSummary:  strings.TrimSpace(formatToolActivity(runID, run.Trace)),
+	})
+	if err != nil {
+		return fallback
+	}
+	if strings.TrimSpace(out) == "" {
+		return fallback
+	}
+	return strings.TrimSpace(out)
 }
 
 func splitTelegramMessage(text string, maxLen int) []string {

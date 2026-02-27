@@ -41,16 +41,8 @@ func ParseThinkingOverride(content string) (string, string, error) {
 	if clean == "" {
 		return "", "", errors.New("message is required")
 	}
-	// Strip optional /ask prefix so thinking= overrides still work when the
-	// command is sent (e.g. "/ask thinking=always summarize").
-	lower := strings.ToLower(clean)
-	if strings.HasPrefix(lower, "/ask") {
-		clean = strings.TrimSpace(clean[4:])
-		if clean == "" {
-			return "", "", errors.New("message is required")
-		}
-	} else if strings.HasPrefix(clean, "/") {
-		// Any other slash command passes through without thinking-mode parsing.
+	if strings.HasPrefix(clean, "/") {
+		// Slash commands pass through without thinking-mode parsing.
 		return clean, "", nil
 	}
 	parts := strings.Fields(clean)
@@ -141,15 +133,21 @@ func WaitForTerminalRun(ctx context.Context, runID string, runStatus RunStatusFu
 	for {
 		run, err := runStatus(ctx, runID)
 		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return RunStatus{Status: "timeout", Error: err.Error()}, nil
+			}
 			return RunStatus{}, err
 		}
 		switch strings.ToLower(strings.TrimSpace(run.Status)) {
-		case "completed", "failed":
+		case "completed", "failed", "timeout", "cancelled":
 			return run, nil
 		}
 
 		select {
 		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return RunStatus{Status: "timeout", Error: ctx.Err().Error()}, nil
+			}
 			return RunStatus{}, ctx.Err()
 		case <-time.After(interval):
 		}

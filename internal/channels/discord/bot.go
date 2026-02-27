@@ -37,6 +37,17 @@ type Response struct {
 
 type RunStatus = chat.RunStatus
 
+type OutcomeInput struct {
+	RunID        string
+	Status       string
+	Output       string
+	Error        string
+	ArtifactPath string
+	ToolSummary  string
+}
+
+type OutcomeResponder func(ctx context.Context, input OutcomeInput) (string, error)
+
 type MessageHandler func(ctx context.Context, msg Message) (Response, error)
 type RunStatusFunc = chat.RunStatusFunc
 
@@ -46,6 +57,7 @@ type Bot struct {
 	limiter   *chat.RateLimiter
 	handler   MessageHandler
 	runStatus RunStatusFunc
+	outcome   OutcomeResponder
 	session   *discordgo.Session
 	closeOnce sync.Once
 }
@@ -78,6 +90,13 @@ func (b *Bot) Stop() error {
 	var err error
 	b.closeOnce.Do(func() { err = b.session.Close() })
 	return err
+}
+
+func (b *Bot) SetOutcomeResponder(responder OutcomeResponder) {
+	if b == nil {
+		return
+	}
+	b.outcome = responder
 }
 
 func (b *Bot) onMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -177,34 +196,33 @@ func (b *Bot) awaitAndPostResult(s *discordgo.Session, m *discordgo.MessageCreat
 
 	run, err := waitForTerminalRun(ctx, runID, b.runStatus, defaultPollInterval)
 	if err != nil {
-		_, _ = s.ChannelMessageSendReply(m.ChannelID, "failed to fetch run `"+runID+"`: "+err.Error(), m.Reference())
+		msg := b.renderOutcomeText(context.Background(), runID, RunStatus{Status: "status_lookup_error", Error: err.Error()}, "I hit a temporary issue while checking your result. Please try again.")
+		_, _ = s.ChannelMessageSendReply(m.ChannelID, msg, m.Reference())
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(run.Status), "timeout") {
+		msg := b.renderOutcomeText(context.Background(), runID, run, "Thanks for your patience - I am still working on your request.")
+		b.sendChunked(s, m, msg)
 		return
 	}
 
 	if strings.EqualFold(strings.TrimSpace(run.Status), "failed") {
-		msg := "run `" + runID + "` failed"
-		if strings.TrimSpace(run.Error) != "" {
-			msg += ": " + run.Error
-		}
-		if toolSummary := formatToolActivity(runID, run.Trace); toolSummary != "" {
-			b.sendChunked(s, m, toolSummary)
-		}
-		_, _ = s.ChannelMessageSendReply(m.ChannelID, msg, m.Reference())
+		msg := b.renderOutcomeText(ctx, runID, run, "I ran into an issue while working on that request. Please try again.")
+		b.sendChunked(s, m, msg)
 		return
-	}
-
-	if toolSummary := formatToolActivity(runID, run.Trace); toolSummary != "" {
-		b.sendChunked(s, m, toolSummary)
 	}
 
 	final := strings.TrimSpace(run.Output)
 	if final == "" {
-		final = "run completed without assistant output; check run trace/tool activity for details"
+		renderRun := run
+		renderRun.Status = "completed_no_output"
+		final = b.renderOutcomeText(ctx, runID, renderRun, "I could not produce a useful response this time. Please try again.")
 	}
 	if strings.TrimSpace(run.ArtifactPath) != "" {
 		final = fmt.Sprintf("%s\n\nartifact: `%s`", final, run.ArtifactPath)
 	}
 	b.sendChunked(s, m, final)
+	return
 }
 
 func formatToolActivity(runID string, trace map[string]any) string {
@@ -213,6 +231,33 @@ func formatToolActivity(runID string, trace map[string]any) string {
 
 func waitForTerminalRun(ctx context.Context, runID string, runStatus RunStatusFunc, interval time.Duration) (RunStatus, error) {
 	return chat.WaitForTerminalRun(ctx, runID, runStatus, interval, defaultPollInterval)
+}
+
+func (b *Bot) renderOutcomeText(ctx context.Context, runID string, run RunStatus, fallback string) string {
+	fallback = strings.TrimSpace(fallback)
+	if b == nil || b.outcome == nil {
+		return fallback
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	out, err := b.outcome(reqCtx, OutcomeInput{
+		RunID:        strings.TrimSpace(runID),
+		Status:       strings.TrimSpace(run.Status),
+		Output:       strings.TrimSpace(run.Output),
+		Error:        strings.TrimSpace(run.Error),
+		ArtifactPath: strings.TrimSpace(run.ArtifactPath),
+		ToolSummary:  strings.TrimSpace(formatToolActivity(runID, run.Trace)),
+	})
+	if err != nil {
+		return fallback
+	}
+	if strings.TrimSpace(out) == "" {
+		return fallback
+	}
+	return strings.TrimSpace(out)
 }
 
 func splitDiscordMessage(text string, maxLen int) []string {

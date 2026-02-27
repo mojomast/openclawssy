@@ -334,7 +334,7 @@ func Default() Config {
 			Enabled:         false,
 			TokenEnv:        "TELEGRAM_BOT_TOKEN",
 			DefaultAgentID:  "default",
-			CommandPrefix:   "/ask",
+			CommandPrefix:   "",
 			RateLimitPerMin: 20,
 		},
 		Secrets: SecretsConfig{

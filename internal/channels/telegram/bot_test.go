@@ -89,6 +89,35 @@ func TestWaitForTerminalRun(t *testing.T) {
 			t.Fatalf("expected %v, got %v", wantErr, err)
 		}
 	})
+
+	t.Run("returns timeout status when polling deadline expires", func(t *testing.T) {
+		statusFn := func(ctx context.Context, runID string) (RunStatus, error) {
+			_ = ctx
+			_ = runID
+			return RunStatus{Status: "running"}, nil
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
+		defer cancel()
+		run, err := waitForTerminalRun(ctx, "run-1", statusFn, time.Millisecond)
+		if err != nil {
+			t.Fatalf("waitForTerminalRun() error = %v", err)
+		}
+		if run.Status != "timeout" {
+			t.Fatalf("expected timeout status, got %+v", run)
+		}
+	})
+
+	t.Run("keeps upstream deadline errors when polling context is still active", func(t *testing.T) {
+		_, err := waitForTerminalRun(context.Background(), "run-1", func(ctx context.Context, runID string) (RunStatus, error) {
+			_ = ctx
+			_ = runID
+			return RunStatus{}, context.DeadlineExceeded
+		}, time.Millisecond)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("expected context deadline exceeded error, got %v", err)
+		}
+	})
 }
 
 func TestParseThinkingOverride(t *testing.T) {
@@ -99,11 +128,10 @@ func TestParseThinkingOverride(t *testing.T) {
 		wantMode  string
 		wantError bool
 	}{
-		{name: "slash ask with override", in: "/ask thinking=always summarize", wantText: "summarize", wantMode: "always"},
 		{name: "prefix text with override", in: "thinking=on_error summarize", wantText: "summarize", wantMode: "on_error"},
 		{name: "plain text", in: "hello", wantText: "hello"},
 		{name: "pass through slash command", in: "/resume chat_1", wantText: "/resume chat_1"},
-		{name: "invalid mode", in: "/ask thinking=maybe hi", wantError: true},
+		{name: "slash ask passes through", in: "/ask thinking=always summarize", wantText: "/ask thinking=always summarize"},
 	}
 
 	for _, tc := range tests {
@@ -145,4 +173,47 @@ func TestFormatTelegramErrorRateLimited(t *testing.T) {
 	if msg != "run queue is full, retry shortly" {
 		t.Fatalf("unexpected queue-full format: %q", msg)
 	}
+}
+
+func TestRenderOutcomeText(t *testing.T) {
+	b := &Bot{}
+	run := RunStatus{Status: "failed", Error: "boom", Trace: map[string]any{"tool_execution_results": []any{map[string]any{"tool": "fs.read", "summary": "read file"}}}}
+
+	t.Run("falls back without responder", func(t *testing.T) {
+		got := b.renderOutcomeText(context.Background(), "run-1", run, "fallback text")
+		if got != "fallback text" {
+			t.Fatalf("expected fallback text, got %q", got)
+		}
+	})
+
+	t.Run("uses responder output", func(t *testing.T) {
+		seen := OutcomeInput{}
+		b.SetOutcomeResponder(func(ctx context.Context, input OutcomeInput) (string, error) {
+			_ = ctx
+			seen = input
+			return "friendly reply", nil
+		})
+		got := b.renderOutcomeText(context.Background(), "run-1", run, "fallback text")
+		if got != "friendly reply" {
+			t.Fatalf("expected responder output, got %q", got)
+		}
+		if seen.Status != "failed" {
+			t.Fatalf("expected status failed, got %q", seen.Status)
+		}
+		if !strings.Contains(seen.ToolSummary, "fs.read") {
+			t.Fatalf("expected tool summary to include tool name, got %q", seen.ToolSummary)
+		}
+	})
+
+	t.Run("falls back on responder error", func(t *testing.T) {
+		b.SetOutcomeResponder(func(ctx context.Context, input OutcomeInput) (string, error) {
+			_ = ctx
+			_ = input
+			return "", errors.New("unavailable")
+		})
+		got := b.renderOutcomeText(context.Background(), "run-1", run, "fallback text")
+		if got != "fallback text" {
+			t.Fatalf("expected fallback after responder error, got %q", got)
+		}
+	})
 }

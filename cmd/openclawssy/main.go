@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"openclawssy/internal/agent"
 	"openclawssy/internal/channels/chat"
 	"openclawssy/internal/channels/cli"
 	"openclawssy/internal/channels/dashboard"
@@ -467,10 +468,13 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 		)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "discord disabled:", err)
-		} else if err := dBot.Start(); err != nil {
-			fmt.Fprintln(os.Stderr, "discord start failed:", err)
 		} else {
-			defer dBot.Stop()
+			dBot.SetOutcomeResponder(buildDiscordOutcomeResponder(runtimeCfg, secretStore))
+			if err := dBot.Start(); err != nil {
+				fmt.Fprintln(os.Stderr, "discord start failed:", err)
+			} else {
+				defer dBot.Stop()
+			}
 		}
 	}
 
@@ -489,10 +493,13 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 		)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "telegram disabled:", err)
-		} else if err := tBot.Start(); err != nil {
-			fmt.Fprintln(os.Stderr, "telegram start failed:", err)
 		} else {
-			defer tBot.Stop()
+			tBot.SetOutcomeResponder(buildTelegramOutcomeResponder(runtimeCfg, secretStore))
+			if err := tBot.Start(); err != nil {
+				fmt.Fprintln(os.Stderr, "telegram start failed:", err)
+			} else {
+				defer tBot.Stop()
+			}
 		}
 	}
 
@@ -939,6 +946,94 @@ func buildTelegramMessageHandler(connector *chat.Connector, defaultAgentID strin
 		}
 		return telegram.Response{ID: queued.ID, Status: queued.Status, Response: queued.Response}, nil
 	}
+}
+
+func buildDiscordOutcomeResponder(cfg config.Config, secretStore *secrets.Store) discord.OutcomeResponder {
+	model, err := runtime.NewProviderModel(cfg, buildSecretLookup(secretStore))
+	if err != nil {
+		return nil
+	}
+	return func(ctx context.Context, input discord.OutcomeInput) (string, error) {
+		return generateBridgeOutcomeReply(ctx, model, "discord", input.Status, input.Output, input.Error, input.ArtifactPath, input.ToolSummary)
+	}
+}
+
+func buildTelegramOutcomeResponder(cfg config.Config, secretStore *secrets.Store) telegram.OutcomeResponder {
+	model, err := runtime.NewProviderModel(cfg, buildSecretLookup(secretStore))
+	if err != nil {
+		return nil
+	}
+	return func(ctx context.Context, input telegram.OutcomeInput) (string, error) {
+		return generateBridgeOutcomeReply(ctx, model, "telegram", input.Status, input.Output, input.Error, input.ArtifactPath, input.ToolSummary)
+	}
+}
+
+func buildSecretLookup(store *secrets.Store) runtime.SecretLookup {
+	if store == nil {
+		return nil
+	}
+	return func(name string) (string, bool, error) {
+		return store.Get(name)
+	}
+}
+
+func generateBridgeOutcomeReply(ctx context.Context, model *runtime.ProviderModel, channel, status, output, errText, artifactPath, toolSummary string) (string, error) {
+	if model == nil {
+		return "", errors.New("model is not configured")
+	}
+	status = strings.TrimSpace(status)
+	if status == "" {
+		status = "unknown"
+	}
+	prompt := strings.Join([]string{
+		"Write a short, user-facing follow-up message for a chat bridge.",
+		"",
+		"Rules:",
+		"- Use plain text only.",
+		"- Keep it to 1-2 sentences.",
+		"- Be empathetic and action-oriented.",
+		"- Do not mention run IDs, tool names, traces, stack traces, config keys, or internal system details.",
+		"- Respond directly; do not request tool calls.",
+		"- If status is timeout or status_lookup_error, acknowledge delay and ask the user to retry shortly.",
+		"- If status is failed, apologize and ask the user to retry or rephrase.",
+		"- If status is completed_no_output, apologize and ask for a clearer request.",
+		"- If artifact_path is present, mention that an artifact was saved and include the path.",
+		"",
+		"Context:",
+		"- channel: " + strings.TrimSpace(channel),
+		"- status: " + status,
+		"- assistant_output: " + quoteBridgeField(output, 700),
+		"- error_summary: " + quoteBridgeField(errText, 500),
+		"- tool_activity_summary: " + quoteBridgeField(toolSummary, 700),
+		"- artifact_path: " + quoteBridgeField(artifactPath, 240),
+		"",
+		"Return only the final user-facing message.",
+	}, "\n")
+	reqCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	result, err := model.Generate(reqCtx, agent.ModelRequest{
+		SystemPrompt: "You write concise, user-facing bridge updates.",
+		Message:      prompt,
+	})
+	if err != nil {
+		return "", err
+	}
+	text := strings.TrimSpace(result.FinalText)
+	if text == "" {
+		return "", errors.New("empty bridge outcome reply")
+	}
+	return text, nil
+}
+
+func quoteBridgeField(value string, maxChars int) string {
+	clean := strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if clean == "" {
+		return "(none)"
+	}
+	if maxChars > 0 && len(clean) > maxChars {
+		clean = strings.TrimSpace(clean[:maxChars]) + "..."
+	}
+	return clean
 }
 
 func queueChannelMessage(ctx context.Context, connector *chat.Connector, defaultAgentID, source, userID, roomID, requestedAgentID, text, thinkingMode string) (chat.Result, error) {
