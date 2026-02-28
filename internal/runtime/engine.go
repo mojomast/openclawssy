@@ -1140,7 +1140,7 @@ func toolCallingBestPracticesDocWithAgentTools() string {
 	)
 	doc += "\n- Use agent.identity.set to bootstrap SOUL identity fields when SOUL.md is empty; provide assistant_name and user_name."
 	doc += "\n- Never emit pseudo-XML tool syntax (for example `<tool_call>...` or `<arg_value>`); runtime executes only valid JSON tool-call objects."
-	doc += "\n- Tool success pattern: successful calls return structured JSON result objects (often including flags like updated/created/deleted and identifying fields); treat this as completion evidence and continue the task instead of re-calling the same tool without new inputs."
+	doc += "\n- Tool success pattern: successful calls usually return structured JSON result objects (often including flags like updated/created/deleted and identifying fields), while shell.exec returns plain command output text; treat either as completion evidence and continue the task instead of re-calling the same tool without new inputs."
 	doc += "\n- Tool failure pattern: failed calls return coded errors (for example tool.input_invalid, policy.denied, timeout, internal.error); read the error, adjust arguments/strategy, and avoid blind retries with identical inputs."
 	return doc
 }
@@ -1168,11 +1168,32 @@ func (r *RegistryExecutor) Execute(ctx context.Context, call agent.ToolCallReque
 	if err != nil {
 		return agent.ToolCallResult{ID: call.ID}, err
 	}
+	if call.Name == "shell.exec" {
+		return agent.ToolCallResult{ID: call.ID, Output: shellExecModelOutput(res)}, nil
+	}
 	b, err := json.Marshal(res)
 	if err != nil {
 		return agent.ToolCallResult{ID: call.ID}, err
 	}
 	return agent.ToolCallResult{ID: call.ID, Output: string(b)}, nil
+}
+
+func shellExecModelOutput(res map[string]any) string {
+	stdout := strings.TrimSpace(fmt.Sprintf("%v", res["stdout"]))
+	stderr := strings.TrimSpace(fmt.Sprintf("%v", res["stderr"]))
+	errText := strings.TrimSpace(fmt.Sprintf("%v", res["error"]))
+
+	chunks := make([]string, 0, 3)
+	if stdout != "" && stdout != "<nil>" {
+		chunks = append(chunks, stdout)
+	}
+	if stderr != "" && stderr != "<nil>" {
+		chunks = append(chunks, stderr)
+	}
+	if len(chunks) == 0 && errText != "" && errText != "<nil>" {
+		chunks = append(chunks, errText)
+	}
+	return strings.Join(chunks, "\n")
 }
 
 func normalizeToolArgs(toolName string, args map[string]any) map[string]any {

@@ -21,6 +21,7 @@ type runTraceEnvelope struct {
 	Thinking             string                   `json:"thinking,omitempty"`
 	ThinkingPresent      bool                     `json:"thinking_present,omitempty"`
 	ModelInputs          []modelInputTrace        `json:"model_inputs,omitempty"`
+	ModelOutputs         []modelOutputTrace       `json:"model_outputs,omitempty"`
 	ModelUsage           []modelUsageTrace        `json:"model_usage,omitempty"`
 	ExtractedToolCalls   []toolExtractionTrace    `json:"extracted_tool_calls,omitempty"`
 	ToolExecutionResults []toolExecutionResultLog `json:"tool_execution_results,omitempty"`
@@ -32,6 +33,14 @@ type modelInputTrace struct {
 	PromptLength    int    `json:"prompt_length"`
 	HistoryInjected bool   `json:"history_injected"`
 	RequestJSON     string `json:"request_json"`
+}
+
+type modelOutputTrace struct {
+	Iteration    int    `json:"iteration"`
+	StatusCode   int    `json:"status_code,omitempty"`
+	ResponseJSON string `json:"response_json"`
+	Streaming    bool   `json:"streaming,omitempty"`
+	DurationMS   int64  `json:"duration_ms,omitempty"`
 }
 
 type modelUsageTrace struct {
@@ -92,6 +101,33 @@ func (c *runTraceCollector) RecordModelInput(message string, promptLength int, h
 		PromptLength:    promptLength,
 		HistoryInjected: historyInjected,
 		RequestJSON:     requestJSON,
+	})
+}
+
+// maxTraceResponseJSON caps the size of response JSON stored in the trace
+// to prevent unbounded memory growth on long-running multi-iteration runs.
+const maxTraceResponseJSON = 128 * 1024 // 128 KB
+
+func (c *runTraceCollector) RecordModelOutput(statusCode int, responseJSON string, streaming bool, durationMS int64) {
+	if c == nil {
+		return
+	}
+	capped := responseJSON
+	if len(capped) > maxTraceResponseJSON {
+		capped = capped[:maxTraceResponseJSON] + "...(truncated)"
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	iteration := c.current
+	if iteration <= 0 {
+		iteration = len(c.env.ModelInputs)
+	}
+	c.env.ModelOutputs = append(c.env.ModelOutputs, modelOutputTrace{
+		Iteration:    iteration,
+		StatusCode:   statusCode,
+		ResponseJSON: capped,
+		Streaming:    streaming,
+		DurationMS:   durationMS,
 	})
 }
 
@@ -221,12 +257,7 @@ func summarizeToolExecution(toolName, output, errText string) string {
 			return fmt.Sprintf("read %s", path)
 		}
 	case "shell.exec":
-		exitCode := intValue(parsed["exit_code"])
-		fallback := strings.TrimSpace(fmt.Sprintf("%v", parsed["shell_fallback"]))
-		if fallback != "" && fallback != "<nil>" {
-			return fmt.Sprintf("shell command completed via %s fallback (exit %d)", fallback, exitCode)
-		}
-		return fmt.Sprintf("shell command completed (exit %d)", exitCode)
+		return "shell command completed"
 	}
 
 	return truncateSummary(output, 180)

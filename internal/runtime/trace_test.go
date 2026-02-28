@@ -91,30 +91,17 @@ func TestRecordToolExecutionIncludesDurationInTrace(t *testing.T) {
 	}
 }
 
-func TestSummarizeToolExecutionShellFallback(t *testing.T) {
-	summary := summarizeToolExecution("shell.exec", `{"stdout":"ok","stderr":"","exit_code":0,"shell_fallback":"sh"}`, "")
-	if summary != "shell command completed via sh fallback (exit 0)" {
+func TestSummarizeToolExecutionShellPlainOutput(t *testing.T) {
+	summary := summarizeToolExecution("shell.exec", "ok\nwarn", "")
+	if summary != "shell command completed" {
 		t.Fatalf("unexpected summary: %q", summary)
 	}
 }
 
-func TestSummarizeToolExecutionShellWithoutFallback(t *testing.T) {
-	tests := []struct {
-		name   string
-		output string
-	}{
-		{name: "missing fallback", output: `{"stdout":"ok","stderr":"","exit_code":2}`},
-		{name: "null fallback", output: `{"stdout":"ok","stderr":"","exit_code":2,"shell_fallback":null}`},
-		{name: "empty fallback", output: `{"stdout":"ok","stderr":"","exit_code":2,"shell_fallback":""}`},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			summary := summarizeToolExecution("shell.exec", tc.output, "")
-			if summary != "shell command completed (exit 2)" {
-				t.Fatalf("unexpected summary: %q", summary)
-			}
-		})
+func TestSummarizeToolExecutionShellJSONOutput(t *testing.T) {
+	summary := summarizeToolExecution("shell.exec", `{"stdout":"ok","stderr":"warn","exit_code":1}`, "")
+	if summary != "shell command completed" {
+		t.Fatalf("unexpected summary: %q", summary)
 	}
 }
 

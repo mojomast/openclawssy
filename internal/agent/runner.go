@@ -406,39 +406,6 @@ func truncateGuidanceText(value string, maxChars int) string {
 	return strings.TrimSpace(text[:maxChars-3]) + "..."
 }
 
-func toolResultErrorText(result ToolCallResult) string {
-	if text := strings.TrimSpace(result.Error); text != "" {
-		return text
-	}
-	raw := strings.TrimSpace(result.Output)
-	if raw == "" || (!strings.HasPrefix(raw, "{") && !strings.HasPrefix(raw, "[")) {
-		return ""
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return ""
-	}
-	if v, ok := payload["error"]; ok {
-		errText := strings.TrimSpace(fmt.Sprintf("%v", v))
-		if errText != "" && errText != "<nil>" {
-			return errText
-		}
-	}
-	if v, ok := payload["exit_code"]; ok {
-		switch n := v.(type) {
-		case float64:
-			if int(n) != 0 {
-				return fmt.Sprintf("exit status %d", int(n))
-			}
-		case int:
-			if n != 0 {
-				return fmt.Sprintf("exit status %d", n)
-			}
-		}
-	}
-	return ""
-}
-
 // Delegation helper functions
 
 func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks []DecomposedTask, input RunInput) error {

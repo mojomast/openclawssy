@@ -238,10 +238,6 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 				now := time.Now().UTC()
 				cached.ID = call.ID
 				record := ToolCallRecord{Request: call, Result: cached, StartedAt: now, CompletedAt: now}
-				errText := toolResultErrorText(record.Result)
-				if strings.TrimSpace(record.Result.Error) == "" && errText != "" {
-					record.Result.Error = errText
-				}
 				s.notifyToolCall(&record, input.OnToolCall)
 				s.out.ToolCalls = append(s.out.ToolCalls, record)
 				s.toolResults = append(s.toolResults, record.Result)
@@ -252,10 +248,6 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 				now := time.Now().UTC()
 				cached.ID = call.ID
 				record := ToolCallRecord{Request: call, Result: cached, StartedAt: now, CompletedAt: now}
-				errText := toolResultErrorText(record.Result)
-				if strings.TrimSpace(record.Result.Error) == "" && errText != "" {
-					record.Result.Error = errText
-				}
 				s.notifyToolCall(&record, input.OnToolCall)
 				s.out.ToolCalls = append(s.out.ToolCalls, record)
 				s.toolResults = append(s.toolResults, record.Result)
@@ -331,12 +323,6 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 				result.Error = execErr.Error()
 			}
 		}
-		if strings.TrimSpace(result.Error) == "" {
-			if inferred := toolResultErrorText(result); inferred != "" {
-				result.Error = inferred
-			}
-		}
-
 		record.Result = result
 		record.CompletedAt = time.Now().UTC()
 		hadFreshExecution = true

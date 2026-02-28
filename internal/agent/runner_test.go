@@ -1331,7 +1331,7 @@ func TestRunnerStopsAfterTransientProviderRetryCap(t *testing.T) {
 	}
 }
 
-func TestRunnerTreatsStructuredToolOutputErrorsAsFailures(t *testing.T) {
+func TestRunnerIgnoresStructuredToolOutputErrorsWithoutExplicitFailure(t *testing.T) {
 	model := &mockModel{responses: []ModelResponse{
 		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "shell.exec", Arguments: []byte(`{"command":"bash","args":["-lc","curl -fsSL https://tailscale.com/install.sh | sh"]}`)}}},
 		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "shell.exec", Arguments: []byte(`{"command":"bash","args":["-lc","curl -fsSL https://tailscale.com/install.sh | sh"]}`)}}},
@@ -1356,15 +1356,15 @@ func TestRunnerTreatsStructuredToolOutputErrorsAsFailures(t *testing.T) {
 	if len(model.reqs) < 3 {
 		t.Fatalf("expected at least 3 model requests, got %d", len(model.reqs))
 	}
-	if !strings.Contains(model.reqs[2].SystemPrompt, "ERROR_RECOVERY_MODE") {
-		t.Fatalf("expected recovery mode after structured output errors, got %q", model.reqs[2].SystemPrompt)
+	if strings.Contains(model.reqs[2].SystemPrompt, "ERROR_RECOVERY_MODE") {
+		t.Fatalf("did not expect recovery mode from structured output fields alone, got %q", model.reqs[2].SystemPrompt)
 	}
 }
 
-func TestRunnerEscalatesGuidanceForStructuredToolOutputErrors(t *testing.T) {
+func TestRunnerDoesNotEscalateGuidanceForStructuredOutputFieldsAlone(t *testing.T) {
 	// Use distinct shell commands so the shell.exec repetition cap doesn't interfere
 	// with the failure recovery escalation path.
-	responses := make([]ModelResponse, 0, 6)
+	responses := make([]ModelResponse, 0, 7)
 	results := make(map[string]ToolCallResult, 6)
 	commands := []string{
 		`{"command":"bash","args":["-lc","curl -fsSL https://tailscale.com/install.sh | sh"]}`,
@@ -1379,6 +1379,7 @@ func TestRunnerEscalatesGuidanceForStructuredToolOutputErrors(t *testing.T) {
 		responses = append(responses, ModelResponse{ToolCalls: []ToolCallRequest{{ID: id, Name: "shell.exec", Arguments: []byte(commands[i])}}})
 		results[id] = ToolCallResult{ID: id, Output: `{"exit_code":127,"stderr":"sh: rc-update: not found","stdout":"Installing Tailscale","error":"exit status 127"}`}
 	}
+	responses = append(responses, ModelResponse{FinalText: "done"})
 
 	model := &mockModel{responses: responses}
 	tools := &mockTools{results: results}
@@ -1388,11 +1389,11 @@ func TestRunnerEscalatesGuidanceForStructuredToolOutputErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
-	if !strings.Contains(out.FinalText, "stopped repeated failing tool attempts") {
-		t.Fatalf("expected loop-safe failure finalization, got %q", out.FinalText)
+	if out.FinalText != "done" {
+		t.Fatalf("expected normal completion, got %q", out.FinalText)
 	}
-	if len(out.ToolCalls) != 5 {
-		t.Fatalf("expected 5 tool calls before escalation, got %d", len(out.ToolCalls))
+	if len(out.ToolCalls) != 6 {
+		t.Fatalf("expected all tool calls to run without failure escalation, got %d", len(out.ToolCalls))
 	}
 }
 

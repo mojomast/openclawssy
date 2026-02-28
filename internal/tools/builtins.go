@@ -738,11 +738,6 @@ func shellExec(ctx context.Context, req Request) (map[string]any, error) {
 	if timeoutMS > 0 {
 		res["timeout_ms"] = timeoutMS
 	}
-	// Preserve structured output for callers even when command execution fails.
-	// Callers infer failures from the embedded error payload.
-	if isProcessExitStatusError(execErr) {
-		return res, nil
-	}
 	return res, nil
 }
 
@@ -790,17 +785,6 @@ func isExecutableNotFound(err error) bool {
 		return false
 	}
 	return strings.Contains(text, "executable file not found") || strings.Contains(text, "not found in $path") || strings.Contains(text, "no such file or directory")
-}
-
-func isProcessExitStatusError(err error) bool {
-	if err == nil {
-		return false
-	}
-	text := strings.ToLower(strings.TrimSpace(err.Error()))
-	if text == "" {
-		return false
-	}
-	return strings.HasPrefix(text, "exit status ")
 }
 
 func listFiles(root string, maxFiles int) ([]string, error) {

@@ -2003,6 +2003,42 @@ func TestNormalizeToolArgsCoversFieldMappings(t *testing.T) {
 	}
 }
 
+func TestShellExecModelOutputCombinesStreams(t *testing.T) {
+	output := shellExecModelOutput(map[string]any{
+		"stdout": "line 1",
+		"stderr": "warn 1",
+	})
+	if output != "line 1\nwarn 1" {
+		t.Fatalf("unexpected combined shell output: %q", output)
+	}
+}
+
+func TestShellExecModelOutputFallsBackToErrorText(t *testing.T) {
+	output := shellExecModelOutput(map[string]any{
+		"error": "output_capture_bug: command exited 0 with empty stdout/stderr",
+	})
+	if !strings.Contains(output, "output_capture_bug") {
+		t.Fatalf("expected fallback error text in shell output, got %q", output)
+	}
+}
+
+func TestShellExecModelOutputHandlesSingleStreamAndEmpty(t *testing.T) {
+	stdoutOnly := shellExecModelOutput(map[string]any{"stdout": "ok"})
+	if stdoutOnly != "ok" {
+		t.Fatalf("expected stdout passthrough, got %q", stdoutOnly)
+	}
+
+	stderrOnly := shellExecModelOutput(map[string]any{"stderr": "warn"})
+	if stderrOnly != "warn" {
+		t.Fatalf("expected stderr passthrough, got %q", stderrOnly)
+	}
+
+	empty := shellExecModelOutput(map[string]any{})
+	if empty != "" {
+		t.Fatalf("expected empty output, got %q", empty)
+	}
+}
+
 func TestAppendRunConversationPersistsToolAndAssistantMessages(t *testing.T) {
 	root := t.TempDir()
 	e, err := NewEngine(root)
