@@ -280,17 +280,48 @@ func (p *LocalProvider) isStarted() bool {
 	return p.started
 }
 
+func (p *LocalProvider) fileOpReady(ctx context.Context) error {
+	p.mu.RLock()
+	started := p.started
+	runCtx := p.runCtx
+	p.mu.RUnlock()
+
+	if !started {
+		return ErrNotStarted
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-runCtx.Done():
+		return runCtx.Err()
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
+}
+
 // File operations — LocalProvider delegates directly to the host OS.
 
-func (p *LocalProvider) ReadFile(_ context.Context, path string) ([]byte, error) {
+func (p *LocalProvider) ReadFile(ctx context.Context, path string) ([]byte, error) {
+	if err := p.fileOpReady(ctx); err != nil {
+		return nil, err
+	}
 	return os.ReadFile(path)
 }
 
-func (p *LocalProvider) WriteFile(_ context.Context, path string, data []byte, perm os.FileMode) error {
+func (p *LocalProvider) WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error {
+	if err := p.fileOpReady(ctx); err != nil {
+		return err
+	}
 	return os.WriteFile(path, data, perm)
 }
 
-func (p *LocalProvider) ListDir(_ context.Context, path string) ([]FileInfo, error) {
+func (p *LocalProvider) ListDir(ctx context.Context, path string) ([]FileInfo, error) {
+	if err := p.fileOpReady(ctx); err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		return nil, err
@@ -311,22 +342,34 @@ func (p *LocalProvider) ListDir(_ context.Context, path string) ([]FileInfo, err
 	return out, nil
 }
 
-func (p *LocalProvider) MkdirAll(_ context.Context, path string, perm os.FileMode) error {
+func (p *LocalProvider) MkdirAll(ctx context.Context, path string, perm os.FileMode) error {
+	if err := p.fileOpReady(ctx); err != nil {
+		return err
+	}
 	return os.MkdirAll(path, perm)
 }
 
-func (p *LocalProvider) Remove(_ context.Context, path string, recursive bool) error {
+func (p *LocalProvider) Remove(ctx context.Context, path string, recursive bool) error {
+	if err := p.fileOpReady(ctx); err != nil {
+		return err
+	}
 	if recursive {
 		return os.RemoveAll(path)
 	}
 	return os.Remove(path)
 }
 
-func (p *LocalProvider) Rename(_ context.Context, src, dst string) error {
+func (p *LocalProvider) Rename(ctx context.Context, src, dst string) error {
+	if err := p.fileOpReady(ctx); err != nil {
+		return err
+	}
 	return os.Rename(src, dst)
 }
 
-func (p *LocalProvider) Lstat(_ context.Context, path string) (FileInfo, bool, error) {
+func (p *LocalProvider) Lstat(ctx context.Context, path string) (FileInfo, bool, error) {
+	if err := p.fileOpReady(ctx); err != nil {
+		return FileInfo{}, false, err
+	}
 	info, err := os.Lstat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -341,6 +384,9 @@ func (p *LocalProvider) Lstat(_ context.Context, path string) (FileInfo, bool, e
 	}, true, nil
 }
 
-func (p *LocalProvider) EvalSymlinks(_ context.Context, path string) (string, error) {
+func (p *LocalProvider) EvalSymlinks(ctx context.Context, path string) (string, error) {
+	if err := p.fileOpReady(ctx); err != nil {
+		return "", err
+	}
 	return filepath.EvalSymlinks(path)
 }

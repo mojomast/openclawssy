@@ -81,6 +81,9 @@ func TestLocalProviderWriteAndReadFile(t *testing.T) {
 		t.Fatalf("new local provider: %v", err)
 	}
 	ctx := context.Background()
+	if err := p.Start(ctx); err != nil {
+		t.Fatalf("start local provider: %v", err)
+	}
 	path := filepath.Join(dir, "hello.txt")
 	data := []byte("hello world")
 	if err := p.WriteFile(ctx, path, data, 0o600); err != nil {
@@ -102,6 +105,9 @@ func TestLocalProviderListDir(t *testing.T) {
 		t.Fatalf("new local provider: %v", err)
 	}
 	ctx := context.Background()
+	if err := p.Start(ctx); err != nil {
+		t.Fatalf("start local provider: %v", err)
+	}
 
 	// Create a couple of files and a sub-directory.
 	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o600); err != nil {
@@ -139,6 +145,9 @@ func TestLocalProviderMkdirAll(t *testing.T) {
 		t.Fatalf("new local provider: %v", err)
 	}
 	ctx := context.Background()
+	if err := p.Start(ctx); err != nil {
+		t.Fatalf("start local provider: %v", err)
+	}
 	newDir := filepath.Join(dir, "a", "b", "c")
 	if err := p.MkdirAll(ctx, newDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -159,6 +168,9 @@ func TestLocalProviderRemove(t *testing.T) {
 		t.Fatalf("new local provider: %v", err)
 	}
 	ctx := context.Background()
+	if err := p.Start(ctx); err != nil {
+		t.Fatalf("start local provider: %v", err)
+	}
 
 	// Remove a single file.
 	filePath := filepath.Join(dir, "remove_me.txt")
@@ -195,6 +207,9 @@ func TestLocalProviderRename(t *testing.T) {
 		t.Fatalf("new local provider: %v", err)
 	}
 	ctx := context.Background()
+	if err := p.Start(ctx); err != nil {
+		t.Fatalf("start local provider: %v", err)
+	}
 	src := filepath.Join(dir, "src.txt")
 	dst := filepath.Join(dir, "dst.txt")
 	if err := os.WriteFile(src, []byte("content"), 0o600); err != nil {
@@ -222,6 +237,9 @@ func TestLocalProviderLstat(t *testing.T) {
 		t.Fatalf("new local provider: %v", err)
 	}
 	ctx := context.Background()
+	if err := p.Start(ctx); err != nil {
+		t.Fatalf("start local provider: %v", err)
+	}
 
 	// Existing file.
 	filePath := filepath.Join(dir, "exists.txt")
@@ -259,6 +277,9 @@ func TestLocalProviderEvalSymlinks(t *testing.T) {
 		t.Fatalf("new local provider: %v", err)
 	}
 	ctx := context.Background()
+	if err := p.Start(ctx); err != nil {
+		t.Fatalf("start local provider: %v", err)
+	}
 
 	// EvalSymlinks on a real path should succeed.
 	resolved, err := p.EvalSymlinks(ctx, dir)

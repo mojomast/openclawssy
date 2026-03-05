@@ -473,7 +473,19 @@ func (c *Config) ApplyDefaults() {
 		c.Agents.DelegationCooldownIter = d.Agents.DelegationCooldownIter
 	}
 	if len(c.Agents.SubAgentDefaults.AllowedTools) == 0 {
-		c.Agents.SubAgentDefaults = d.Agents.SubAgentDefaults
+		c.Agents.SubAgentDefaults.AllowedTools = append([]string(nil), d.Agents.SubAgentDefaults.AllowedTools...)
+	}
+	if c.Agents.SubAgentDefaults.MaxToolIterations == 0 {
+		c.Agents.SubAgentDefaults.MaxToolIterations = d.Agents.SubAgentDefaults.MaxToolIterations
+	}
+	if c.Agents.SubAgentDefaults.TimeoutMS == 0 {
+		c.Agents.SubAgentDefaults.TimeoutMS = d.Agents.SubAgentDefaults.TimeoutMS
+	}
+	if c.Agents.SubAgentDefaults.ThinkingMode == "" {
+		c.Agents.SubAgentDefaults.ThinkingMode = d.Agents.SubAgentDefaults.ThinkingMode
+	}
+	if c.Agents.SubAgentDefaults.DelegationMode == "" {
+		c.Agents.SubAgentDefaults.DelegationMode = d.Agents.SubAgentDefaults.DelegationMode
 	}
 	if c.Agents.SubAgentOverrides == nil {
 		c.Agents.SubAgentOverrides = map[string]SubAgentRestrictions{}

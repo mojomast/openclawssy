@@ -2111,7 +2111,7 @@ func TestAgentCreateForceOverwriteBehavior(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read tools after force: %v", err)
 	}
-	if !strings.Contains(string(raw), "Enabled core tools") {
+	if !strings.Contains(string(raw), "Use only registered tools") {
 		t.Fatalf("expected force=true to rewrite seed file, got %q", string(raw))
 	}
 }

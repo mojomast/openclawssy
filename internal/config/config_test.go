@@ -459,3 +459,21 @@ func TestSubAgentDefaultsApplied(t *testing.T) {
 		t.Fatal("expected SubAgentOverrides to be initialized after ApplyDefaults")
 	}
 }
+
+func TestApplyDefaultsPreservesExplicitSubAgentFields(t *testing.T) {
+	cfg := Config{}
+	cfg.Agents.SubAgentDefaults.TimeoutMS = 45000
+	cfg.Agents.SubAgentDefaults.ThinkingMode = ThinkingModeAlways
+
+	cfg.ApplyDefaults()
+
+	if cfg.Agents.SubAgentDefaults.TimeoutMS != 45000 {
+		t.Fatalf("expected explicit timeout preserved, got %d", cfg.Agents.SubAgentDefaults.TimeoutMS)
+	}
+	if cfg.Agents.SubAgentDefaults.ThinkingMode != ThinkingModeAlways {
+		t.Fatalf("expected explicit thinking mode preserved, got %q", cfg.Agents.SubAgentDefaults.ThinkingMode)
+	}
+	if len(cfg.Agents.SubAgentDefaults.AllowedTools) == 0 {
+		t.Fatal("expected default allowed tools to be filled when omitted")
+	}
+}

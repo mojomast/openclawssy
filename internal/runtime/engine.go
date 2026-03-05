@@ -1073,94 +1073,116 @@ func identityBootstrapDoc() string {
 }
 
 func runtimeContextDoc(workspaceDir string) string {
-	doc := fmt.Sprintf(
-		"# RUNTIME_CONTEXT\n\n- Workspace root: %s\n- File tools (fs.read/fs.list/fs.write/fs.append/fs.delete/fs.move/fs.edit/code.search) can only access paths inside workspace root.\n- Config tools (config.get/config.set) can only read redacted config and mutate an allowlisted safe field subset.\n- Secret tools (secrets.get/secrets.set/secrets.list) use encrypted secret storage; secret values are never written to audit fields in plaintext.\n- Scheduler tools (scheduler.list/add/remove/pause/resume) persist jobs in .openclawssy/scheduler/jobs.json and enforce scheduler validation rules.\n- Session tools (session.list/session.close) manage chat sessions persisted under .openclawssy/agents/*/memory/chats and closed sessions are not reused for routing.\n- Run tools (run.list/run.get) retrieve run traces and summaries from the run store; use filtering and pagination for large result sets.\n- Network tool (http.request/net.fetch) is enabled only when network.enabled=true, enforces scheme checks, allowlisted domains, redirect rechecks, and localhost policy.\n- Paths outside workspace (for example /home, ~, ..) are blocked by policy.\n- If shell.exec is enabled by policy, use shell.exec with command=`<shell script>` (the full command string; runtime passes it to bash -lc automatically).\n- Optionally provide workdir to set the working directory for the command; omit to use the sandbox default.\n- If `bash` is unavailable in PATH, runtime retries `/bin/bash`, then `/usr/bin/bash`, then `sh`.\n- Shell commands can use environment tools available in the runtime image (for example: python3/pip, node/npm, git, curl/wget, jq, nmap, dig/nslookup, ip/ss/netstat, traceroute, tcpdump).\n- Some network commands may require container capabilities or host mounts (for example docker socket, NET_RAW, NET_ADMIN). If unavailable, report the exact error and continue with the best available diagnostic command.\n- Paths outside workspace (for example /home, ~, ..) are blocked by policy even when using shell.exec.\n- If the user asks about files in home directory, explain this limitation and offer to list the workspace instead.\n- Keep responses task-focused; do not mention HANDOFF/SPECPLAN/DEVPLAN unless the user explicitly asks about them.\n",
-		workspaceDir,
-	)
-	doc = strings.Replace(doc,
-		"- Run tools (run.list/run.get) retrieve run traces and summaries from the run store; use filtering and pagination for large result sets.",
-		"- Agent tools (agent.list/agent.create/agent.switch/agent.identity.set) manage per-agent control-plane directories and update default chat/discord routing in config.\n- Run tools (run.list/run.get/run.cancel) retrieve run traces and summaries from the run store and can cancel tracked in-flight runs.",
-		1,
-	)
-	doc = strings.Replace(doc,
-		"- Run tools (run.list/run.get/run.cancel) retrieve run traces and summaries from the run store and can cancel tracked in-flight runs.",
-		"- Run tools (run.list/run.get/run.cancel) retrieve run traces and summaries from the run store and can cancel tracked in-flight runs.\n- Policy tools (policy.list/policy.grant/policy.revoke) manage per-agent capability grants and require policy.admin capability.\n- Metrics tool (metrics.get) aggregates run and per-tool duration/error metrics from run traces.",
-		1,
-	)
-	doc = strings.Replace(doc,
-		"- Secret tools (secrets.get/secrets.set/secrets.list) use encrypted secret storage; secret values are never written to audit fields in plaintext.",
-		"- Secret tools (secrets.get/secrets.set/secrets.list) use encrypted secret storage; secret values are never written to audit fields in plaintext.\n- Skill tools (skill.list/skill.read) discover workspace skills under skills/ and report required secret keys with missing-secret diagnostics.\n- Memory tools (memory.search/memory.write/memory.update/memory.forget/memory.health/memory.checkpoint/memory.maintenance/decision.log) persist structured per-agent working memory in .openclawssy/agents/<agent>/memory/memory.db.",
-		1,
-	)
-	return doc
+	bullets := []string{
+		fmt.Sprintf("Workspace root: %s", workspaceDir),
+		"File tools (fs.read/fs.list/fs.write/fs.append/fs.delete/fs.move/fs.edit/code.search) can only access paths inside workspace root.",
+		"Config tools (config.get/config.set) can only read redacted config and mutate an allowlisted safe field subset.",
+		"Secret tools (secrets.get/secrets.set/secrets.list) use encrypted secret storage; secret values are never written to audit fields in plaintext.",
+		"Skill tools (skill.list/skill.read) discover workspace skills under skills/ and report required secret keys with missing-secret diagnostics.",
+		"Memory tools (memory.search/memory.write/memory.update/memory.forget/memory.health/memory.checkpoint/memory.maintenance/decision.log) persist structured per-agent working memory in .openclawssy/agents/<agent>/memory/memory.db.",
+		"Scheduler tools (scheduler.list/add/remove/pause/resume) persist jobs in .openclawssy/scheduler/jobs.json and enforce scheduler validation rules.",
+		"Session tools (session.list/session.close) manage chat sessions persisted under .openclawssy/agents/*/memory/chats and closed sessions are not reused for routing.",
+		"Agent tools (agent.list/agent.create/agent.switch/agent.identity.set) manage agent scaffolds, identities, and default routing; agent.profile.get/agent.profile.set control per-agent model and activation settings.",
+		"Run tools (run.list/run.get/run.cancel) retrieve run traces and summaries from the run store and can cancel tracked in-flight runs.",
+		"Policy tools (policy.list/policy.grant/policy.revoke) manage per-agent capability grants and require policy.admin capability.",
+		"Metrics tool (metrics.get) aggregates run and per-tool duration/error metrics from run traces.",
+		"Network tool (http.request/net.fetch) is enabled only when network.enabled=true, enforces scheme checks, allowlisted domains, redirect rechecks, and localhost policy.",
+		"If shell.exec is enabled by policy, use shell.exec with command=`<shell script>`; runtime passes it to bash -lc automatically.",
+		"Optionally provide workdir to set the working directory for the command; omit to use the sandbox default.",
+		"If `bash` is unavailable in PATH, runtime retries `/bin/bash`, then `/usr/bin/bash`, then `sh`.",
+		"Shell commands can use environment tools available in the runtime image (for example: python3/pip, node/npm, git, curl/wget, jq, nmap, dig/nslookup, ip/ss/netstat, traceroute, tcpdump).",
+		"Some network commands may require container capabilities or host mounts (for example docker socket, NET_RAW, NET_ADMIN). If unavailable, report the exact error and continue with the best available diagnostic command.",
+		"Paths outside workspace (for example /home, ~, ..) are blocked by policy even when using shell.exec.",
+		"The home directory may exist in the runtime environment, but treat it as read-only context unless a workspace tool explicitly exposes a safe path there.",
+		"Prompt files like SOUL.md/RULES.md/TOOLS.md/SPECPLAN.md/DEVPLAN.md/HANDOFF.md are control-plane inputs; do not mention HANDOFF or internal prompt filenames unless the user explicitly asks about them.",
+	}
+	return formatPromptBulletDoc("RUNTIME_CONTEXT", bullets)
 }
 
 func toolCallingBestPracticesDoc() string {
-	return "# TOOL_CALLING_BEST_PRACTICES\n\n- Use only registered tool names: fs.read, fs.list, fs.write, fs.append, fs.delete, fs.move, fs.edit, code.search, config.get, config.set, secrets.get, secrets.set, secrets.list, scheduler.list, scheduler.add, scheduler.remove, scheduler.pause, scheduler.resume, session.list, session.close, run.list, run.get, http.request, time.now, shell.exec.\n- Preferred format for tool calls is a fenced JSON object with tool_name and arguments.\n- Example:\n```json\n{\"tool_name\":\"fs.list\",\"arguments\":{\"path\":\".\"}}\n```\n- For shell commands use shell.exec with command=`<shell script>` (the full command string; runtime automatically passes it to bash -lc). Optionally set workdir to change the working directory.\n- Runtime retries `/bin/bash` and `/usr/bin/bash` before fallback to `sh`; keep scripts POSIX-compatible when possible.\n- Common runtime shell tools include: python3/pip, node/npm, git, curl, wget, jq, nmap, dig/nslookup, ip, ss, netstat, traceroute, tcpdump.\n- For connectivity checks, prefer read-only diagnostics first (for example `ip addr`, `ss -tulpen`, `dig`, `curl -I`, `nmap -sT`).\n- For multi-step shell tasks, prefer one well-structured script in a single `shell.exec` call over many tiny probe commands.\n- Use fs.append to add content to existing files without replacing prior content.\n- Use fs.delete for removals; pass recursive=true only when deleting directories intentionally.\n- Use fs.move for renames/moves. Pass overwrite=true only when destination replacement is intentional.\n- Use config.set only for safe runtime knobs; do not use it for provider API keys or secret values.\n- Use secrets.set for secret writes and secrets.get for reads; never echo secret values in plain text summaries.\n- Use scheduler.add/list/remove/pause/resume for job lifecycle; keep schedules valid (`@every` or RFC3339 one-shot).\n- Use session.list to inspect recent sessions and session.close to retire a session so future chat routing creates a new one.\n- Use run.list to enumerate runs with filtering (agent_id, status) and pagination (limit, offset); use run.get to retrieve a specific run by ID.\n- Use http.request only for http/https targets allowed by network config; keep timeout and response size bounded.\n- If the user asks you to do work, continue executing the plan directly; do not ask permission-style follow-up questions.\n- If a command fails due to permissions/capabilities, surface the exact stderr and try a safer fallback command when possible.\n- If you already have enough evidence from tool results, stop calling tools and provide the final answer.\n- Avoid running the exact same failing command repeatedly; adjust flags or explain the failure instead.\n- Do not invent tool names (for example time.sleep is invalid).\n- Do not claim file edits or command results until a matching tool.result is observed.\n- For multi-step requests, chain tool calls until the task is complete instead of stopping after the first step.\n- **ALWAYS proactively report progress**: After each tool result, immediately tell the user what you discovered or accomplished. Never make the user ask SO WHAT HAPPENED or DID THAT WORK - anticipate their need for status updates.\n"
+	bullets := []string{
+		"Use only registered tool names: fs.read, fs.list, fs.write, fs.append, fs.delete, fs.move, fs.edit, code.search, config.get, config.set, secrets.get, secrets.set, secrets.list, scheduler.list, scheduler.add, scheduler.remove, scheduler.pause, scheduler.resume, session.list, session.close, run.list, run.get, http.request, time.now, shell.exec.",
+		"Preferred format for tool calls is a fenced JSON object with tool_name and arguments.",
+		"Example:\n```json\n{\"tool_name\":\"fs.list\",\"arguments\":{\"path\":\".\"}}\n```",
+		"For shell commands use shell.exec with command=`<shell script>` (the full command string; runtime automatically passes it to bash -lc). Optionally set workdir to change the working directory.",
+		"Runtime retries `/bin/bash` and `/usr/bin/bash` before fallback to `sh`; keep scripts POSIX-compatible when possible.",
+		"Common runtime shell tools include: python3/pip, node/npm, git, curl, wget, jq, nmap, dig/nslookup, ip, ss, netstat, traceroute, tcpdump.",
+		"For connectivity checks, prefer read-only diagnostics first (for example `ip addr`, `ss -tulpen`, `dig`, `curl -I`, `nmap -sT`).",
+		"For multi-step shell tasks, prefer one well-structured script in a single `shell.exec` call over many tiny probe commands.",
+		"Use fs.append to add content to existing files without replacing prior content.",
+		"Use fs.delete for removals; pass recursive=true only when deleting directories intentionally.",
+		"Use fs.move for renames and moves; replace the destination only when that overwrite is intentional.",
+		"Use config.get and config.set for safe runtime knobs; do not use config.set for provider API keys or secret values.",
+		"Use secrets.get and secrets.set for secret access; never echo secret values in plain text summaries.",
+		"Use scheduler.add/list/remove/pause/resume for job lifecycle; keep schedules valid (`@every` or RFC3339 one-shot).",
+		"Use session.list to inspect recent sessions and session.close to retire a session so future chat routing starts fresh.",
+		"Use run.list to enumerate runs with filtering (agent_id, status) and pagination; use run.get for details before proposing operational changes.",
+		"Do not invent tool names or arguments. If a capability is unavailable, say so plainly and continue with the best available path.",
+		"When the task requires tools, chain tool calls until the task is complete or you are truly blocked; do not stop after a single successful read if more execution is clearly needed.",
+	}
+	return formatPromptBulletDoc("TOOL_CALLING_BEST_PRACTICES", bullets)
 }
 
 func toolCallingBestPracticesDocWithAgentTools() string {
-	doc := toolCallingBestPracticesDoc()
-	doc = strings.Replace(doc,
-		"secrets.get, secrets.set, secrets.list, scheduler.list, scheduler.add, scheduler.remove, scheduler.pause, scheduler.resume, session.list, session.close, run.list, run.get, http.request, time.now, shell.exec.",
-		"secrets.get, secrets.set, secrets.list, skill.list, skill.read, scheduler.list, scheduler.add, scheduler.remove, scheduler.pause, scheduler.resume, session.list, session.close, run.list, run.get, memory.search, memory.write, memory.update, memory.forget, memory.health, memory.checkpoint, memory.maintenance, decision.log, http.request, time.now, shell.exec.",
-		1,
-	)
-	doc = strings.Replace(doc,
-		"- Use secrets.set for secret writes and secrets.get for reads; never echo secret values in plain text summaries.",
-		"- Use secrets.set for secret writes and secrets.get for reads; never echo secret values in plain text summaries.\n- Use skill.list and skill.read to discover workspace skills under skills/ and validate required secret keys before execution.",
-		1,
-	)
-	doc = strings.Replace(doc,
-		"session.list, session.close, run.list, run.get, http.request, time.now, shell.exec.",
-		"session.list, session.close, agent.list, agent.create, agent.switch, agent.profile.get, agent.profile.set, agent.message.send, agent.message.inbox, agent.run, agent.prompt.read, agent.prompt.update, agent.prompt.suggest, run.list, run.get, run.cancel, http.request, time.now, shell.exec.",
-		1,
-	)
-	doc = strings.Replace(doc,
-		"session.list, session.close, run.list, run.get, memory.search, memory.write, memory.update, memory.forget, memory.health, http.request, time.now, shell.exec.",
-		"session.list, session.close, agent.list, agent.create, agent.switch, agent.profile.get, agent.profile.set, agent.message.send, agent.message.inbox, agent.run, agent.prompt.read, agent.prompt.update, agent.prompt.suggest, run.list, run.get, run.cancel, memory.search, memory.write, memory.update, memory.forget, memory.health, memory.checkpoint, memory.maintenance, decision.log, http.request, time.now, shell.exec.",
-		1,
-	)
-	doc = strings.Replace(doc,
-		"session.list, session.close, run.list, run.get, memory.search, memory.write, memory.update, memory.forget, memory.health, memory.checkpoint, decision.log, http.request, time.now, shell.exec.",
-		"session.list, session.close, agent.list, agent.create, agent.switch, agent.profile.get, agent.profile.set, agent.message.send, agent.message.inbox, agent.run, agent.prompt.read, agent.prompt.update, agent.prompt.suggest, run.list, run.get, run.cancel, memory.search, memory.write, memory.update, memory.forget, memory.health, memory.checkpoint, decision.log, http.request, time.now, shell.exec.",
-		1,
-	)
-	doc = strings.Replace(doc,
-		"session.list, session.close, run.list, run.get, memory.search, memory.write, memory.update, memory.forget, memory.health, memory.checkpoint, memory.maintenance, decision.log, http.request, time.now, shell.exec.",
-		"session.list, session.close, agent.list, agent.create, agent.switch, agent.profile.get, agent.profile.set, agent.message.send, agent.message.inbox, agent.run, agent.prompt.read, agent.prompt.update, agent.prompt.suggest, run.list, run.get, run.cancel, memory.search, memory.write, memory.update, memory.forget, memory.health, memory.checkpoint, memory.maintenance, decision.log, http.request, time.now, shell.exec.",
-		1,
-	)
-	doc = strings.Replace(doc,
-		"session.list, session.close, agent.list, agent.create, agent.switch, agent.profile.get, agent.profile.set, agent.message.send, agent.message.inbox, agent.run, agent.prompt.read, agent.prompt.update, agent.prompt.suggest, run.list, run.get, run.cancel, http.request, time.now, shell.exec.",
-		"session.list, session.close, agent.list, agent.create, agent.switch, agent.profile.get, agent.profile.set, agent.message.send, agent.message.inbox, agent.run, agent.prompt.read, agent.prompt.update, agent.prompt.suggest, policy.list, policy.grant, policy.revoke, run.list, run.get, run.cancel, metrics.get, memory.search, memory.write, memory.update, memory.forget, memory.health, http.request, time.now, shell.exec.",
-		1,
-	)
-	doc = strings.Replace(doc,
-		"session.list, session.close, agent.list, agent.create, agent.switch, agent.profile.get, agent.profile.set, agent.message.send, agent.message.inbox, agent.run, agent.prompt.read, agent.prompt.update, agent.prompt.suggest, run.list, run.get, run.cancel, memory.search, memory.write, memory.update, memory.forget, memory.health, http.request, time.now, shell.exec.",
-		"session.list, session.close, agent.list, agent.create, agent.switch, agent.profile.get, agent.profile.set, agent.message.send, agent.message.inbox, agent.run, agent.prompt.read, agent.prompt.update, agent.prompt.suggest, policy.list, policy.grant, policy.revoke, run.list, run.get, run.cancel, metrics.get, memory.search, memory.write, memory.update, memory.forget, memory.health, memory.checkpoint, memory.maintenance, decision.log, http.request, time.now, shell.exec.",
-		1,
-	)
-	doc = strings.Replace(doc,
-		"session.list, session.close, agent.list, agent.create, agent.switch, agent.profile.get, agent.profile.set, agent.message.send, agent.message.inbox, agent.run, agent.prompt.read, agent.prompt.update, agent.prompt.suggest, run.list, run.get, run.cancel, memory.search, memory.write, memory.update, memory.forget, memory.health, memory.checkpoint, decision.log, http.request, time.now, shell.exec.",
-		"session.list, session.close, agent.list, agent.create, agent.switch, agent.profile.get, agent.profile.set, agent.message.send, agent.message.inbox, agent.run, agent.prompt.read, agent.prompt.update, agent.prompt.suggest, policy.list, policy.grant, policy.revoke, run.list, run.get, run.cancel, metrics.get, memory.search, memory.write, memory.update, memory.forget, memory.health, memory.checkpoint, memory.maintenance, decision.log, http.request, time.now, shell.exec.",
-		1,
-	)
-	doc = strings.Replace(doc,
-		"session.list, session.close, agent.list, agent.create, agent.switch, agent.profile.get, agent.profile.set, agent.message.send, agent.message.inbox, agent.run, agent.prompt.read, agent.prompt.update, agent.prompt.suggest, run.list, run.get, run.cancel, memory.search, memory.write, memory.update, memory.forget, memory.health, memory.checkpoint, memory.maintenance, decision.log, http.request, time.now, shell.exec.",
-		"session.list, session.close, agent.list, agent.create, agent.switch, agent.profile.get, agent.profile.set, agent.message.send, agent.message.inbox, agent.run, agent.prompt.read, agent.prompt.update, agent.prompt.suggest, policy.list, policy.grant, policy.revoke, run.list, run.get, run.cancel, metrics.get, memory.search, memory.write, memory.update, memory.forget, memory.health, memory.checkpoint, memory.maintenance, decision.log, http.request, time.now, shell.exec.",
-		1,
-	)
-	doc = strings.Replace(doc,
-		"- Use run.list to enumerate runs with filtering (agent_id, status) and paginatio...",
-		"- Use agent.list to inspect available agents, agent.create to scaffold missing agents, and agent.switch to update chat/discord defaults safely.\n- Use agent.profile.get/agent.profile.set for per-agent activation and model/provider controls.\n- Use agent.message.send/agent.message.inbox for structured inter-agent collaboration and agent.run for direct subagent execution.\n- Use agent.prompt.read/agent.prompt.suggest for prompt governance, and use agent.prompt.update only when self-improvement controls allow it.\n- Use policy.list/policy.grant/policy.revoke for capability governance; only agents with policy.admin should mutate grants.\n- Use run.list to enumerate runs with filtering (agent_id, status), use run.get for details, and use run.cancel to stop a running task when needed.\n- Use metrics.get to inspect run-level and per-tool duration/error trends.",
-		1,
-	)
-	doc += "\n- Use agent.identity.set to bootstrap SOUL identity fields when SOUL.md is empty; provide assistant_name and user_name."
-	doc += "\n- Never emit pseudo-XML tool syntax (for example `<tool_call>...` or `<arg_value>`); runtime executes only valid JSON tool-call objects."
-	doc += "\n- Tool success pattern: successful calls usually return structured JSON result objects (often including flags like updated/created/deleted and identifying fields), while shell.exec returns plain command output text; treat either as completion evidence and continue the task instead of re-calling the same tool without new inputs."
-	doc += "\n- Tool failure pattern: failed calls return coded errors (for example tool.input_invalid, policy.denied, timeout, internal.error); read the error, adjust arguments/strategy, and avoid blind retries with identical inputs."
-	return doc
+	bullets := []string{
+		"Use only registered tool names: fs.read, fs.list, fs.write, fs.append, fs.delete, fs.move, fs.edit, code.search, config.get, config.set, secrets.get, secrets.set, secrets.list, skill.list, skill.read, scheduler.list, scheduler.add, scheduler.remove, scheduler.pause, scheduler.resume, session.list, session.close, agent.list, agent.create, agent.switch, agent.profile.get, agent.profile.set, agent.message.send, agent.message.inbox, agent.run, agent.prompt.read, agent.prompt.update, agent.prompt.suggest, agent.identity.set, policy.list, policy.grant, policy.revoke, run.list, run.get, run.cancel, metrics.get, memory.search, memory.write, memory.update, memory.forget, memory.health, memory.checkpoint, memory.maintenance, decision.log, http.request, time.now, shell.exec.",
+		"Preferred format for tool calls is a fenced JSON object with tool_name and arguments.",
+		"Example:\n```json\n{\"tool_name\":\"fs.list\",\"arguments\":{\"path\":\".\"}}\n```",
+		"For shell commands use shell.exec with command=`<shell script>` (the full command string; runtime automatically passes it to bash -lc). Optionally set workdir to change the working directory.",
+		"Runtime retries `/bin/bash` and `/usr/bin/bash` before fallback to `sh`; keep scripts POSIX-compatible when possible.",
+		"Common runtime shell tools include: python3/pip, node/npm, git, curl, wget, jq, nmap, dig/nslookup, ip, ss, netstat, traceroute, tcpdump.",
+		"For connectivity checks, prefer read-only diagnostics first (for example `ip addr`, `ss -tulpen`, `dig`, `curl -I`, `nmap -sT`).",
+		"For multi-step shell tasks, prefer one well-structured script in a single `shell.exec` call over many tiny probe commands.",
+		"Use fs.append to add content to existing files without replacing prior content.",
+		"Use fs.delete for removals; pass recursive=true only when deleting directories intentionally.",
+		"Use fs.move for renames and moves; replace the destination only when that overwrite is intentional.",
+		"Use config.get and config.set for safe runtime knobs; do not use config.set for provider API keys or secret values.",
+		"Use secrets.get and secrets.set for secret access; never echo secret values in plain text summaries.",
+		"Use skill.list and skill.read to discover workspace skills under skills/ and validate required secret keys before execution.",
+		"Use scheduler.add and scheduler.resume together with scheduler.list/scheduler.remove/scheduler.pause for job lifecycle; keep schedules valid (`@every` or RFC3339 one-shot).",
+		"Use session.list and session.close to inspect and retire sessions so future chat routing starts fresh.",
+		"Use agent.list and agent.switch to inspect or change active routing targets; use agent.create to scaffold missing agents safely.",
+		"Use agent.profile.get and agent.profile.set for per-agent activation and model/provider controls.",
+		"Use agent.message.send and agent.message.inbox for structured inter-agent collaboration, and use agent.run for direct subagent execution.",
+		"Use agent.prompt.read and agent.prompt.suggest for prompt governance; use agent.prompt.update only when self-improvement controls allow it.",
+		"Use agent.identity.set to bootstrap SOUL identity fields when SOUL.md is empty; provide assistant_name and user_name.",
+		"Use policy.list, policy.grant, and policy.revoke for capability governance; only agents with policy.admin should mutate grants.",
+		"Use run.list to enumerate runs with filtering (agent_id, status) and pagination, use run.get for details, and use run.cancel to stop a running task when needed.",
+		"Use metrics.get to inspect run-level and per-tool duration/error trends.",
+		"Never emit pseudo-XML tool syntax (for example `<tool_call>...` or `<arg_value>`); runtime executes only valid JSON tool-call objects.",
+		"Tool success pattern: successful calls usually return structured JSON result objects or plain shell.exec output; treat either as completion evidence and continue the task instead of re-calling the same tool without new inputs.",
+		"Tool failure pattern: failed calls return coded errors (for example tool.input_invalid, policy.denied, timeout, internal.error); read the error, adjust arguments or strategy, and avoid blind retries with identical inputs.",
+		"Do not invent tool names or arguments. If a capability is unavailable, say so plainly and continue with the best available path.",
+		"When the task requires tools, chain tool calls until the task is complete or you are truly blocked; do not stop after a single successful read if more execution is clearly needed.",
+	}
+	return formatPromptBulletDoc("TOOL_CALLING_BEST_PRACTICES", bullets)
+}
+
+func formatPromptBulletDoc(title string, bullets []string) string {
+	var b strings.Builder
+	b.WriteString("# ")
+	b.WriteString(strings.TrimSpace(title))
+	b.WriteString("\n\n")
+	for i, bullet := range bullets {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		text := strings.TrimSpace(bullet)
+		if strings.Contains(text, "\n") {
+			parts := strings.Split(text, "\n")
+			b.WriteString("- ")
+			b.WriteString(parts[0])
+			for _, part := range parts[1:] {
+				b.WriteString("\n")
+				b.WriteString(part)
+			}
+			continue
+		}
+		b.WriteString("- ")
+		b.WriteString(text)
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 type RegistryExecutor struct {

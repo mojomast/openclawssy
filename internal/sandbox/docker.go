@@ -405,6 +405,17 @@ func (p *DockerProvider) ReadFile(ctx context.Context, path string) ([]byte, err
 		return nil, err
 	}
 
+	stat, err := cli.ContainerStatPath(ctx, containerName, path)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil, fmt.Errorf("sandbox: path does not exist: %s", path)
+		}
+		return nil, fmt.Errorf("sandbox: docker stat %s: %w", path, err)
+	}
+	if os.FileMode(stat.Mode).IsDir() {
+		return nil, fmt.Errorf("sandbox: path is a directory: %s", path)
+	}
+
 	r, _, err := cli.CopyFromContainer(ctx, containerName, path)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox: docker cp from %s: %w", path, err)
@@ -454,7 +465,9 @@ func (p *DockerProvider) WriteFile(ctx context.Context, path string, data []byte
 	}
 
 	if dir := filepath.Dir(path); dir != "" && dir != "." && dir != "/" {
-		_ = p.runAsRoot(ctx, "mkdir", "-p", dir)
+		if err := p.runAsRoot(ctx, "mkdir", "-p", dir); err != nil {
+			return fmt.Errorf("sandbox: create parent dir for %s: %w", path, err)
+		}
 	}
 
 	tf, err := tarSingleFile(filepath.Base(path), data, perm)
@@ -468,7 +481,9 @@ func (p *DockerProvider) WriteFile(ctx context.Context, path string, data []byte
 	}
 
 	if perm != 0 {
-		_ = p.runAsRoot(ctx, "chmod", fmt.Sprintf("%o", perm), path)
+		if err := p.runAsRoot(ctx, "chmod", fmt.Sprintf("%o", perm), path); err != nil {
+			return fmt.Errorf("sandbox: chmod %s: %w", path, err)
+		}
 	}
 
 	return nil
