@@ -23,12 +23,14 @@ const (
 )
 
 type AgentRunInput struct {
-	CallerAgentID string
-	TargetAgentID string
-	Message       string
-	TaskID        string
-	Source        string
-	ThinkingMode  string
+	CallerAgentID     string
+	TargetAgentID     string
+	Message           string
+	TaskID            string
+	Source            string
+	ThinkingMode      string
+	AllowedTools      []string // Restricts which tools the subagent may use.
+	MaxToolIterations int      // Caps tool iterations for this subagent run (0 = use default).
 }
 
 type AgentRunOutput struct {

@@ -63,12 +63,15 @@ type ParseDiagnosticEntry struct {
 }
 
 type ExecuteInput struct {
-	AgentID      string
-	Message      string
-	Source       string
-	SessionID    string
-	ThinkingMode string
-	OnProgress   func(eventType string, data map[string]any)
+	AgentID           string
+	Message           string
+	Source            string
+	SessionID         string
+	ThinkingMode      string
+	AllowedTools      []string // If non-empty, overrides the default allowed tools for this run.
+	MaxToolIterations int      // If >0, overrides the default tool iteration cap.
+	TimeoutMS         int      // If >0, applies as a context deadline for this run.
+	OnProgress        func(eventType string, data map[string]any)
 }
 
 const (
@@ -212,6 +215,10 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	defer cancelRun()
 	runCtx := runCtxBase
 	runTimeout := resolveRunTimeout(cfg.Engine)
+	// Per-subagent timeout overrides the engine default when set.
+	if in.TimeoutMS > 0 {
+		runTimeout = time.Duration(in.TimeoutMS) * time.Millisecond
+	}
 	cancelTimeout := func() {}
 	if runTimeout > 0 {
 		runCtx, cancelTimeout = context.WithTimeout(runCtxBase, runTimeout)
@@ -253,6 +260,13 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		allowedTools = []string{}
 		maxToolIterations = 1
 		runMessage = "Scheduled proactive delivery. Respond with exactly one concise assistant message that delivers this content to the user. Do not call tools. Do not ask follow-up questions. Content: " + message
+	}
+	// Apply per-subagent restrictions from ExecuteInput (set by subagent adapter).
+	if len(in.AllowedTools) > 0 {
+		allowedTools = in.AllowedTools
+	}
+	if in.MaxToolIterations > 0 {
+		maxToolIterations = in.MaxToolIterations
 	}
 	effectiveCaps := e.effectiveCapabilities(agentID, allowedTools)
 	traceCollector := newRunTraceCollector(runID, sessionID, source, message)
@@ -328,7 +342,11 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	}
 
 	subAgentRunner := &subAgentRunner{engine: e}
-	adapter := &agentSubAgentRunnerAdapter{runner: subAgentRunner}
+	adapter := &agentSubAgentRunnerAdapter{
+		runner:            subAgentRunner,
+		subAgentDefaults:  cfg.Agents.SubAgentDefaults,
+		subAgentOverrides: cfg.Agents.SubAgentOverrides,
+	}
 
 	runner := agent.Runner{
 		Model:             model,
@@ -1746,10 +1764,12 @@ func (s *subAgentRunner) ExecuteSubAgent(ctx context.Context, input tools.AgentR
 		return tools.AgentRunOutput{}, errors.New("runtime: engine is not configured")
 	}
 	result, err := s.engine.ExecuteWithInput(ctx, ExecuteInput{
-		AgentID:      strings.TrimSpace(input.TargetAgentID),
-		Message:      input.Message,
-		Source:       strings.TrimSpace(input.Source),
-		ThinkingMode: strings.TrimSpace(input.ThinkingMode),
+		AgentID:           strings.TrimSpace(input.TargetAgentID),
+		Message:           input.Message,
+		Source:            strings.TrimSpace(input.Source),
+		ThinkingMode:      strings.TrimSpace(input.ThinkingMode),
+		AllowedTools:      input.AllowedTools,
+		MaxToolIterations: input.MaxToolIterations,
 	})
 	if err != nil {
 		return tools.AgentRunOutput{}, err
@@ -1766,22 +1786,67 @@ func (s *subAgentRunner) ExecuteSubAgent(ctx context.Context, input tools.AgentR
 }
 
 // agentSubAgentRunnerAdapter adapts the runtime subAgentRunner to the agent.SubAgentRunner interface.
+// It resolves per-agent restrictions from SubAgentDefaults/SubAgentOverrides before delegating.
 type agentSubAgentRunnerAdapter struct {
-	runner tools.AgentRunner
+	runner            tools.AgentRunner
+	subAgentDefaults  config.SubAgentRestrictions
+	subAgentOverrides map[string]config.SubAgentRestrictions
+}
+
+// resolveRestrictions returns the effective SubAgentRestrictions for the given agent,
+// checking overrides first and falling back to defaults.
+func (a *agentSubAgentRunnerAdapter) resolveRestrictions(agentID string) config.SubAgentRestrictions {
+	if override, ok := a.subAgentOverrides[agentID]; ok {
+		// Merge: override fields take precedence, fall back to defaults for zero values.
+		r := a.subAgentDefaults
+		if len(override.AllowedTools) > 0 {
+			r.AllowedTools = override.AllowedTools
+		}
+		if override.MaxToolIterations > 0 {
+			r.MaxToolIterations = override.MaxToolIterations
+		}
+		if override.TimeoutMS > 0 {
+			r.TimeoutMS = override.TimeoutMS
+		}
+		if override.ThinkingMode != "" {
+			r.ThinkingMode = override.ThinkingMode
+		}
+		if override.DelegationMode != "" {
+			r.DelegationMode = override.DelegationMode
+		}
+		return r
+	}
+	return a.subAgentDefaults
 }
 
 func (a *agentSubAgentRunnerAdapter) ExecuteSubAgent(ctx context.Context, task agent.DecomposedTask) (agent.SubAgentOutput, error) {
+	restrictions := a.resolveRestrictions(task.AgentID)
+
 	thinkingMode := task.ThinkingMode
+	if thinkingMode == "" {
+		thinkingMode = restrictions.ThinkingMode
+	}
 	if thinkingMode == "" {
 		thinkingMode = "never" // default for subagents
 	}
-	result, err := a.runner.ExecuteSubAgent(ctx, tools.AgentRunInput{
-		CallerAgentID: "",
-		TargetAgentID: task.AgentID,
-		Message:       task.Message,
-		TaskID:        task.TaskID,
-		Source:        "subagent/delegation",
-		ThinkingMode:  thinkingMode,
+
+	// Apply timeout from restrictions if set.
+	execCtx := ctx
+	if restrictions.TimeoutMS > 0 {
+		var cancel context.CancelFunc
+		execCtx, cancel = context.WithTimeout(ctx, time.Duration(restrictions.TimeoutMS)*time.Millisecond)
+		defer cancel()
+	}
+
+	result, err := a.runner.ExecuteSubAgent(execCtx, tools.AgentRunInput{
+		CallerAgentID:     "",
+		TargetAgentID:     task.AgentID,
+		Message:           task.Message,
+		TaskID:            task.TaskID,
+		Source:            "subagent/delegation",
+		ThinkingMode:      thinkingMode,
+		AllowedTools:      restrictions.AllowedTools,
+		MaxToolIterations: restrictions.MaxToolIterations,
 	})
 	if err != nil {
 		return agent.SubAgentOutput{Success: false, Error: err.Error()}, err

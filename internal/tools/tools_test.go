@@ -1242,6 +1242,59 @@ func TestMemoryToolsRequireMemoryEnabled(t *testing.T) {
 	}
 }
 
+func TestAllMemoryToolsRejectWhenDisabled(t *testing.T) {
+	root := t.TempDir()
+	ws := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	agentsPath := filepath.Join(root, ".openclawssy", "agents")
+	if err := os.MkdirAll(filepath.Join(agentsPath, "agent", "memory"), 0o755); err != nil {
+		t.Fatalf("mkdir agent memory dir: %v", err)
+	}
+	cfgPath := filepath.Join(root, ".openclawssy", "config.json")
+	cfg := config.Default()
+	cfg.Workspace.Root = ws
+	cfg.Memory.Enabled = false
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	allMemoryTools := []string{
+		"memory.search", "memory.write", "memory.update", "memory.forget",
+		"memory.health", "decision.log", "memory.checkpoint", "memory.maintenance",
+	}
+	enforcer := policy.NewEnforcer(ws, map[string][]string{"agent": allMemoryTools})
+	reg := NewRegistry(enforcer, nil)
+	if err := RegisterCoreWithOptions(reg, CoreOptions{EnableShellExec: true, ConfigPath: cfgPath, AgentsPath: agentsPath}); err != nil {
+		t.Fatalf("register core: %v", err)
+	}
+
+	toolArgs := map[string]map[string]any{
+		"memory.search":      {"query": "x"},
+		"memory.write":       {"kind": "note", "title": "t", "content": "c"},
+		"memory.update":      {"id": "mem_1", "content": "c"},
+		"memory.forget":      {"id": "mem_1"},
+		"memory.health":      {},
+		"decision.log":       {"title": "d", "content": "c"},
+		"memory.checkpoint":  {"max_events": 10},
+		"memory.maintenance": {},
+	}
+
+	for _, tool := range allMemoryTools {
+		t.Run(tool, func(t *testing.T) {
+			args := toolArgs[tool]
+			_, err := reg.Execute(context.Background(), "agent", tool, ws, args)
+			if err == nil {
+				t.Fatalf("expected memory disabled error for %s", tool)
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), "memory is disabled") {
+				t.Fatalf("expected 'memory is disabled' for %s, got %v", tool, err)
+			}
+		})
+	}
+}
+
 func TestMemoryToolsAreCapabilityGated(t *testing.T) {
 	root := t.TempDir()
 	ws := filepath.Join(root, "workspace")
@@ -1584,6 +1637,127 @@ func TestSkillReadAcceptsProviderSecretAlias(t *testing.T) {
 	required, _ := readRes["required_secrets"].([]string)
 	if len(required) != 1 || required[0] != "provider/perplexity/api_key" {
 		t.Fatalf("expected canonical required secret key, got %#v", readRes["required_secrets"])
+	}
+}
+
+func TestSkillsRootEscapeRejected(t *testing.T) {
+	ws, cfgPath := setupSecretsConfigFixture(t)
+
+	reg := NewRegistry(fakePolicy{}, nil)
+	if err := RegisterCoreWithOptions(reg, CoreOptions{EnableShellExec: true, ConfigPath: cfgPath}); err != nil {
+		t.Fatalf("register core: %v", err)
+	}
+
+	// Attempt to escape workspace via root parameter
+	escapePaths := []string{"../", "../../etc", "/etc", "skills/../../../etc"}
+	for _, escape := range escapePaths {
+		t.Run("list_"+escape, func(t *testing.T) {
+			_, err := reg.Execute(context.Background(), "agent", "skill.list", ws, map[string]any{"root": escape})
+			if err == nil {
+				t.Fatalf("expected path escape rejection for root=%q", escape)
+			}
+		})
+		t.Run("read_"+escape, func(t *testing.T) {
+			_, err := reg.Execute(context.Background(), "agent", "skill.read", ws, map[string]any{"name": "x", "root": escape})
+			if err == nil {
+				t.Fatalf("expected path escape rejection for root=%q", escape)
+			}
+		})
+	}
+}
+
+func TestSkillListReturnsEmptyWhenNoSkillsDir(t *testing.T) {
+	ws, cfgPath := setupSecretsConfigFixture(t)
+	// Do not create skills/ directory.
+
+	reg := NewRegistry(fakePolicy{}, nil)
+	if err := RegisterCoreWithOptions(reg, CoreOptions{EnableShellExec: true, ConfigPath: cfgPath}); err != nil {
+		t.Fatalf("register core: %v", err)
+	}
+
+	listRes, err := reg.Execute(context.Background(), "agent", "skill.list", ws, map[string]any{})
+	if err != nil {
+		t.Fatalf("skill.list: %v", err)
+	}
+	count, _ := listRes["count"].(int)
+	if count != 0 {
+		t.Fatalf("expected count=0 when no skills dir, got %d", count)
+	}
+}
+
+func TestSkillListIgnoresNonSkillExtensions(t *testing.T) {
+	ws, cfgPath := setupSecretsConfigFixture(t)
+	skillsDir := filepath.Join(ws, "skills")
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Write a .go file which should be ignored.
+	if err := os.WriteFile(filepath.Join(skillsDir, "hack.go"), []byte("package main"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// Write a .md file which should be discovered.
+	if err := os.WriteFile(filepath.Join(skillsDir, "real.md"), []byte("# Skill"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	reg := NewRegistry(fakePolicy{}, nil)
+	if err := RegisterCoreWithOptions(reg, CoreOptions{EnableShellExec: true, ConfigPath: cfgPath}); err != nil {
+		t.Fatalf("register core: %v", err)
+	}
+
+	listRes, err := reg.Execute(context.Background(), "agent", "skill.list", ws, map[string]any{})
+	if err != nil {
+		t.Fatalf("skill.list: %v", err)
+	}
+	count, _ := listRes["count"].(int)
+	if count != 1 {
+		t.Fatalf("expected count=1 (only .md), got %d", count)
+	}
+}
+
+func TestSkillListSkipsGitAndNodeModules(t *testing.T) {
+	ws, cfgPath := setupSecretsConfigFixture(t)
+	skillsDir := filepath.Join(ws, "skills")
+	if err := os.MkdirAll(filepath.Join(skillsDir, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(skillsDir, "node_modules"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillsDir, ".git", "config.md"), []byte("should ignore"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillsDir, "node_modules", "pkg.md"), []byte("should ignore"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillsDir, "real.md"), []byte("# Good Skill"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	reg := NewRegistry(fakePolicy{}, nil)
+	if err := RegisterCoreWithOptions(reg, CoreOptions{EnableShellExec: true, ConfigPath: cfgPath}); err != nil {
+		t.Fatalf("register core: %v", err)
+	}
+
+	listRes, err := reg.Execute(context.Background(), "agent", "skill.list", ws, map[string]any{})
+	if err != nil {
+		t.Fatalf("skill.list: %v", err)
+	}
+	count, _ := listRes["count"].(int)
+	if count != 1 {
+		t.Fatalf("expected count=1 (only real.md), got %d; skills=%#v", count, listRes["skills"])
+	}
+}
+
+func TestSkillReadRequiresNameOrPath(t *testing.T) {
+	ws, cfgPath := setupSecretsConfigFixture(t)
+	reg := NewRegistry(fakePolicy{}, nil)
+	if err := RegisterCoreWithOptions(reg, CoreOptions{EnableShellExec: true, ConfigPath: cfgPath}); err != nil {
+		t.Fatalf("register core: %v", err)
+	}
+	_, err := reg.Execute(context.Background(), "agent", "skill.read", ws, map[string]any{})
+	if err == nil {
+		t.Fatal("expected error when neither name nor path provided")
 	}
 }
 

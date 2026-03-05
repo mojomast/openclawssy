@@ -63,6 +63,10 @@ type runState struct {
 	// repetitionPrevention tracks tool calls to detect and prevent loops
 	repetitionPrevention map[string]int // key: "tool_name|agent_id" -> count
 
+	// Context tracking from model responses
+	lastPromptTokens int
+	contextWindow    int
+
 	// Delegation state
 	delegationMode      DelegationMode
 	delegationCooldown  int
@@ -115,6 +119,8 @@ func newRunState(input RunInput, r Runner) *runState {
 		toolTimeout:             toolTimeout,
 		toolCap:                 toolCap,
 		repetitionPrevention:    make(map[string]int),
+		lastPromptTokens:        0,
+		contextWindow:           120000, // default context window
 		delegationMode:          "",
 		delegationCooldown:      0,
 		delegationActive:        false,
@@ -367,13 +373,22 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 			AskedUserQuestion: DetectUserQuestion(s.getLastModelOutput()),
 		}
 
-		// TODO: Get actual prompt tokens and context window from model response
-		promptTokens := 0
-		contextWindow := 120000 // default context window
+		// Use tracked prompt tokens and context window for delegation evaluation
+		promptTokens := s.lastPromptTokens
+		contextWindow := s.contextWindow
 
 		// Only evaluate delegation trigger if not already locked in forced mode
 		if !s.delegationLocked {
 			if trigger := s.computeDelegationTrigger(promptTokens, contextWindow, snapshot); trigger != nil {
+				// Downgrade execution-dependent modes when no SubAgentRunner is
+				// available.  PromptOnly mode is always safe (just a system-prompt
+				// hint) so we keep it; ToolGated and AutoExecute require the runner
+				// and would otherwise fail with "subagent runner not configured".
+				if r.SubAgentRunner == nil && (trigger.Mode == DelegationModeToolGated || trigger.Mode == DelegationModeAutoExecute) {
+					trigger.Mode = DelegationModePromptOnly
+					trigger.AllowedTools = nil
+				}
+
 				s.delegationMode = trigger.Mode
 				s.delegationCooldown = trigger.CooldownFor
 				s.pendingSubtasks = trigger.Subtasks
@@ -457,6 +472,10 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 		}
 		if resp.ToolParseFailure {
 			s.toolParseFailure = true
+		}
+		// Update context tracking from model response
+		if resp.PromptTokens > 0 {
+			s.lastPromptTokens = resp.PromptTokens
 		}
 		if err != nil {
 			s.out.Thinking = s.latestThinking

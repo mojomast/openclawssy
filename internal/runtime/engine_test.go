@@ -19,6 +19,7 @@ import (
 	"openclawssy/internal/config"
 	"openclawssy/internal/memory"
 	"openclawssy/internal/sandbox"
+	"openclawssy/internal/tools"
 )
 
 type capturedChatRequest struct {
@@ -363,6 +364,10 @@ func TestLoadPromptDocsIncludesIdentityBootstrapWhenSoulEmpty(t *testing.T) {
 	if err := os.WriteFile(soulPath, []byte("\n\n"), 0o600); err != nil {
 		t.Fatalf("clear SOUL.md: %v", err)
 	}
+	// Remove identity.json so the bootstrap path is exercised (scaffold creates
+	// it with defaults that would suppress the bootstrap).
+	identityPath := filepath.Join(root, ".openclawssy", "agents", "default", "identity.json")
+	_ = os.Remove(identityPath)
 
 	docs, err := e.loadPromptDocs("default")
 	if err != nil {
@@ -393,6 +398,10 @@ func TestLoadPromptDocsIncludesIdentityBootstrapWhenSoulIsDefaultScaffold(t *tes
 	if err := e.Init("default", false); err != nil {
 		t.Fatalf("init: %v", err)
 	}
+	// Remove identity.json so the scaffold SOUL.md content triggers bootstrap
+	// (scaffold writes identity.json with default names which suppresses it).
+	identityPath := filepath.Join(root, ".openclawssy", "agents", "default", "identity.json")
+	_ = os.Remove(identityPath)
 
 	docs, err := e.loadPromptDocs("default")
 	if err != nil {
@@ -2195,5 +2204,213 @@ func TestAllowedToolsIncludesRunTools(t *testing.T) {
 	}
 	if !hasRunGet {
 		t.Fatalf("expected run.get in allowed tools, got: %v", tools)
+	}
+}
+
+// mockAgentRunner captures AgentRunInput for verification.
+type mockAgentRunner struct {
+	inputs []tools.AgentRunInput
+	output tools.AgentRunOutput
+	err    error
+}
+
+func (m *mockAgentRunner) ExecuteSubAgent(_ context.Context, input tools.AgentRunInput) (tools.AgentRunOutput, error) {
+	m.inputs = append(m.inputs, input)
+	return m.output, m.err
+}
+
+func TestSubAgentAdapterPassesDefaultRestrictions(t *testing.T) {
+	mock := &mockAgentRunner{output: tools.AgentRunOutput{RunID: "run-1", FinalText: "ok"}}
+	adapter := &agentSubAgentRunnerAdapter{
+		runner: mock,
+		subAgentDefaults: config.SubAgentRestrictions{
+			AllowedTools:      []string{"fs.read", "fs.list"},
+			MaxToolIterations: 15,
+			TimeoutMS:         5000,
+			ThinkingMode:      "never",
+		},
+		subAgentOverrides: map[string]config.SubAgentRestrictions{},
+	}
+
+	out, err := adapter.ExecuteSubAgent(context.Background(), agent.DecomposedTask{
+		TaskID:  "task-1",
+		AgentID: "research",
+		Message: "analyze codebase",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !out.Success {
+		t.Fatalf("expected success, got %+v", out)
+	}
+	if len(mock.inputs) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(mock.inputs))
+	}
+	input := mock.inputs[0]
+	if len(input.AllowedTools) != 2 || input.AllowedTools[0] != "fs.read" || input.AllowedTools[1] != "fs.list" {
+		t.Fatalf("expected default AllowedTools [fs.read, fs.list], got %v", input.AllowedTools)
+	}
+	if input.MaxToolIterations != 15 {
+		t.Fatalf("expected MaxToolIterations=15, got %d", input.MaxToolIterations)
+	}
+	if input.ThinkingMode != "never" {
+		t.Fatalf("expected ThinkingMode=never, got %q", input.ThinkingMode)
+	}
+}
+
+func TestSubAgentAdapterAppliesOverridesForTargetAgent(t *testing.T) {
+	mock := &mockAgentRunner{output: tools.AgentRunOutput{RunID: "run-2", FinalText: "done"}}
+	adapter := &agentSubAgentRunnerAdapter{
+		runner: mock,
+		subAgentDefaults: config.SubAgentRestrictions{
+			AllowedTools:      []string{"fs.read", "fs.list"},
+			MaxToolIterations: 15,
+			TimeoutMS:         5000,
+			ThinkingMode:      "never",
+		},
+		subAgentOverrides: map[string]config.SubAgentRestrictions{
+			"research": {
+				AllowedTools:      []string{"fs.read", "fs.list", "code.search", "http.request"},
+				MaxToolIterations: 50,
+				ThinkingMode:      "always",
+			},
+		},
+	}
+
+	out, err := adapter.ExecuteSubAgent(context.Background(), agent.DecomposedTask{
+		TaskID:  "task-2",
+		AgentID: "research",
+		Message: "deep dive analysis",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !out.Success {
+		t.Fatalf("expected success, got %+v", out)
+	}
+	if len(mock.inputs) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(mock.inputs))
+	}
+	input := mock.inputs[0]
+	// Override AllowedTools should be used
+	if len(input.AllowedTools) != 4 {
+		t.Fatalf("expected 4 override AllowedTools, got %v", input.AllowedTools)
+	}
+	if input.AllowedTools[3] != "http.request" {
+		t.Fatalf("expected http.request in AllowedTools, got %v", input.AllowedTools)
+	}
+	// Override MaxToolIterations should be used
+	if input.MaxToolIterations != 50 {
+		t.Fatalf("expected MaxToolIterations=50 from override, got %d", input.MaxToolIterations)
+	}
+	// Override ThinkingMode should be used
+	if input.ThinkingMode != "always" {
+		t.Fatalf("expected ThinkingMode=always from override, got %q", input.ThinkingMode)
+	}
+}
+
+func TestSubAgentAdapterFallsBackToDefaultsForUnknownAgent(t *testing.T) {
+	mock := &mockAgentRunner{output: tools.AgentRunOutput{RunID: "run-3", FinalText: "ok"}}
+	adapter := &agentSubAgentRunnerAdapter{
+		runner: mock,
+		subAgentDefaults: config.SubAgentRestrictions{
+			AllowedTools:      []string{"fs.read"},
+			MaxToolIterations: 10,
+			TimeoutMS:         3000,
+			ThinkingMode:      "never",
+		},
+		subAgentOverrides: map[string]config.SubAgentRestrictions{
+			"research": {
+				AllowedTools:      []string{"fs.read", "http.request"},
+				MaxToolIterations: 50,
+			},
+		},
+	}
+
+	// Agent "builder" has no override — should use defaults.
+	_, err := adapter.ExecuteSubAgent(context.Background(), agent.DecomposedTask{
+		TaskID:  "task-3",
+		AgentID: "builder",
+		Message: "build project",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	input := mock.inputs[0]
+	if len(input.AllowedTools) != 1 || input.AllowedTools[0] != "fs.read" {
+		t.Fatalf("expected default AllowedTools [fs.read] for unknown agent, got %v", input.AllowedTools)
+	}
+	if input.MaxToolIterations != 10 {
+		t.Fatalf("expected default MaxToolIterations=10, got %d", input.MaxToolIterations)
+	}
+}
+
+func TestSubAgentAdapterOverrideMergesWithDefaults(t *testing.T) {
+	mock := &mockAgentRunner{output: tools.AgentRunOutput{RunID: "run-4", FinalText: "merged"}}
+	adapter := &agentSubAgentRunnerAdapter{
+		runner: mock,
+		subAgentDefaults: config.SubAgentRestrictions{
+			AllowedTools:      []string{"fs.read", "fs.list"},
+			MaxToolIterations: 15,
+			TimeoutMS:         5000,
+			ThinkingMode:      "never",
+			DelegationMode:    "prompt_only",
+		},
+		subAgentOverrides: map[string]config.SubAgentRestrictions{
+			// Only override MaxToolIterations — other fields should fall back to defaults.
+			"worker": {
+				MaxToolIterations: 100,
+			},
+		},
+	}
+
+	_, err := adapter.ExecuteSubAgent(context.Background(), agent.DecomposedTask{
+		TaskID:  "task-4",
+		AgentID: "worker",
+		Message: "process data",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	input := mock.inputs[0]
+	// AllowedTools should fall back to defaults since override has none.
+	if len(input.AllowedTools) != 2 || input.AllowedTools[0] != "fs.read" {
+		t.Fatalf("expected default AllowedTools when override omits them, got %v", input.AllowedTools)
+	}
+	// MaxToolIterations should use override value.
+	if input.MaxToolIterations != 100 {
+		t.Fatalf("expected overridden MaxToolIterations=100, got %d", input.MaxToolIterations)
+	}
+	// ThinkingMode should fall back to default.
+	if input.ThinkingMode != "never" {
+		t.Fatalf("expected default ThinkingMode=never, got %q", input.ThinkingMode)
+	}
+}
+
+func TestSubAgentAdapterTaskThinkingModeOverridesConfig(t *testing.T) {
+	mock := &mockAgentRunner{output: tools.AgentRunOutput{RunID: "run-5", FinalText: "ok"}}
+	adapter := &agentSubAgentRunnerAdapter{
+		runner: mock,
+		subAgentDefaults: config.SubAgentRestrictions{
+			AllowedTools:      []string{"fs.read"},
+			MaxToolIterations: 10,
+			ThinkingMode:      "never",
+		},
+		subAgentOverrides: map[string]config.SubAgentRestrictions{},
+	}
+
+	// Task explicitly sets ThinkingMode — should override config default.
+	_, err := adapter.ExecuteSubAgent(context.Background(), agent.DecomposedTask{
+		TaskID:       "task-5",
+		AgentID:      "analyzer",
+		Message:      "think deeply",
+		ThinkingMode: "always",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	input := mock.inputs[0]
+	if input.ThinkingMode != "always" {
+		t.Fatalf("expected task ThinkingMode=always to override config default, got %q", input.ThinkingMode)
 	}
 }

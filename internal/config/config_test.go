@@ -373,3 +373,89 @@ func TestValidateRejectsInvalidOpenClawRemoteURL(t *testing.T) {
 		t.Fatal("expected validation error for non-websocket ws_primary")
 	}
 }
+
+func TestSubAgentRestrictionsValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		modify  func(*Config)
+		wantErr string
+	}{
+		{
+			"valid defaults",
+			func(c *Config) {},
+			"",
+		},
+		{
+			"invalid thinking_mode in defaults",
+			func(c *Config) { c.Agents.SubAgentDefaults.ThinkingMode = "off" },
+			"thinking_mode",
+		},
+		{
+			"invalid delegation_mode in defaults",
+			func(c *Config) { c.Agents.SubAgentDefaults.DelegationMode = "bogus" },
+			"delegation_mode",
+		},
+		{
+			"negative max_tool_iterations",
+			func(c *Config) { c.Agents.SubAgentDefaults.MaxToolIterations = -1 },
+			"max_tool_iterations",
+		},
+		{
+			"negative timeout_ms",
+			func(c *Config) { c.Agents.SubAgentDefaults.TimeoutMS = -1 },
+			"timeout_ms",
+		},
+		{
+			"valid override",
+			func(c *Config) {
+				c.Agents.SubAgentOverrides["research"] = SubAgentRestrictions{
+					AllowedTools: []string{"fs.read", "code.search"},
+					ThinkingMode: "on_error",
+				}
+			},
+			"",
+		},
+		{
+			"invalid thinking_mode in override",
+			func(c *Config) {
+				c.Agents.SubAgentOverrides["bad"] = SubAgentRestrictions{
+					ThinkingMode: "off",
+				}
+			},
+			"thinking_mode",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Default()
+			tt.modify(&cfg)
+			err := cfg.Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatalf("expected error containing %q", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+				}
+			}
+		})
+	}
+}
+
+func TestSubAgentDefaultsApplied(t *testing.T) {
+	cfg := Config{} // empty config
+	cfg.ApplyDefaults()
+	if len(cfg.Agents.SubAgentDefaults.AllowedTools) == 0 {
+		t.Fatal("expected subagent defaults to be populated after ApplyDefaults")
+	}
+	if cfg.Agents.SubAgentDefaults.ThinkingMode != "never" {
+		t.Fatalf("expected default thinking_mode=never, got %q", cfg.Agents.SubAgentDefaults.ThinkingMode)
+	}
+	if cfg.Agents.SubAgentOverrides == nil {
+		t.Fatal("expected SubAgentOverrides to be initialized after ApplyDefaults")
+	}
+}

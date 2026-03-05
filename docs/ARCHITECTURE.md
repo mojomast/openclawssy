@@ -145,10 +145,34 @@ When delegation triggers, the system:
     "delegation_mode": "tool_gated",
     "delegation_threshold": 2,
     "delegation_agent_id": "default",
-    "delegation_cooldown_iterations": 15
+    "delegation_cooldown_iterations": 15,
+    "subagent_defaults": {
+      "allowed_tools": ["fs.read", "fs.list", "fs.write", "fs.edit", "code.search", "memory.search"],
+      "max_tool_iterations": 30,
+      "timeout_ms": 120000,
+      "thinking_mode": "never",
+      "delegation_mode": "prompt_only"
+    },
+    "subagent_overrides": {}
   }
 }
 ```
+
+### Subagent Capability Restrictions
+
+Subagents inherit a restricted toolset by default (deny-by-default). The runtime resolves
+restrictions per target agent: check `subagent_overrides[agentID]` first, fall back to
+`subagent_defaults`, and merge partial overrides with defaults for zero-value fields.
+
+`AllowedTools` and `MaxToolIterations` flow through `AgentRunInput` into `ExecuteInput`,
+and `TimeoutMS` is applied as a context deadline on the subagent run.
+
+### Context Token Tracking
+
+The delegation trigger uses live token counts from model responses (`PromptTokens`,
+`TotalTokens`). Context pressure scores fire at 75% (warn), 85% (force), and 92%
+(critical) of the context window. When `SubAgentRunner` is nil, execution-dependent
+modes are downgraded to `prompt_only` automatically.
 
 ## Key Persistence Surfaces
 - Config: `.openclawssy/config.json` (atomic write + validation).

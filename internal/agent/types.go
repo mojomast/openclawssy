@@ -89,6 +89,8 @@ type ModelResponse struct {
 	ThinkingPresent  bool              `json:"thinking_present,omitempty"`
 	ToolParseFailure bool              `json:"tool_parse_failure,omitempty"`
 	ToolCalls        []ToolCallRequest `json:"tool_calls"`
+	PromptTokens     int               `json:"prompt_tokens,omitempty"`
+	TotalTokens      int               `json:"total_tokens,omitempty"`
 }
 
 // ToolCallResult is the result returned by a tool executor.

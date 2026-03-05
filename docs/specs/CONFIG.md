@@ -113,6 +113,14 @@ Provider API key env defaults:
     "delegation_threshold": 2,
     "delegation_agent_id": "default",
     "delegation_cooldown_iterations": 15,
+    "subagent_defaults": {
+      "allowed_tools": ["fs.read", "fs.list", "fs.write", "fs.edit", "code.search", "memory.search"],
+      "max_tool_iterations": 30,
+      "timeout_ms": 120000,
+      "thinking_mode": "never",
+      "delegation_mode": "prompt_only"
+    },
+    "subagent_overrides": {},
     "profiles": {
       "default": {
         "enabled": true,
@@ -233,6 +241,31 @@ Delegation triggers on:
 - 2+ iterations with no progress
 - 1+ iteration where all calls were blocked (repetition)
 - Context window pressure > 75% (warn), > 85% (force), > 92% (critical)
+
+### Subagent Capability Restrictions
+
+Subagents inherit a restricted toolset by default (deny-by-default). Configure via:
+
+- `agents.subagent_defaults` — default restrictions for all subagent runs:
+  - `allowed_tools` — tool allowlist (default: `["fs.read", "fs.list", "fs.write", "fs.edit", "code.search", "memory.search"]`)
+  - `max_tool_iterations` — iteration cap per subagent run (default: 30)
+  - `timeout_ms` — per-subagent run timeout in milliseconds (default: 120000)
+  - `thinking_mode` — valid values: `never`, `on_error`, `always` (default: `never`)
+  - `delegation_mode` — subagent's own delegation mode: `prompt_only`, `tool_gated`, `auto_execute` (default: `prompt_only`; prevents recursive delegation storms)
+
+- `agents.subagent_overrides` — per-agent-id overrides (merged with defaults):
+  ```json
+  "subagent_overrides": {
+    "research": {
+      "allowed_tools": ["fs.read", "code.search", "http.request", "memory.search"],
+      "max_tool_iterations": 60,
+      "timeout_ms": 180000,
+      "thinking_mode": "on_error"
+    }
+  }
+  ```
+
+When `SubAgentRunner` is not configured, execution-dependent delegation modes (`tool_gated`, `auto_execute`) are automatically downgraded to `prompt_only` to prevent runtime errors.
 
 ## Output Notes
 - `output.thinking_mode` supports: `never`, `on_error`, `always`.

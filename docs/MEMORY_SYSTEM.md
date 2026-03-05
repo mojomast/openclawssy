@@ -227,4 +227,6 @@ go test ./...
 - breaking prompt budget constraints,
 - writing unredacted strings to memory artifacts,
 - assuming proactive context exists in all channels,
+- embedding sync failures must be best-effort (all call sites use `_ = maybeSyncMemoryEmbedding`),
+- all 8 memory tools must gate on `memory.enabled` and return "memory is disabled" when off.
 - depending on embeddings path when embeddings are disabled.

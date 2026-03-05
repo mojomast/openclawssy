@@ -99,3 +99,113 @@ func TestMaybeTriggerProactiveMemoryHookDispatchesAgentMessage(t *testing.T) {
 		t.Fatalf("expected channel/user context in payload, got %#v", payload)
 	}
 }
+
+func TestProactiveHookSkipsWhenSessionIDEmpty(t *testing.T) {
+	root := t.TempDir()
+	e, err := NewEngine(root)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	if err := e.Init("default", false); err != nil {
+		t.Fatalf("init engine: %v", err)
+	}
+
+	cfgPath := filepath.Join(root, ".openclawssy", "config.json")
+	cfg := config.Default()
+	cfg.Memory.Enabled = true
+	cfg.Memory.ProactiveEnabled = true
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	enforcer := policy.NewEnforcer(e.workspaceDir, map[string][]string{"default": {"agent.message.send", "agent.message.inbox"}})
+	reg := tools.NewRegistry(enforcer, nil)
+	if err := tools.RegisterCoreWithOptions(reg, tools.CoreOptions{EnableShellExec: true, ConfigPath: cfgPath, AgentsPath: e.agentsDir, ChatstorePath: e.agentsDir, WorkspaceRoot: e.workspaceDir}); err != nil {
+		t.Fatalf("register core tools: %v", err)
+	}
+
+	// Call with empty session ID — should not panic or send message.
+	e.maybeTriggerProactiveMemoryHook(context.Background(), cfg, reg, "default", "", "run_123", agent.ToolCallRecord{
+		Request: agent.ToolCallRequest{Name: "memory.maintenance"},
+		Result:  agent.ToolCallResult{Output: `{"archived_stale_count":1}`},
+	})
+
+	inbox, err := reg.Execute(context.Background(), "default", "agent.message.inbox", e.workspaceDir, map[string]any{"agent_id": "default", "limit": 5})
+	if err != nil {
+		t.Fatalf("agent.message.inbox: %v", err)
+	}
+	// Should have NO messages since session context was missing.
+	messages, _ := inbox["messages"].([]any)
+	typedMessages, _ := inbox["messages"].([]map[string]any)
+	if len(messages) > 0 || len(typedMessages) > 0 {
+		t.Fatalf("expected no proactive messages when session context missing, got %#v", inbox["messages"])
+	}
+}
+
+func TestProactiveHookSkipsWhenMemoryDisabled(t *testing.T) {
+	root := t.TempDir()
+	e, err := NewEngine(root)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Memory.Enabled = false
+	cfg.Memory.ProactiveEnabled = true
+
+	// Should not panic when called with memory disabled.
+	e.maybeTriggerProactiveMemoryHook(context.Background(), cfg, nil, "default", "sess_1", "run_1", agent.ToolCallRecord{
+		Request: agent.ToolCallRequest{Name: "memory.maintenance"},
+		Result:  agent.ToolCallResult{Output: `{"archived_stale_count":1}`},
+	})
+	// No assertion beyond "doesn't panic" — the function returns early.
+}
+
+func TestProactiveHookSkipsWhenProactiveDisabled(t *testing.T) {
+	root := t.TempDir()
+	e, err := NewEngine(root)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Memory.Enabled = true
+	cfg.Memory.ProactiveEnabled = false
+
+	// Should not panic when proactive is disabled.
+	e.maybeTriggerProactiveMemoryHook(context.Background(), cfg, nil, "default", "sess_1", "run_1", agent.ToolCallRecord{
+		Request: agent.ToolCallRequest{Name: "memory.maintenance"},
+		Result:  agent.ToolCallResult{Output: `{"archived_stale_count":1}`},
+	})
+}
+
+func TestProactiveSignalNoTriggerForLowImportanceCheckpoint(t *testing.T) {
+	// Checkpoint with low importance items (importance < 4) should not trigger.
+	checkpoint := `{"result":{"new_items":[{"kind":"note","content":"minor note","importance":2}]}}`
+	sig := proactiveSignalFromToolOutput("memory.checkpoint", checkpoint)
+	if sig.Trigger {
+		t.Fatalf("expected no trigger for low-importance checkpoint, got %+v", sig)
+	}
+}
+
+func TestProactiveSignalNoTriggerForMaintenanceWithZeroStale(t *testing.T) {
+	maintenance := `{"archived_stale_count":0}`
+	sig := proactiveSignalFromToolOutput("memory.maintenance", maintenance)
+	if sig.Trigger {
+		t.Fatalf("expected no trigger for zero stale count, got %+v", sig)
+	}
+}
+
+func TestProactiveSignalNoTriggerForEmptyOutput(t *testing.T) {
+	sig := proactiveSignalFromToolOutput("memory.checkpoint", "")
+	if sig.Trigger {
+		t.Fatalf("expected no trigger for empty output, got %+v", sig)
+	}
+}
+
+func TestProactiveSignalNoTriggerForInvalidJSON(t *testing.T) {
+	sig := proactiveSignalFromToolOutput("memory.checkpoint", "not json")
+	if sig.Trigger {
+		t.Fatalf("expected no trigger for invalid JSON, got %+v", sig)
+	}
+}

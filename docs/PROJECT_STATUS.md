@@ -41,6 +41,9 @@ What works now:
 - **Sandbox Provider interface** (`internal/sandbox`): pluggable `Provider` abstraction; Local, None, and Docker implementations; all fs.* tools and shell.exec route through it
 - **Docker sandbox admin API** (`/api/admin/sandbox/docker/*`): 8 endpoints for container lifecycle, image management, volume management; bearer-auth protected
 - **Sandbox Manager dashboard page** (`/sandbox` route): UI for container status, create/stop/reset actions, image pull, volume management with confirmation dialogs
+- **Auto-delegation system** with complexity scoring, task decomposition, cycle detection, cooldown, and configurable delegation modes (`prompt_only`, `tool_gated`, `auto_execute`)
+- **Subagent capability restrictions**: deny-by-default tool allowlists, per-subagent config overrides, iteration/timeout limits, context token tracking from model responses
+- **Skills ingestion pipeline** (`skill.list`, `skill.read`): workspace skill discovery with path safety, byte limits, secret detection, and `.git`/`node_modules` exclusion
 
 What is not production-ready:
 - compatibility and schema stability

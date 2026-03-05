@@ -151,6 +151,19 @@ type AgentsConfig struct {
 	DelegationThreshold    int    `json:"delegation_threshold,omitempty"`
 	DelegationAgentID      string `json:"delegation_agent_id,omitempty"`
 	DelegationCooldownIter int    `json:"delegation_cooldown_iterations,omitempty"`
+	// SubAgent restrictions: per-subagent-run capability limits.
+	SubAgentDefaults  SubAgentRestrictions            `json:"subagent_defaults,omitempty"`
+	SubAgentOverrides map[string]SubAgentRestrictions `json:"subagent_overrides,omitempty"`
+}
+
+// SubAgentRestrictions defines capability restrictions for subagent runs.
+// The zero value means "use defaults".
+type SubAgentRestrictions struct {
+	AllowedTools      []string `json:"allowed_tools,omitempty"`
+	MaxToolIterations int      `json:"max_tool_iterations,omitempty"`
+	TimeoutMS         int      `json:"timeout_ms,omitempty"`
+	ThinkingMode      string   `json:"thinking_mode,omitempty"`
+	DelegationMode    string   `json:"delegation_mode,omitempty"`
 }
 
 type ProviderEndpointConfig struct {
@@ -315,6 +328,14 @@ func Default() Config {
 			DelegationThreshold:      2,
 			DelegationAgentID:        "default",
 			DelegationCooldownIter:   15,
+			SubAgentDefaults: SubAgentRestrictions{
+				AllowedTools:      []string{"fs.read", "fs.list", "fs.write", "fs.edit", "code.search", "memory.search"},
+				MaxToolIterations: 30,
+				TimeoutMS:         120000,
+				ThinkingMode:      "never",
+				DelegationMode:    "prompt_only",
+			},
+			SubAgentOverrides: map[string]SubAgentRestrictions{},
 		},
 		Chat: ChatConfig{
 			Enabled:               true,
@@ -450,6 +471,12 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.Agents.DelegationCooldownIter == 0 {
 		c.Agents.DelegationCooldownIter = d.Agents.DelegationCooldownIter
+	}
+	if len(c.Agents.SubAgentDefaults.AllowedTools) == 0 {
+		c.Agents.SubAgentDefaults = d.Agents.SubAgentDefaults
+	}
+	if c.Agents.SubAgentOverrides == nil {
+		c.Agents.SubAgentOverrides = map[string]SubAgentRestrictions{}
 	}
 	if c.Chat.RateLimitPerMin == 0 {
 		c.Chat.RateLimitPerMin = d.Chat.RateLimitPerMin
@@ -627,6 +654,16 @@ func (c Config) Validate() error {
 		}
 	}
 
+	// Validate subagent restriction defaults
+	if err := validateSubAgentRestrictions("subagent_defaults", c.Agents.SubAgentDefaults); err != nil {
+		return err
+	}
+	for key, restrictions := range c.Agents.SubAgentOverrides {
+		if err := validateSubAgentRestrictions("subagent_overrides."+key, restrictions); err != nil {
+			return err
+		}
+	}
+
 	if !IsValidThinkingMode(c.Output.ThinkingMode) {
 		return fmt.Errorf("output.thinking_mode must be one of never|on_error|always")
 	}
@@ -777,6 +814,25 @@ func validateAgentID(raw string) error {
 	}
 	if strings.Contains(agentID, "..") || strings.ContainsRune(agentID, '/') || strings.ContainsRune(agentID, '\\') {
 		return fmt.Errorf("invalid agent id: %q", raw)
+	}
+	return nil
+}
+
+func validateSubAgentRestrictions(prefix string, r SubAgentRestrictions) error {
+	if r.MaxToolIterations < 0 {
+		return fmt.Errorf("agents.%s.max_tool_iterations must be >= 0", prefix)
+	}
+	if r.TimeoutMS < 0 {
+		return fmt.Errorf("agents.%s.timeout_ms must be >= 0", prefix)
+	}
+	if mode := strings.TrimSpace(r.ThinkingMode); mode != "" {
+		if !IsValidThinkingMode(mode) {
+			return fmt.Errorf("agents.%s.thinking_mode must be one of never|on_error|always, got %q", prefix, mode)
+		}
+	}
+	validDelegationModes := map[string]bool{"": true, "prompt_only": true, "tool_gated": true, "auto_execute": true}
+	if !validDelegationModes[strings.TrimSpace(r.DelegationMode)] {
+		return fmt.Errorf("agents.%s.delegation_mode must be one of prompt_only|tool_gated|auto_execute, got %q", prefix, r.DelegationMode)
 	}
 	return nil
 }

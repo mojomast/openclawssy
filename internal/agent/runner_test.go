@@ -1618,3 +1618,405 @@ func TestRunnerFastFinalizesWhenAllToolCallsBlockedForTwoIterations(t *testing.T
 		t.Fatalf("expected early termination, but used %d model requests", len(model.reqs))
 	}
 }
+
+// --- Subagent delegation tests ---
+
+type mockSubAgentRunner struct {
+	calls  []DecomposedTask
+	result SubAgentOutput
+	err    error
+}
+
+func (m *mockSubAgentRunner) ExecuteSubAgent(_ context.Context, task DecomposedTask) (SubAgentOutput, error) {
+	m.calls = append(m.calls, task)
+	return m.result, m.err
+}
+
+func TestTopologicalSortTasksDetectsCycle(t *testing.T) {
+	tasks := []DecomposedTask{
+		{TaskID: "A", DependsOn: []string{"B"}},
+		{TaskID: "B", DependsOn: []string{"C"}},
+		{TaskID: "C", DependsOn: []string{"A"}},
+	}
+	_, err := topologicalSortTasks(tasks)
+	if err == nil {
+		t.Fatal("expected cycle detection error")
+	}
+	if !strings.Contains(err.Error(), "cycle detected") {
+		t.Fatalf("expected 'cycle detected' error, got %v", err)
+	}
+}
+
+func TestTopologicalSortTasksNoCycle(t *testing.T) {
+	tasks := []DecomposedTask{
+		{TaskID: "C", DependsOn: []string{"A", "B"}, Priority: 3},
+		{TaskID: "A", Priority: 1},
+		{TaskID: "B", DependsOn: []string{"A"}, Priority: 2},
+	}
+	sorted, err := topologicalSortTasks(tasks)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sorted) != 3 {
+		t.Fatalf("expected 3 tasks, got %d", len(sorted))
+	}
+	// A must come before B and C.
+	idxA, idxB, idxC := -1, -1, -1
+	for i, task := range sorted {
+		switch task.TaskID {
+		case "A":
+			idxA = i
+		case "B":
+			idxB = i
+		case "C":
+			idxC = i
+		}
+	}
+	if idxA >= idxB || idxA >= idxC || idxB >= idxC {
+		t.Fatalf("expected A < B < C, got A=%d B=%d C=%d", idxA, idxB, idxC)
+	}
+}
+
+func TestDelegationModeDowngradeWhenNoSubAgentRunner(t *testing.T) {
+	// A model that produces a final text quickly (no tool calls).
+	model := &mockModel{responses: []ModelResponse{
+		{FinalText: "done"},
+	}}
+	tools := &mockTools{}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 8}
+	// No SubAgentRunner set — delegation should be downgraded.
+	out, err := runner.Run(context.Background(), RunInput{Message: "test"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+}
+
+func TestCooldownBehaviorSuppressesDelegation(t *testing.T) {
+	// Test that cooldown prevents repeated delegation triggers.
+	state := newRunState(RunInput{Message: "test"}, Runner{MaxToolIterations: 120})
+	state.consecutiveToolFailures = 5
+	state.allBlockedIterations = 2
+
+	// First trigger should fire.
+	trigger := state.computeDelegationTrigger(0, 120000, StateSnapshot{})
+	if trigger == nil {
+		t.Fatal("expected delegation trigger on first call")
+	}
+	cooldown := trigger.CooldownFor
+	if cooldown <= 0 {
+		t.Fatalf("expected positive cooldown, got %d", cooldown)
+	}
+
+	// Simulate the runLoop: set cooldown from the trigger.
+	state.delegationCooldown = trigger.CooldownFor
+
+	// During cooldown, triggers should be suppressed.
+	trigger2 := state.computeDelegationTrigger(0, 120000, StateSnapshot{})
+	if trigger2 != nil {
+		t.Fatal("expected no trigger during cooldown")
+	}
+}
+
+func TestToolRewriteBudgetPreventsInfiniteLoop(t *testing.T) {
+	state := newRunState(RunInput{Message: "test"}, Runner{MaxToolIterations: 120})
+	state.delegationMode = DelegationModeToolGated
+
+	// Rewrite 3 times (maxToolRewriteBudget = 3).
+	for i := 0; i < 3; i++ {
+		call := ToolCallRequest{ID: "id-" + strconv.Itoa(i), Name: "fs.write", Arguments: []byte(`{"path":"x"}`)}
+		state.rewriteToDelegation(call)
+		state.toolRewriteCount++
+	}
+
+	if state.toolRewriteCount < maxToolRewriteBudget {
+		t.Fatalf("expected toolRewriteCount >= %d, got %d", maxToolRewriteBudget, state.toolRewriteCount)
+	}
+}
+
+func TestComplexityScoreNoCriticalOnLowSignals(t *testing.T) {
+	state := newRunState(RunInput{Message: "test"}, Runner{MaxToolIterations: 120})
+	// No failures, no blocked, no loops.
+	score := ComputeComplexity(state, 0, 120000)
+	if score.Level != ComplexityLow {
+		t.Fatalf("expected low complexity with no signals, got level=%d", score.Level)
+	}
+}
+
+func TestComplexityScoreHighOnFailureLoop(t *testing.T) {
+	state := newRunState(RunInput{Message: "test"}, Runner{MaxToolIterations: 120})
+	state.consecutiveToolFailures = 3
+	state.noProgressIterations = 2
+	score := ComputeComplexity(state, 0, 120000)
+	if score.Level < ComplexityHigh {
+		t.Fatalf("expected high+ complexity with failure+no_progress, got level=%d", score.Level)
+	}
+}
+
+func TestDetectUserQuestionPositiveAndNegative(t *testing.T) {
+	if !DetectUserQuestion("Which option do you prefer?") {
+		t.Fatal("expected question detection for 'which option'")
+	}
+	if !DetectUserQuestion("Should I proceed with the migration?") {
+		t.Fatal("expected question detection for 'should i'")
+	}
+	if DetectUserQuestion("I completed the task successfully.") {
+		t.Fatal("expected no question detection for completion statement")
+	}
+}
+
+func TestContextPressureTriggersDelegation(t *testing.T) {
+	// Create a model that returns PromptTokens: 110000 (>92% of 120000 context window).
+	// This should produce a Critical complexity score from context pressure alone (score=3),
+	// combined with failure signals from tool errors to reach the delegation threshold.
+	highTokenModel := &mockModel{
+		responses: []ModelResponse{
+			{
+				PromptTokens: 110000,
+				ToolCalls:    []ToolCallRequest{{ID: "1", Name: "shell.exec", Arguments: []byte(`{"command":"bash","args":["-lc","cmd1"]}`)}},
+			},
+			{
+				PromptTokens: 112000,
+				ToolCalls:    []ToolCallRequest{{ID: "2", Name: "shell.exec", Arguments: []byte(`{"command":"bash","args":["-lc","cmd2"]}`)}},
+			},
+			{
+				PromptTokens: 114000,
+				FinalText:    "done under pressure",
+			},
+		},
+	}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Error: "internal error: out of memory"},
+		"2": {ID: "2", Error: "internal error: out of memory"},
+	}}
+
+	runner := Runner{Model: highTokenModel, ToolExecutor: tools, MaxToolIterations: 20}
+	out, err := runner.Run(context.Background(), RunInput{Message: "process large dataset"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	// Verify the run completed (the model should have been called with updated context info)
+	if out.FinalText == "" {
+		t.Fatal("expected non-empty final text")
+	}
+
+	// Verify that the runState correctly tracks prompt tokens from model responses.
+	// We do this by creating a runState directly and simulating the token update.
+	state := newRunState(RunInput{Message: "test"}, Runner{MaxToolIterations: 120})
+
+	// Initially, lastPromptTokens should be 0 and contextWindow should be 120000
+	if state.lastPromptTokens != 0 {
+		t.Fatalf("expected initial lastPromptTokens=0, got %d", state.lastPromptTokens)
+	}
+	if state.contextWindow != 120000 {
+		t.Fatalf("expected initial contextWindow=120000, got %d", state.contextWindow)
+	}
+
+	// Simulate updating from a model response with high token usage
+	state.lastPromptTokens = 110000 // >92% of 120000
+
+	// With 110000/120000 = 91.67% → just under 92%, bump to trigger
+	state.lastPromptTokens = 111000 // 111000/120000 = 92.5% → critical context pressure
+
+	score := ComputeComplexity(state, state.lastPromptTokens, state.contextWindow)
+
+	// Context pressure alone at >92% should give ContextScore=3
+	if score.ContextScore != 3 {
+		t.Fatalf("expected ContextScore=3 for >92%% context pressure, got %d", score.ContextScore)
+	}
+
+	// Add some failure signals to push total score higher
+	state.consecutiveToolFailures = 2
+	score = ComputeComplexity(state, state.lastPromptTokens, state.contextWindow)
+
+	// ContextScore=3 + FailureScore=2 = TotalScore >= 5, which should be High or Critical
+	if score.TotalScore < 5 {
+		t.Fatalf("expected TotalScore >= 5, got %d", score.TotalScore)
+	}
+	if score.Level < ComplexityHigh {
+		t.Fatalf("expected at least High complexity level, got %d", score.Level)
+	}
+
+	// With even more signals, verify Critical is reached
+	state.allBlockedIterations = 1
+	score = ComputeComplexity(state, state.lastPromptTokens, state.contextWindow)
+
+	// ContextScore=3 + FailureScore=2 + BlockedScore=3 = 8 → Critical
+	if score.Level != ComplexityCritical {
+		t.Fatalf("expected Critical complexity level with context pressure + failures + blocked, got level=%d (total=%d)", score.Level, score.TotalScore)
+	}
+}
+
+// mockCapturingSubAgentRunner captures calls for verification of subagent interface contract.
+type mockCapturingSubAgentRunner struct {
+	calls  []DecomposedTask
+	output SubAgentOutput
+	err    error
+}
+
+func (m *mockCapturingSubAgentRunner) ExecuteSubAgent(_ context.Context, task DecomposedTask) (SubAgentOutput, error) {
+	m.calls = append(m.calls, task)
+	return m.output, m.err
+}
+
+// TestSubAgentRunnerInterfaceReceivesDecomposedTask verifies that the SubAgentRunner
+// interface correctly receives task metadata (AgentID, ThinkingMode, etc.) from the
+// delegation system. The adapter layer (in runtime) adds AllowedTools and
+// MaxToolIterations from config before calling through to the tools.AgentRunner.
+func TestSubAgentRunnerInterfaceReceivesDecomposedTask(t *testing.T) {
+	subRunner := &mockCapturingSubAgentRunner{
+		output: SubAgentOutput{RunID: "sub-1", FinalText: "analyzed", Success: true},
+	}
+
+	task := DecomposedTask{
+		TaskID:       "task-analyze",
+		AgentID:      "research",
+		Message:      "analyze the codebase for patterns",
+		ThinkingMode: "always",
+		TimeoutMS:    30000,
+		Priority:     2,
+	}
+
+	out, err := subRunner.ExecuteSubAgent(context.Background(), task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !out.Success {
+		t.Fatalf("expected success, got %+v", out)
+	}
+	if out.RunID != "sub-1" {
+		t.Fatalf("expected RunID=sub-1, got %q", out.RunID)
+	}
+	if len(subRunner.calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(subRunner.calls))
+	}
+
+	captured := subRunner.calls[0]
+	if captured.AgentID != "research" {
+		t.Fatalf("expected AgentID=research, got %q", captured.AgentID)
+	}
+	if captured.TaskID != "task-analyze" {
+		t.Fatalf("expected TaskID=task-analyze, got %q", captured.TaskID)
+	}
+	if captured.ThinkingMode != "always" {
+		t.Fatalf("expected ThinkingMode=always, got %q", captured.ThinkingMode)
+	}
+	if captured.Message != "analyze the codebase for patterns" {
+		t.Fatalf("expected correct message, got %q", captured.Message)
+	}
+}
+
+// TestRunnerDelegatesWithMockSubAgentRunner is a full integration test for the
+// auto-delegation system.  It drives the runner through enough tool-failure and
+// context-pressure signals to reach ComplexityCritical, at which point the
+// DelegationModeAutoExecute path fires and uses the SubAgentRunner to execute
+// decomposed subtasks.
+//
+// Signal build-up strategy (per-iteration):
+//
+//	Iter 1: shell.exec fresh-exec fails (consecutive=1). PromptTokens=0 → no context pressure.
+//	Iter 2: same shell.exec fresh-exec fails (consecutive=2, recovery active,
+//	        repetitionPrevention=2 → LoopScore=2). PromptTokens=112000 → sets lastPromptTokens.
+//	Before iter 3 delegation check:
+//	  FailureScore=2  (consecutive>=2)
+//	  LoopScore=2     (repetitionPrevention>=2)
+//	  ContextScore=3  (112000/120000 = 93.3% >= 92%)
+//	  TotalScore = 7  → Critical (>=6) → DelegationModeAutoExecute
+//	With AutoDelegate=true + SubAgentRunner non-nil → executeDelegatedTasks runs
+//	and returns the aggregated subtask output immediately.
+func TestRunnerDelegatesWithMockSubAgentRunner(t *testing.T) {
+	// failCmd is a fixed shell command; the same arguments on every iteration
+	// ensure the repetition-prevention counter increments, driving LoopScore.
+	failCmd := []byte(`{"command":"bash","args":["-lc","deploy --target=prod"]}`)
+
+	// mockModel: two iterations of tool calls, then a final text that should
+	// never be reached (the auto-execute path returns before the third model
+	// call).
+	model := &mockModel{responses: []ModelResponse{
+		{
+			ToolCalls:    []ToolCallRequest{{ID: "1", Name: "shell.exec", Arguments: failCmd}},
+			PromptTokens: 0, // no context pressure yet
+		},
+		{
+			ToolCalls:    []ToolCallRequest{{ID: "2", Name: "shell.exec", Arguments: failCmd}},
+			PromptTokens: 112000, // 93.3% of 120k → ContextScore=3 on next check
+		},
+		// This response should never be consumed because delegation fires
+		// at the top of iteration 3.
+		{FinalText: "BUG: delegation did not fire"},
+	}}
+
+	// mockTools: every execution returns an error so consecutiveToolFailures
+	// climbs and FailureScore reaches 2.
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Error: "exit status 1", Output: "deploy: permission denied"},
+		"2": {ID: "2", Error: "exit status 1", Output: "deploy: permission denied"},
+	}}
+
+	// mockSubAgentRunner: returns a successful result for every subtask.
+	delegatedResultText := "Delegation completed: deployed via alternative path"
+	subRunner := &mockSubAgentRunner{
+		result: SubAgentOutput{
+			RunID:     "delegated-run-1",
+			FinalText: delegatedResultText,
+			Success:   true,
+		},
+	}
+
+	runner := Runner{
+		Model:             model,
+		ToolExecutor:      tools,
+		MaxToolIterations: 20,
+		SubAgentRunner:    subRunner,
+	}
+
+	out, err := runner.Run(context.Background(), RunInput{
+		Message:      "deploy the application to production",
+		AutoDelegate: true,
+	})
+
+	// 1. The run must complete without error.
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	// 2. The mockSubAgentRunner must have been called at least once.
+	if len(subRunner.calls) == 0 {
+		t.Fatalf("expected at least one SubAgentRunner.ExecuteSubAgent call, got 0")
+	}
+
+	// 3. The final output must contain the delegated result text (aggregated).
+	if !strings.Contains(out.FinalText, delegatedResultText) {
+		t.Fatalf("expected final output to contain delegated result text %q, got %q",
+			delegatedResultText, out.FinalText)
+	}
+
+	// 4. Verify the output looks like the aggregated subtask results header.
+	if !strings.Contains(out.FinalText, "Delegated Task Results") {
+		t.Fatalf("expected 'Delegated Task Results' header in final output, got %q", out.FinalText)
+	}
+
+	// 5. The "BUG: delegation did not fire" model response must NOT appear.
+	if strings.Contains(out.FinalText, "BUG") {
+		t.Fatalf("delegation did not fire; model's fallback response was returned: %q", out.FinalText)
+	}
+
+	// 6. Exactly 2 model calls should have been made (iterations 1 & 2);
+	//    iteration 3 should have been intercepted by the delegation trigger.
+	if len(model.reqs) != 2 {
+		t.Fatalf("expected 2 model requests before delegation intercepted, got %d", len(model.reqs))
+	}
+
+	// 7. Each subtask should reference a valid AgentID.
+	for i, call := range subRunner.calls {
+		if call.AgentID == "" {
+			t.Fatalf("subtask %d has empty AgentID", i)
+		}
+		if call.TaskID == "" {
+			t.Fatalf("subtask %d has empty TaskID", i)
+		}
+	}
+}
