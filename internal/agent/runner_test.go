@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -1733,6 +1734,78 @@ func TestToolRewriteBudgetPreventsInfiniteLoop(t *testing.T) {
 
 	if state.toolRewriteCount < maxToolRewriteBudget {
 		t.Fatalf("expected toolRewriteCount >= %d, got %d", maxToolRewriteBudget, state.toolRewriteCount)
+	}
+}
+
+func TestRewriteToDelegationAddsExecutionGuidance(t *testing.T) {
+	state := newRunState(RunInput{Message: "test"}, Runner{MaxToolIterations: 120})
+	call := ToolCallRequest{ID: "abc", Name: "fs.write", Arguments: []byte(`{"path":"x","content":"y"}`)}
+
+	rewritten := state.rewriteToDelegation(call)
+	if rewritten.Name != "agent.run" {
+		t.Fatalf("expected rewrite to agent.run, got %q", rewritten.Name)
+	}
+	var args map[string]any
+	if err := json.Unmarshal(rewritten.Arguments, &args); err != nil {
+		t.Fatalf("unmarshal rewritten args: %v", err)
+	}
+	message, _ := args["message"].(string)
+	if !strings.Contains(message, "Delegation rewrite") {
+		t.Fatalf("expected delegation rewrite guidance, got %q", message)
+	}
+	if !strings.Contains(message, "remaining blocker") {
+		t.Fatalf("expected blocker guidance in rewritten message, got %q", message)
+	}
+	if args["task_id"] != "auto-delegated-abc" {
+		t.Fatalf("expected task_id preserved in rewrite, got %#v", args["task_id"])
+	}
+}
+
+func TestFormatDelegatedTaskMessageIncludesCriteriaAndRules(t *testing.T) {
+	task := DecomposedTask{
+		TaskID:         "phase-2-fix",
+		Message:        "Implement the fix",
+		DependsOn:      []string{"phase-1-diagnose"},
+		AcceptanceCrit: []string{"Fix implemented", "Verified"},
+	}
+	msg := formatDelegatedTaskMessage(task, map[string]string{"phase-1-diagnose": "Root cause is config parsing"})
+	if !strings.Contains(msg, "Context from previous steps") {
+		t.Fatalf("expected dependency context, got %q", msg)
+	}
+	if !strings.Contains(msg, "Acceptance criteria") {
+		t.Fatalf("expected acceptance criteria section, got %q", msg)
+	}
+	if !strings.Contains(msg, "Execution rules") {
+		t.Fatalf("expected execution rules section, got %q", msg)
+	}
+	if !strings.Contains(msg, "remaining risk") {
+		t.Fatalf("expected remaining risk guidance, got %q", msg)
+	}
+}
+
+func TestDelegationDirectivesEmphasizeFocusedExecution(t *testing.T) {
+	trigger := &DelegationTrigger{
+		Reason:       "stuck in failure loop",
+		AllowedTools: []string{"agent.list", "agent.run"},
+		Subtasks: []DecomposedTask{{
+			TaskID:  "t1",
+			AgentID: "default",
+			Message: "Diagnose issue",
+		}},
+	}
+	forced := buildForcedDelegationDirective(trigger)
+	if !strings.Contains(forced, "Respect subtask dependency order") {
+		t.Fatalf("expected dependency-order instruction, got %q", forced)
+	}
+	if !strings.Contains(forced, "Do not call unrelated tools") {
+		t.Fatalf("expected forbidden-tool guidance, got %q", forced)
+	}
+	soft := buildSoftDelegationHint(trigger)
+	if !strings.Contains(soft, "focused subtasks") {
+		t.Fatalf("expected focused delegation guidance, got %q", soft)
+	}
+	if !strings.Contains(soft, "easy to verify") {
+		t.Fatalf("expected verification guidance, got %q", soft)
 	}
 }
 

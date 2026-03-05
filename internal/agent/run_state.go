@@ -1141,7 +1141,7 @@ func (s *runState) isToolAllowedInDelegationMode(toolName string) bool {
 
 func (s *runState) rewriteToDelegation(call ToolCallRequest) ToolCallRequest {
 	slog.Debug("delegation: rewriting tool call to agent.run", "from_tool", call.Name, "rewrite_count", s.toolRewriteCount+1, "max_rewrites", maxToolRewriteBudget)
-	message := fmt.Sprintf("Execute %s with args: %s", call.Name, string(call.Arguments))
+	message := fmt.Sprintf("Delegation rewrite: the parent run attempted `%s` with args %s but delegation mode only allows agent.run. Complete the underlying user-facing objective using the best available approach. Do not repeat the same blocked tool path unchanged. Report what you did, what you verified, and any remaining blocker.", call.Name, string(call.Arguments))
 	newArgs, _ := json.Marshal(map[string]any{
 		"agent_id":      "default",
 		"task_id":       "auto-delegated-" + call.ID,

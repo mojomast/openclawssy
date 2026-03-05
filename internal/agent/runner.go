@@ -430,15 +430,9 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 			}
 		}
 
-		// Inject artifact context from dependencies
-		message := task.Message
-		if len(task.DependsOn) > 0 {
-			message = injectArtifacts(message, task.DependsOn, s.delegationArtifacts)
-		}
-
-		// Execute subtask with the updated message
+		// Execute subtask with dependency context and explicit completion rules.
 		modifiedTask := task
-		modifiedTask.Message = message
+		modifiedTask.Message = formatDelegatedTaskMessage(task, s.delegationArtifacts)
 
 		// Apply subtask timeout if specified
 		taskCtx := ctx
@@ -558,13 +552,41 @@ func topologicalSortTasks(tasks []DecomposedTask) ([]DecomposedTask, error) {
 
 func injectArtifacts(message string, deps []string, artifacts map[string]string) string {
 	var b strings.Builder
-	b.WriteString(message)
+	b.WriteString(strings.TrimSpace(message))
 	b.WriteString("\n\nContext from previous steps:\n")
 	for _, dep := range deps {
 		if artifact, ok := artifacts[dep]; ok {
 			b.WriteString(fmt.Sprintf("- %s: %s\n", dep, artifact))
 		}
 	}
+	return b.String()
+}
+
+func formatDelegatedTaskMessage(task DecomposedTask, artifacts map[string]string) string {
+	base := strings.TrimSpace(task.Message)
+	if len(task.DependsOn) > 0 {
+		base = injectArtifacts(base, task.DependsOn, artifacts)
+	}
+
+	var b strings.Builder
+	b.WriteString(base)
+	if len(task.AcceptanceCrit) > 0 {
+		b.WriteString("\n\nAcceptance criteria:\n")
+		for _, item := range task.AcceptanceCrit {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			b.WriteString("- ")
+			b.WriteString(item)
+			b.WriteString("\n")
+		}
+	}
+	b.WriteString("\nExecution rules:\n")
+	b.WriteString("- Complete only this delegated task; do not broaden scope.\n")
+	b.WriteString("- Prefer concrete execution over planning when the next step is clear.\n")
+	b.WriteString("- If blocked, report the exact blocker and the best next step instead of looping.\n")
+	b.WriteString("- End with a concise result that states what was done, what was verified, and any remaining risk.\n")
 	return b.String()
 }
 
@@ -600,13 +622,17 @@ You are in FORCED mode. Only these tools are allowed: %s
 TRIGGER REASON: %s
 
 REQUIRED ACTIONS:
-1. Use agent.list to discover available agents
-2. Execute each subtask below using agent.run
+1. Use only agent.list and agent.run in this mode
+2. Respect subtask dependency order
+3. For each subtask, pass through the exact task_id from the definition
+4. Delegate the work with a clear execution-focused message and let the subagent do the task
+5. After required subtasks complete, finalize using their results instead of restarting the original failing loop
 
 SUBTASKS:
 %s
 
 Your output MUST be tool calls only. Plain text responses are not accepted.
+Do not call unrelated tools, do not invent subtasks, and do not retry the original blocked tool path directly.
 Each agent.run call must include the task_id from the subtask definition.`,
 		strings.Join(trigger.AllowedTools, ", "),
 		trigger.Reason,
@@ -620,8 +646,9 @@ func buildSoftDelegationHint(trigger *DelegationTrigger) string {
 Context signals suggest this task would benefit from delegation:
 Reason: %s
 
-Consider using agent.run to delegate subtasks to specialized agents.
-Each subagent gets a fresh context window, which can help with complex multi-step tasks.`,
+Consider using agent.run to delegate a small number of focused subtasks when direct execution is stalling.
+Use delegation especially when you need a fresh context window, an isolated diagnosis pass, or a scoped execution step.
+If you delegate, make each subtask specific, execution-focused, and easy to verify.`,
 		trigger.Reason,
 	)
 }

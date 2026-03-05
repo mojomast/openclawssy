@@ -37,7 +37,7 @@ func GenerateSubtasksFromPattern(template, message string, snapshot StateSnapsho
 			{
 				TaskID:         "phase-1-discover",
 				AgentID:        "default",
-				Message:        "List all files that need modification for: " + message + ". Return ONLY a JSON array of file paths. No other text.",
+				Message:        "Identify every workspace file that likely needs modification for this request: " + message + ". Return ONLY a JSON array of relative file paths, ordered by implementation priority. Do not include commentary or markdown.",
 				AcceptanceCrit: []string{"Valid JSON array", "File paths are relative to workspace"},
 				Produces:       []string{"file_list"},
 				Priority:       1,
@@ -46,7 +46,7 @@ func GenerateSubtasksFromPattern(template, message string, snapshot StateSnapsho
 			{
 				TaskID:         "phase-2-implement",
 				AgentID:        "default",
-				Message:        "Implement the required changes for each file discovered in phase-1.",
+				Message:        "Implement the requested changes using the file list from phase-1. Modify only files required for the task, verify the changed behavior with the smallest relevant check, and report files changed plus any remaining risk.",
 				DependsOn:      []string{"phase-1-discover"},
 				AcceptanceCrit: []string{"All files modified", "Changes compile/run"},
 				Priority:       2,
@@ -59,7 +59,7 @@ func GenerateSubtasksFromPattern(template, message string, snapshot StateSnapsho
 			{
 				TaskID:         "phase-1-structure",
 				AgentID:        "default",
-				Message:        "Analyze project structure. Return: 1) Directory tree (top 3 levels), 2) Main entry points, 3) Tech stack detected.",
+				Message:        "Analyze the project structure for the current task. Return only concise findings covering: 1) directory tree (top 3 levels max), 2) main entry points, 3) detected tech stack, 4) the most relevant modules to inspect next.",
 				AcceptanceCrit: []string{"Directory structure", "Entry points listed", "Tech stack identified"},
 				Produces:       []string{"project_structure"},
 				Priority:       1,
@@ -68,7 +68,7 @@ func GenerateSubtasksFromPattern(template, message string, snapshot StateSnapsho
 			{
 				TaskID:    "phase-2-deep",
 				AgentID:   "default",
-				Message:   "Deep analysis of core modules. Based on the structure from phase-1, analyze: architecture patterns, key dependencies, data flow.",
+				Message:   "Based on phase-1, analyze only the most relevant core modules. Explain architecture patterns, key dependencies, and main data flow, and call out the highest-risk or highest-leverage areas.",
 				DependsOn: []string{"phase-1-structure"},
 				Produces:  []string{"architecture_analysis"},
 				Priority:  2,
@@ -77,7 +77,7 @@ func GenerateSubtasksFromPattern(template, message string, snapshot StateSnapsho
 			{
 				TaskID:    "phase-3-report",
 				AgentID:   "default",
-				Message:   "Synthesize findings into a report covering: current state, risks, recommendations.",
+				Message:   "Synthesize the prior findings into a concise report covering current state, main risks, and specific recommendations in priority order.",
 				DependsOn: []string{"phase-2-deep"},
 				Produces:  []string{"final_report"},
 				Priority:  3,
@@ -90,7 +90,7 @@ func GenerateSubtasksFromPattern(template, message string, snapshot StateSnapsho
 			{
 				TaskID:         "phase-1-diagnose",
 				AgentID:        "default",
-				Message:        "Diagnose the issue. Steps: 1) Reproduce the error, 2) Identify root cause, 3) List affected files. Return findings as structured JSON.",
+				Message:        "Diagnose the issue for this request: " + message + ". Steps: 1) reproduce or localize the failure, 2) identify the most likely root cause, 3) list affected files or systems, 4) propose the smallest credible fix. Return findings as structured JSON.",
 				AcceptanceCrit: []string{"Error reproduced", "Root cause identified", "Affected files listed"},
 				Produces:       []string{"diagnosis"},
 				Priority:       1,
@@ -99,7 +99,7 @@ func GenerateSubtasksFromPattern(template, message string, snapshot StateSnapsho
 			{
 				TaskID:         "phase-2-fix",
 				AgentID:        "default",
-				Message:        "Implement the fix based on diagnosis. Verify the fix resolves the issue.",
+				Message:        "Implement the fix based on the diagnosis from phase-1. Prefer the smallest safe change, verify the issue is resolved with the most relevant check available, and report what changed plus any residual risk.",
 				DependsOn:      []string{"phase-1-diagnose"},
 				AcceptanceCrit: []string{"Fix implemented", "Error no longer occurs"},
 				Priority:       2,
@@ -126,7 +126,7 @@ func GenerateSignalBasedSubtasks(complexity ComplexityScore, snapshot StateSnaps
 			{
 				TaskID:         "unblock-diagnose",
 				AgentID:        "default",
-				Message:        "Current execution is blocked. Analyze why: " + getFirstError(snapshot.LastErrorTypes) + ". Identify: 1) What's blocking, 2) Alternative approaches, 3) Missing inputs needed.",
+				Message:        "Current execution is blocked. Analyze this blocker: " + getFirstError(snapshot.LastErrorTypes) + ". Identify: 1) what is blocking progress, 2) the best alternative approaches, 3) missing inputs or permissions, 4) the next action with the highest chance of success.",
 				AcceptanceCrit: []string{"Blocker identified", "Alternatives proposed"},
 				Priority:       1,
 				TimeoutMS:      45000,
@@ -134,7 +134,7 @@ func GenerateSignalBasedSubtasks(complexity ComplexityScore, snapshot StateSnaps
 			{
 				TaskID:    "unblock-resolve",
 				AgentID:   "default",
-				Message:   "Based on diagnosis, implement the best alternative approach.",
+				Message:   "Based on the diagnosis, execute the best alternative approach. Prefer forward progress over repeated failed attempts, and report the result or the next concrete blocker.",
 				DependsOn: []string{"unblock-diagnose"},
 				Priority:  2,
 				TimeoutMS: 60000,
@@ -147,7 +147,7 @@ func GenerateSignalBasedSubtasks(complexity ComplexityScore, snapshot StateSnaps
 			{
 				TaskID:         "failure-analyze",
 				AgentID:        "default",
-				Message:        "Analyze repeated failures. Tool: " + snapshot.LastToolAttempted + ". Error: " + strings.Join(snapshot.LastErrorTypes, ", ") + ". Propose a different approach.",
+				Message:        "Analyze the repeated failure loop. Last tool: " + snapshot.LastToolAttempted + ". Recent errors: " + strings.Join(snapshot.LastErrorTypes, ", ") + ". Explain the likely root cause, why the current approach is failing, and propose a materially different next approach.",
 				AcceptanceCrit: []string{"Root cause found", "Alternative proposed"},
 				Priority:       1,
 				TimeoutMS:      30000,
@@ -155,7 +155,7 @@ func GenerateSignalBasedSubtasks(complexity ComplexityScore, snapshot StateSnaps
 			{
 				TaskID:    "failure-retry",
 				AgentID:   "default",
-				Message:   "Execute the proposed alternative approach.",
+				Message:   "Execute the proposed alternative approach. Do not repeat the same failing action without a material change in method, inputs, or permissions.",
 				DependsOn: []string{"failure-analyze"},
 				Priority:  2,
 				TimeoutMS: 60000,
@@ -168,7 +168,7 @@ func GenerateSignalBasedSubtasks(complexity ComplexityScore, snapshot StateSnaps
 			{
 				TaskID:         "context-summarize",
 				AgentID:        "default",
-				Message:        "Summarize current progress and state. Output: 1) What's been done, 2) What's pending, 3) Next atomic step.",
+				Message:        "Summarize current progress under context pressure. Output only concise findings covering: 1) what has already been done, 2) what is still pending, 3) the single next atomic step with highest value.",
 				AcceptanceCrit: []string{"Progress summarized", "Next step identified"},
 				Produces:       []string{"progress_summary"},
 				Priority:       1,
@@ -177,7 +177,7 @@ func GenerateSignalBasedSubtasks(complexity ComplexityScore, snapshot StateSnaps
 			{
 				TaskID:    "context-continue",
 				AgentID:   "default",
-				Message:   "Execute only the next atomic step identified in the summary. Do not attempt more.",
+				Message:   "Execute only the single next atomic step identified in the summary. Do not broaden scope, and stop after producing a concrete result for that step.",
 				DependsOn: []string{"context-summarize"},
 				Priority:  2,
 				TimeoutMS: 45000,
@@ -190,14 +190,14 @@ func GenerateSignalBasedSubtasks(complexity ComplexityScore, snapshot StateSnaps
 			{
 				TaskID:    "generic-assess",
 				AgentID:   "default",
-				Message:   "Assess current task state. Identify: 1) What needs to be done, 2) Smallest next step.",
+				Message:   "Assess the current task state. Identify: 1) what still needs to be done, 2) the smallest next step that makes real progress, 3) any immediate blocker or assumption.",
 				Priority:  1,
 				TimeoutMS: 20000,
 			},
 			{
 				TaskID:    "generic-execute",
 				AgentID:   "default",
-				Message:   "Execute the smallest next step identified.",
+				Message:   "Execute the smallest next step identified in the assessment. Prefer concrete progress and report the exact result.",
 				DependsOn: []string{"generic-assess"},
 				Priority:  2,
 				TimeoutMS: 45000,

@@ -21,8 +21,11 @@ func TestDecomposeTaskParallelFilesPattern(t *testing.T) {
 	if discover.TaskID != "phase-1-discover" {
 		t.Fatalf("expected first task ID 'phase-1-discover', got %q", discover.TaskID)
 	}
-	if !strings.Contains(strings.ToLower(discover.Message), "list all files") {
-		t.Fatalf("expected discover task to mention listing files, got %q", discover.Message)
+	if !strings.Contains(strings.ToLower(discover.Message), "file") || !strings.Contains(strings.ToLower(discover.Message), "modification") {
+		t.Fatalf("expected discover task to focus on identifying files to modify, got %q", discover.Message)
+	}
+	if !strings.Contains(strings.ToLower(discover.Message), "json array") {
+		t.Fatalf("expected discover task to require json array output, got %q", discover.Message)
 	}
 	if len(discover.Produces) == 0 || discover.Produces[0] != "file_list" {
 		t.Fatalf("expected discover task to produce 'file_list', got %v", discover.Produces)
@@ -89,6 +92,9 @@ func TestDecomposeTaskDebugFixPattern(t *testing.T) {
 	if !strings.Contains(strings.ToLower(fix.Message), "fix") {
 		t.Fatalf("expected fix task message to mention fixing, got %q", fix.Message)
 	}
+	if !strings.Contains(strings.ToLower(fix.Message), "residual risk") {
+		t.Fatalf("expected fix task to ask for residual risk reporting, got %q", fix.Message)
+	}
 }
 
 // TestDecomposeTaskFallbackWhenNoPattern verifies that a message that doesn't
@@ -122,5 +128,8 @@ func TestDecomposeTaskFallbackWhenNoPattern(t *testing.T) {
 	}
 	if execute.Priority != 2 {
 		t.Fatalf("expected execute priority 2, got %d", execute.Priority)
+	}
+	if !strings.Contains(strings.ToLower(execute.Message), "exact result") {
+		t.Fatalf("expected execute task to request concrete result reporting, got %q", execute.Message)
 	}
 }
