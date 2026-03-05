@@ -13,23 +13,26 @@ import (
 )
 
 const (
-	defaultRepeatedFileWriteCap = 5
-	journalFileWriteCap         = 1
-	journalFileReadCap          = 2
-	buildLogFileWriteCap        = 2
-	buildLogFileReadCap         = 2
-	specFileReadCap             = 3
-	agentMessageSendCap         = 1
-	agentMessageInboxCap        = 2
-	agentRunCap                 = 1
-	shellExecRepetitionCap      = 3
-	memoryWriteRepetitionCap    = 2
-	noChoicesRetryCap           = 2
-	noChoicesRetryDelay         = 200 * time.Millisecond
-	transientModelRetryCap      = 2
-	transientModelRetryDelay    = 250 * time.Millisecond
-	toolParseRetryCap           = 4
-	maxToolRewriteBudget        = 3 // Maximum rewrites to prevent infinite loops
+	defaultRepeatedFileWriteCap  = 5
+	defaultRepeatedFileAppendCap = 8
+	journalFileWriteCap          = 4
+	journalFileAppendCap         = 24
+	journalFileReadCap           = 2
+	buildLogFileWriteCap         = 2
+	buildLogFileAppendCap        = 12
+	buildLogFileReadCap          = 2
+	specFileReadCap              = 3
+	agentMessageSendCap          = 1
+	agentMessageInboxCap         = 2
+	agentRunCap                  = 1
+	shellExecRepetitionCap       = 3
+	memoryWriteRepetitionCap     = 2
+	noChoicesRetryCap            = 2
+	noChoicesRetryDelay          = 200 * time.Millisecond
+	transientModelRetryCap       = 2
+	transientModelRetryDelay     = 250 * time.Millisecond
+	toolParseRetryCap            = 4
+	maxToolRewriteBudget         = 3 // Maximum rewrites to prevent infinite loops
 )
 
 // runState encapsulates the mutable state of a single agent run loop.
@@ -486,6 +489,11 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 				s.out.CompletedAt = time.Now().UTC()
 				return s.out, nil
 			}
+			if input.OnTextDelta != nil && (isTransientProviderModelError(err) || isProviderNoChoicesError(err)) {
+				s.out.FinalText = recoverFromInterruptedStream(err)
+				s.out.CompletedAt = time.Now().UTC()
+				return s.out, nil
+			}
 			s.out.CompletedAt = time.Now().UTC()
 			return s.out, err
 		}
@@ -917,6 +925,15 @@ func repetitionCapForToolPath(toolName, path string) (int, bool) {
 	isBuildLogPath := strings.Contains(lower, "build_log")
 	isSpecPath := strings.HasSuffix(lower, "_spec.md") || strings.HasSuffix(lower, "/spec.md")
 	if toolName == "fs.write" || toolName == "fs.append" {
+		if toolName == "fs.append" {
+			if isBuildLogPath {
+				return buildLogFileAppendCap, true
+			}
+			if isJournalPath {
+				return journalFileAppendCap, true
+			}
+			return defaultRepeatedFileAppendCap, true
+		}
 		if isBuildLogPath {
 			return buildLogFileWriteCap, true
 		}

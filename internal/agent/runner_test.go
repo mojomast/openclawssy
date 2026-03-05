@@ -85,6 +85,18 @@ func (m *alwaysTransientErrorModel) Generate(_ context.Context, _ ModelRequest) 
 	return ModelResponse{}, errors.New("provider stream interrupted after partial output: context deadline exceeded")
 }
 
+type alwaysInterruptedStreamingModel struct {
+	attempts int
+}
+
+func (m *alwaysInterruptedStreamingModel) Generate(_ context.Context, req ModelRequest) (ModelResponse, error) {
+	m.attempts++
+	if req.OnTextDelta != nil {
+		_ = req.OnTextDelta("partial manifesto")
+	}
+	return ModelResponse{}, errors.New("provider stream interrupted after partial output: context deadline exceeded")
+}
+
 func (m *mockTools) Execute(_ context.Context, call ToolCallRequest) (ToolCallResult, error) {
 	m.calls = append(m.calls, call)
 	result, ok := m.results[call.ID]
@@ -611,10 +623,14 @@ func TestRunnerBlocksRepeatedFileWriteLoopsOnSamePath(t *testing.T) {
 	}
 }
 
-func TestRunnerBlocksSecondJournalWriteInSameRun(t *testing.T) {
+func TestRunnerAllowsManyJournalAppendsInSameRun(t *testing.T) {
 	model := &mockModel{responses: []ModelResponse{
-		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.write", Arguments: []byte(`{"path":"exploration_journal.md","content":"v1"}`)}}},
-		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.write", Arguments: []byte(`{"path":"exploration_journal.md","content":"v2"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.append", Arguments: []byte(`{"path":"exploration_journal.md","content":"entry 1\n"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.append", Arguments: []byte(`{"path":"exploration_journal.md","content":"entry 2\n"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "fs.append", Arguments: []byte(`{"path":"exploration_journal.md","content":"entry 3\n"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "4", Name: "fs.append", Arguments: []byte(`{"path":"exploration_journal.md","content":"entry 4\n"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "5", Name: "fs.append", Arguments: []byte(`{"path":"exploration_journal.md","content":"entry 5\n"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "6", Name: "fs.append", Arguments: []byte(`{"path":"exploration_journal.md","content":"entry 6\n"}`)}}},
 		{FinalText: "done"},
 	}}
 
@@ -628,14 +644,16 @@ func TestRunnerBlocksSecondJournalWriteInSameRun(t *testing.T) {
 	if out.FinalText != "done" {
 		t.Fatalf("unexpected final text: %q", out.FinalText)
 	}
-	if len(tools.calls) != 1 {
-		t.Fatalf("expected only first journal write to execute, got %d", len(tools.calls))
+	if len(tools.calls) != 6 {
+		t.Fatalf("expected all journal appends to execute, got %d", len(tools.calls))
 	}
-	if len(out.ToolCalls) != 2 {
-		t.Fatalf("expected two tool call records, got %d", len(out.ToolCalls))
+	if len(out.ToolCalls) != 6 {
+		t.Fatalf("expected six tool call records, got %d", len(out.ToolCalls))
 	}
-	if !strings.Contains(out.ToolCalls[1].Result.Error, "repetition detected") {
-		t.Fatalf("expected repetition guard on second journal write, got %q", out.ToolCalls[1].Result.Error)
+	for i, rec := range out.ToolCalls {
+		if rec.Result.Error != "" {
+			t.Fatalf("expected journal append %d to succeed, got %q", i+1, rec.Result.Error)
+		}
 	}
 }
 
@@ -1326,6 +1344,32 @@ func TestRunnerStopsAfterTransientProviderRetryCap(t *testing.T) {
 	_, err := runner.Run(context.Background(), RunInput{Message: "hello"})
 	if err == nil {
 		t.Fatal("expected run to fail after retry cap")
+	}
+	if model.attempts != 3 {
+		t.Fatalf("expected 3 model attempts at retry cap, got %d", model.attempts)
+	}
+}
+
+func TestRunnerReturnsContinuationHintAfterStreamingInterruption(t *testing.T) {
+	model := &alwaysInterruptedStreamingModel{}
+	runner := Runner{Model: model, ToolExecutor: &mockTools{}, MaxToolIterations: 120}
+
+	var deltas []string
+	out, err := runner.Run(context.Background(), RunInput{
+		Message: "write a long manifesto",
+		OnTextDelta: func(delta string) error {
+			deltas = append(deltas, delta)
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected graceful continuation hint, got error: %v", err)
+	}
+	if len(deltas) == 0 {
+		t.Fatal("expected partial streamed text before interruption")
+	}
+	if !strings.Contains(out.FinalText, "Send `continue`") {
+		t.Fatalf("expected continuation hint, got %q", out.FinalText)
 	}
 	if model.attempts != 3 {
 		t.Fatalf("expected 3 model attempts at retry cap, got %d", model.attempts)

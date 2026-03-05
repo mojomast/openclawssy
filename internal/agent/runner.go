@@ -197,6 +197,14 @@ func recoverFromEmptyFinal(toolResults []ToolCallResult) string {
 	return "I completed tool execution, but the model returned an empty final response. Here are the latest tool results:\n" + formatLatestToolResults(toolResults)
 }
 
+func recoverFromInterruptedStream(err error) string {
+	msg := strings.TrimSpace(err.Error())
+	if msg == "" {
+		msg = "provider stream interrupted"
+	}
+	return "The response stream was interrupted before I could finish. Send `continue` and I will resume from the cutoff point.\n\nLast error: " + msg
+}
+
 func latestToolResultsAreEmptySearches(results []ToolCallResult) bool {
 	if len(results) == 0 {
 		return false
