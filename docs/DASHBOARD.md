@@ -36,12 +36,24 @@ Use dashboard admin sections to manage runtime behavior:
 
 - **Status**: runtime health and basic diagnostics
 - **Settings**: editable safe runtime config fields
-- **Secrets**: write-only secret updates (values are not re-displayed)
+- **Secrets**: write-only secret updates and key cleanup (values are not re-displayed)
 - **Scheduler**: recurring job create/pause/resume/delete
 - **Agents**: profile and routing controls
 - **Memory**: memory health/stat visibility per agent
 
 Depending on your build/runtime features, additional pages (for example sandbox manager) may appear.
+
+## Discord onboarding from the dashboard
+
+The fastest operator flow is:
+
+1. Open `Settings` -> `Chat/Discord/Telegram`
+2. Use `Discord Setup` to store the bot token in the encrypted secret store
+3. Confirm the `Discord token: Present` status
+4. Enable `discord.enabled`
+5. Set allowlists and command prefix as needed
+
+For full Discord bot creation and invite steps, see `docs/DISCORD.md`.
 
 ## Common troubleshooting
 

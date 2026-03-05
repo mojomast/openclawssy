@@ -371,6 +371,96 @@ func TestAdminSecretsEndpointSetAndList(t *testing.T) {
 	}
 }
 
+func TestAdminSecretsEndpointValidatesInputAndDeletesKeys(t *testing.T) {
+	root := t.TempDir()
+	masterPath := filepath.Join(root, ".openclawssy", "master.key")
+	if _, err := secrets.GenerateAndWriteMasterKey(masterPath); err != nil {
+		t.Fatalf("generate master key: %v", err)
+	}
+
+	configPath := filepath.Join(root, ".openclawssy", "config.json")
+	cfg := config.Default()
+	cfg.Secrets.MasterKeyFile = masterPath
+	cfg.Secrets.StoreFile = filepath.Join(root, ".openclawssy", "secrets.enc")
+	if err := config.Save(configPath, cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	tooLongName := strings.Repeat("a", maxAdminSecretKeyLen+1)
+	tooLongValue := strings.Repeat("b", maxAdminSecretValueLen+1)
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "blank name", body: `{"name":"   ","value":"abc"}`},
+		{name: "control chars", body: "{\"name\":\"discord\\nkey\",\"value\":\"abc\"}"},
+		{name: "name too long", body: `{"name":"` + tooLongName + `","value":"abc"}`},
+		{name: "value too long", body: `{"name":"discord/bot_token","value":"` + tooLongValue + `"}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/admin/secrets", bytes.NewBufferString(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			resp := httptest.NewRecorder()
+			mux.ServeHTTP(resp, req)
+			if resp.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d (%s)", resp.Code, resp.Body.String())
+			}
+		})
+	}
+
+	setReq := httptest.NewRequest(http.MethodPost, "/api/admin/secrets", bytes.NewBufferString(`{"name":" discord/bot_token ","value":"abc"}`))
+	setReq.Header.Set("Content-Type", "application/json")
+	setResp := httptest.NewRecorder()
+	mux.ServeHTTP(setResp, setReq)
+	if setResp.Code != http.StatusOK {
+		t.Fatalf("expected set status 200, got %d (%s)", setResp.Code, setResp.Body.String())
+	}
+	setOtherReq := httptest.NewRequest(http.MethodPost, "/api/admin/secrets", bytes.NewBufferString(`{"name":"OPENAI_API_KEY","value":"xyz"}`))
+	setOtherReq.Header.Set("Content-Type", "application/json")
+	setOtherResp := httptest.NewRecorder()
+	mux.ServeHTTP(setOtherResp, setOtherReq)
+	if setOtherResp.Code != http.StatusOK {
+		t.Fatalf("expected second set status 200, got %d (%s)", setOtherResp.Code, setOtherResp.Body.String())
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/admin/secrets/discord%2Fbot_token", nil)
+	deleteResp := httptest.NewRecorder()
+	mux.ServeHTTP(deleteResp, deleteReq)
+	if deleteResp.Code != http.StatusOK {
+		t.Fatalf("expected delete status 200, got %d (%s)", deleteResp.Code, deleteResp.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/secrets", nil)
+	listResp := httptest.NewRecorder()
+	mux.ServeHTTP(listResp, listReq)
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("expected list status 200, got %d (%s)", listResp.Code, listResp.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(listResp.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode secrets response: %v", err)
+	}
+	keys, ok := payload["keys"].([]any)
+	if !ok {
+		t.Fatalf("expected keys array, got %#v", payload["keys"])
+	}
+	if len(keys) != 1 || keys[0] != "OPENAI_API_KEY" {
+		t.Fatalf("expected delete to preserve other keys, got %#v", keys)
+	}
+
+	deleteMissingReq := httptest.NewRequest(http.MethodDelete, "/api/admin/secrets/discord%2Fbot_token", nil)
+	deleteMissingResp := httptest.NewRecorder()
+	mux.ServeHTTP(deleteMissingResp, deleteMissingReq)
+	if deleteMissingResp.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing key, got %d (%s)", deleteMissingResp.Code, deleteMissingResp.Body.String())
+	}
+}
+
 func TestAdminAgentDocsEndpointListAndSave(t *testing.T) {
 	root := t.TempDir()
 	agentDir := filepath.Join(root, ".openclawssy", "agents", "default")

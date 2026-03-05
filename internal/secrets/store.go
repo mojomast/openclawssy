@@ -76,6 +76,24 @@ func (s *Store) ListKeys() ([]string, error) {
 	return keys, nil
 }
 
+func (s *Store) Delete(name string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	data, err := s.readAllLocked()
+	if err != nil {
+		return false, err
+	}
+	if _, ok := data[name]; !ok {
+		return false, nil
+	}
+	delete(data, name)
+	if err := s.writeAllLocked(data); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *Store) readAllLocked() (map[string]string, error) {
 	b, err := os.ReadFile(s.path)
 	if err != nil {

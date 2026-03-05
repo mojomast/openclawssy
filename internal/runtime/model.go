@@ -89,7 +89,6 @@ var toolNameAliases = map[string]string{
 	"code.search":          "code.search",
 	"config.get":           "config.get",
 	"config.set":           "config.set",
-	"secrets.get":          "secrets.get",
 	"secrets.set":          "secrets.set",
 	"secrets.list":         "secrets.list",
 	"skill.list":           "skill.list",

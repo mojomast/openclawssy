@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	httpchannel "openclawssy/internal/channels/http"
 	"openclawssy/internal/chatstore"
@@ -89,6 +91,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/status", h.getStatus)
 	mux.HandleFunc("/api/admin/config", h.handleConfig)
 	mux.HandleFunc("/api/admin/secrets", h.handleSecrets)
+	mux.HandleFunc("/api/admin/secrets/", h.handleSecretByKey)
 	mux.HandleFunc("/api/admin/scheduler/jobs", h.handleSchedulerJobs)
 	mux.HandleFunc("/api/admin/scheduler/jobs/", h.handleSchedulerJobByID)
 	mux.HandleFunc("/api/admin/scheduler/control", h.handleSchedulerControl)
@@ -100,6 +103,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/debug/runs/", h.getRunTrace)
 	mux.HandleFunc("/api/admin/memory/", h.getAgentMemory)
 }
+
+const (
+	maxAdminSecretKeyLen   = 256
+	maxAdminSecretValueLen = 16384
+)
 
 func (h *Handler) schedulerStoreOrDefault() (*scheduler.Store, error) {
 	if h.schedulerStore != nil {
@@ -366,6 +374,7 @@ func (h *Handler) handleSecrets(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		sort.Strings(keys)
 		writeJSON(w, map[string]any{"keys": keys})
 		return
 	}
@@ -376,22 +385,96 @@ func (h *Handler) handleSecrets(w http.ResponseWriter, r *http.Request) {
 			Value string `json:"value"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid json body", http.StatusBadRequest)
+			return
+		}
+		name, err := validateAdminSecretKey(req.Name)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if req.Name == "" || req.Value == "" {
-			http.Error(w, "name and value are required", http.StatusBadRequest)
+		if err := validateAdminSecretValue(req.Value); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := store.Set(req.Name, req.Value); err != nil {
+		if err := store.Set(name, req.Value); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, map[string]any{"ok": true, "stored": req.Name})
+		writeJSON(w, map[string]any{"ok": true, "stored": name})
 		return
 	}
 
 	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+}
+
+func (h *Handler) handleSecretByKey(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	rawKey := strings.TrimPrefix(r.URL.Path, "/api/admin/secrets/")
+	if rawKey == "" {
+		http.Error(w, "secret key is required", http.StatusBadRequest)
+		return
+	}
+	decodedKey, err := url.PathUnescape(rawKey)
+	if err != nil {
+		http.Error(w, "invalid secret key path", http.StatusBadRequest)
+		return
+	}
+	key, err := validateAdminSecretKey(decodedKey)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	cfg, err := config.LoadOrDefault(filepath.Join(h.rootDir, ".openclawssy", "config.json"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	store, err := secrets.NewStore(cfg)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	deleted, err := store.Delete(key)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !deleted {
+		http.Error(w, "secret key not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "deleted": key})
+}
+
+func validateAdminSecretKey(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return "", errors.New("name is required")
+	}
+	if len(name) > maxAdminSecretKeyLen {
+		return "", fmt.Errorf("name exceeds %d characters", maxAdminSecretKeyLen)
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return "", errors.New("name cannot contain control characters")
+		}
+	}
+	return name, nil
+}
+
+func validateAdminSecretValue(value string) error {
+	if value == "" {
+		return errors.New("value is required")
+	}
+	if len(value) > maxAdminSecretValueLen {
+		return fmt.Errorf("value exceeds %d characters", maxAdminSecretValueLen)
+	}
+	return nil
 }
 
 func (h *Handler) getRunTrace(w http.ResponseWriter, r *http.Request) {

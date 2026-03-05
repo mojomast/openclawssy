@@ -65,8 +65,10 @@ Dashboard tips:
 - Tool activity is summarized per step (for example file writes show line counts).
 - You can resize the chat panel and collapse tool/session/status/admin panes.
 - Long runs keep updating in-place with elapsed time, completed tool-call count, and latest tool summary.
+- Discord onboarding can now be completed from `Settings` -> `Discord Setup`.
 
 For detailed frontend/operator usage, see `docs/DASHBOARD.md`.
+For Discord bot setup details, see `docs/DISCORD.md`.
 
 ## 6) Send a run
 

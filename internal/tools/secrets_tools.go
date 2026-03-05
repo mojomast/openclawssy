@@ -20,14 +20,6 @@ func registerSecretsTools(reg *Registry, configuredPath string) error {
 		return err
 	}
 	if err := reg.Register(ToolSpec{
-		Name:        "secrets.get",
-		Description: "Get encrypted secret value by key",
-		Required:    []string{"key"},
-		ArgTypes:    map[string]ArgType{"key": ArgTypeString},
-	}, secretsGet(configuredPath)); err != nil {
-		return err
-	}
-	if err := reg.Register(ToolSpec{
 		Name:        "secrets.list",
 		Description: "List encrypted secret keys",
 	}, secretsList(configuredPath)); err != nil {
@@ -64,32 +56,6 @@ func secretsSet(configuredPath string) Handler {
 			"updated": true,
 			"summary": fmt.Sprintf("stored secret key %s", key),
 		}, nil
-	}
-}
-
-func secretsGet(configuredPath string) Handler {
-	return func(_ context.Context, req Request) (map[string]any, error) {
-		key, err := getString(req.Args, "key")
-		if err != nil {
-			return nil, err
-		}
-		key = strings.TrimSpace(key)
-		if key == "" {
-			return nil, fmt.Errorf("key cannot be empty")
-		}
-
-		store, err := openSecretsStore(req.Workspace, configuredPath)
-		if err != nil {
-			return nil, err
-		}
-		value, found, err := store.Get(key)
-		if err != nil {
-			return nil, err
-		}
-		if !found {
-			return map[string]any{"key": key, "found": false}, nil
-		}
-		return map[string]any{"key": key, "found": true, "value": value}, nil
 	}
 }
 

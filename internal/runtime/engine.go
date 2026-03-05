@@ -1076,7 +1076,7 @@ func runtimeContextDoc(workspaceDir string) string {
 	bullets := []string{
 		fmt.Sprintf("Workspace root: %s", workspaceDir),
 		"File tools (fs.read/fs.list/fs.write/fs.append/fs.delete/fs.move/fs.edit/code.search) stay inside workspace root.",
-		"Config tools (config.get/config.set) change only an allowlisted safe subset; secrets.get/secrets.set/secrets.list keep secret values out of plaintext output.",
+		"Config tools (config.get/config.set) change only an allowlisted safe subset; secrets.set/secrets.list keep secrets write-only from the agent surface.",
 		"Skill tools (skill.list/skill.read), memory tools (memory.search/memory.write/memory.update/memory.forget/memory.health/memory.checkpoint/memory.maintenance/decision.log), scheduler tools (scheduler.list/add/remove/pause/resume), and session tools (session.list/session.close) manage built-in workflow state.",
 		"Agent tools (agent.list/agent.create/agent.switch/agent.identity.set plus agent.profile.get/agent.profile.set) manage agents and routing.",
 		"Run tools (run.list/run.get/run.cancel), policy tools (policy.list/policy.grant/policy.revoke), and metrics.get expose runtime state, capability grants, and run metrics.",
@@ -1100,7 +1100,7 @@ func toolCallingBestPracticesDoc() string {
 		"For connectivity checks, prefer read-only diagnostics first (for example `ip addr`, `ss -tulpen`, `dig`, `curl -I`, `nmap -sT`).",
 		"For multi-step shell tasks, prefer one well-structured script in a single `shell.exec` call over many tiny probe commands.",
 		"Use fs.append for additive edits, fs.delete for intentional removals, and fs.move for renames or moves.",
-		"Use config.get/config.set for safe runtime knobs and secrets.get/secrets.set for secret access; never echo secret values.",
+		"Use config.get/config.set for safe runtime knobs and secrets.set/secrets.list for secret storage and presence checks; never echo secret values.",
 		"Use scheduler.add/list/remove/pause/resume for job lifecycle and session.list/session.close for chat lifecycle.",
 		"Use run.list to enumerate runs with filtering (agent_id, status) and pagination; use run.get for details before proposing operational changes.",
 		"Do not invent tool names or arguments. If a capability is unavailable, say so plainly and continue with the best available path.",
@@ -1119,7 +1119,7 @@ func toolCallingBestPracticesDocWithAgentTools() string {
 		"For connectivity checks, prefer read-only diagnostics first (for example `ip addr`, `ss -tulpen`, `dig`, `curl -I`, `nmap -sT`).",
 		"For multi-step shell tasks, prefer one well-structured script in a single `shell.exec` call over many tiny probe commands.",
 		"Use fs.append for additive edits, fs.delete for intentional removals, and fs.move for renames or moves.",
-		"Use config.get/config.set for safe runtime knobs and secrets.get/secrets.set for secret access; never echo secret values.",
+		"Use config.get/config.set for safe runtime knobs and secrets.set/secrets.list for secret storage and presence checks; never echo secret values.",
 		"Use skill.list/skill.read, scheduler.add/scheduler.resume with scheduler.list/scheduler.remove/scheduler.pause, and session.list/session.close for built-in workflow state.",
 		"Use agent.list/agent.switch/agent.create for routing and scaffolding, agent.profile.get/agent.profile.set for per-agent controls, agent.message.send/agent.message.inbox for coordination, and agent.run for direct subagent execution.",
 		"Use agent.prompt.read/agent.prompt.suggest for prompt governance; use agent.prompt.update only when self-improvement controls allow it.",
@@ -1317,7 +1317,7 @@ func normalizeToolArgs(toolName string, args map[string]any) map[string]any {
 				args["pattern"] = value
 			}
 		}
-	case "secrets.get", "secrets.set":
+	case "secrets.set":
 		aliasKeys := []string{"name", "secret", "secret_key", "secretKey", "env", "env_var", "token"}
 		if getStringArg(args, "key") == "" {
 			for _, key := range aliasKeys {
@@ -1524,7 +1524,7 @@ func sanitizePathArg(path string) string {
 }
 
 func (e *Engine) allowedTools(cfg config.Config) []string {
-	toolsList := []string{"fs.read", "fs.list", "fs.write", "fs.append", "fs.delete", "fs.move", "fs.edit", "code.search", "config.get", "config.set", "secrets.get", "secrets.set", "secrets.list", "skill.list", "skill.read", "scheduler.list", "scheduler.add", "scheduler.remove", "scheduler.pause", "scheduler.resume", "session.list", "session.close", "agent.list", "agent.create", "agent.switch", "agent.profile.get", "agent.profile.set", "agent.message.send", "agent.message.inbox", "agent.run", "agent.prompt.read", "agent.prompt.update", "agent.prompt.suggest", "agent.identity.set", "policy.list", "policy.grant", "policy.revoke", "run.list", "run.get", "run.cancel", "metrics.get", "memory.search", "memory.write", "memory.update", "memory.forget", "memory.health", "memory.checkpoint", "memory.maintenance", "decision.log", "time.now"}
+	toolsList := []string{"fs.read", "fs.list", "fs.write", "fs.append", "fs.delete", "fs.move", "fs.edit", "code.search", "config.get", "config.set", "secrets.set", "secrets.list", "skill.list", "skill.read", "scheduler.list", "scheduler.add", "scheduler.remove", "scheduler.pause", "scheduler.resume", "session.list", "session.close", "agent.list", "agent.create", "agent.switch", "agent.profile.get", "agent.profile.set", "agent.message.send", "agent.message.inbox", "agent.run", "agent.prompt.read", "agent.prompt.update", "agent.prompt.suggest", "agent.identity.set", "policy.list", "policy.grant", "policy.revoke", "run.list", "run.get", "run.cancel", "metrics.get", "memory.search", "memory.write", "memory.update", "memory.forget", "memory.health", "memory.checkpoint", "memory.maintenance", "decision.log", "time.now"}
 	if cfg.Network.Enabled {
 		toolsList = append(toolsList, "http.request")
 	}

@@ -174,7 +174,7 @@ func TestRunnerRecoversWhenModelReturnsEmptyFinalTextAfterTools(t *testing.T) {
 func TestRunnerRepromptsWhenModelDefersWithoutToolCall(t *testing.T) {
 	model := &mockModel{responses: []ModelResponse{
 		{FinalText: "Let me check that right now."},
-		{ToolCalls: []ToolCallRequest{{ID: "call-1", Name: "secrets.get", Arguments: []byte(`{"name":"PERPLEXITY_API_KEY"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "call-1", Name: "secrets.list", Arguments: []byte(`{}`)}}},
 		{FinalText: "I checked it and the key exists."},
 	}}
 	tools := &mockTools{results: map[string]ToolCallResult{
@@ -184,7 +184,7 @@ func TestRunnerRepromptsWhenModelDefersWithoutToolCall(t *testing.T) {
 	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 8}
 	out, err := runner.Run(context.Background(), RunInput{
 		Message:      "can you verify the perplexity key",
-		AllowedTools: []string{"secrets.get"},
+		AllowedTools: []string{"secrets.list"},
 	})
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
@@ -314,7 +314,7 @@ func TestRunnerReplacesRepeatedDeferralWithConcreteFallback(t *testing.T) {
 
 	out, err := runner.Run(context.Background(), RunInput{
 		Message:      "please verify the key",
-		AllowedTools: []string{"secrets.get"},
+		AllowedTools: []string{"secrets.list"},
 	})
 	if err != nil {
 		t.Fatalf("run failed: %v", err)

@@ -255,7 +255,7 @@ func TestLoadPromptDocsIncludesRuntimeContext(t *testing.T) {
 		if !strings.Contains(doc.Content, "config.get/config.set") {
 			t.Fatalf("runtime context missing config tools guidance: %q", doc.Content)
 		}
-		if !strings.Contains(doc.Content, "secrets.get/secrets.set/secrets.list") {
+		if !strings.Contains(doc.Content, "secrets.set/secrets.list") {
 			t.Fatalf("runtime context missing secrets tools guidance: %q", doc.Content)
 		}
 		if !strings.Contains(doc.Content, "skill.list/skill.read") {
@@ -311,7 +311,7 @@ func TestLoadPromptDocsIncludesRuntimeContext(t *testing.T) {
 		if !strings.Contains(doc.Content, "config.get") || !strings.Contains(doc.Content, "config.set") {
 			t.Fatalf("tool best practices missing config tool guidance: %q", doc.Content)
 		}
-		if !strings.Contains(doc.Content, "secrets.get") || !strings.Contains(doc.Content, "secrets.set") {
+		if !strings.Contains(doc.Content, "secrets.set") || !strings.Contains(doc.Content, "secrets.list") {
 			t.Fatalf("tool best practices missing secrets tool guidance: %q", doc.Content)
 		}
 		if !strings.Contains(doc.Content, "skill.list") || !strings.Contains(doc.Content, "skill.read") {
@@ -536,7 +536,7 @@ func TestNormalizeToolArgsPolicyGrantAliases(t *testing.T) {
 }
 
 func TestNormalizeToolArgsSecretsAliases(t *testing.T) {
-	args := normalizeToolArgs("secrets.get", map[string]any{"name": "PERPLEXITY_API_KEY"})
+	args := normalizeToolArgs("secrets.set", map[string]any{"name": "PERPLEXITY_API_KEY", "value": "x"})
 	if args["key"] != "provider/perplexity/api_key" {
 		t.Fatalf("expected PERPLEXITY_API_KEY to normalize to canonical provider key, got %#v", args["key"])
 	}

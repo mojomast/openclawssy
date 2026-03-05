@@ -1421,16 +1421,6 @@ func TestSecretsToolsRoundTripAndList(t *testing.T) {
 	if _, err := reg.Execute(context.Background(), "agent", "secrets.set", ws, map[string]any{"key": "provider/openrouter/api_key", "value": "secret-value"}); err != nil {
 		t.Fatalf("secrets.set: %v", err)
 	}
-	getRes, err := reg.Execute(context.Background(), "agent", "secrets.get", ws, map[string]any{"key": "provider/openrouter/api_key"})
-	if err != nil {
-		t.Fatalf("secrets.get: %v", err)
-	}
-	if found, _ := getRes["found"].(bool); !found {
-		t.Fatalf("expected found=true, got %#v", getRes)
-	}
-	if getRes["value"] != "secret-value" {
-		t.Fatalf("unexpected secret value: %#v", getRes["value"])
-	}
 
 	listRes, err := reg.Execute(context.Background(), "agent", "secrets.list", ws, map[string]any{})
 	if err != nil {
@@ -1442,18 +1432,22 @@ func TestSecretsToolsRoundTripAndList(t *testing.T) {
 	}
 }
 
-func TestSecretsGetMissingKeyReturnsFoundFalse(t *testing.T) {
+func TestSecretsGetToolIsNotRegistered(t *testing.T) {
 	ws, cfgPath := setupSecretsConfigFixture(t)
 	reg := NewRegistry(fakePolicy{}, nil)
 	if err := RegisterCoreWithOptions(reg, CoreOptions{EnableShellExec: true, ConfigPath: cfgPath}); err != nil {
 		t.Fatalf("register core: %v", err)
 	}
-	res, err := reg.Execute(context.Background(), "agent", "secrets.get", ws, map[string]any{"key": "missing/key"})
-	if err != nil {
-		t.Fatalf("secrets.get missing key: %v", err)
+	_, err := reg.Execute(context.Background(), "agent", "secrets.get", ws, map[string]any{"key": "provider/openrouter/api_key"})
+	if err == nil {
+		t.Fatal("expected secrets.get to be unavailable")
 	}
-	if found, _ := res["found"].(bool); found {
-		t.Fatalf("expected found=false for missing key, got %#v", res)
+	var toolErr *ToolError
+	if !errors.As(err, &toolErr) {
+		t.Fatalf("expected ToolError, got %T", err)
+	}
+	if toolErr.Code != ErrCodeNotFound {
+		t.Fatalf("expected not_found for removed secrets.get, got %s", toolErr.Code)
 	}
 }
 
@@ -1465,9 +1459,9 @@ func TestSecretsToolsAreCapabilityGated(t *testing.T) {
 		t.Fatalf("register core: %v", err)
 	}
 
-	_, err := reg.Execute(context.Background(), "agent", "secrets.get", ws, map[string]any{"key": "provider/openrouter/api_key"})
+	_, err := reg.Execute(context.Background(), "agent", "secrets.list", ws, map[string]any{})
 	if err == nil {
-		t.Fatal("expected capability denied error for secrets.get")
+		t.Fatal("expected capability denied error for secrets.list")
 	}
 	var toolErr *ToolError
 	if !errors.As(err, &toolErr) {
@@ -1489,8 +1483,8 @@ func TestSecretsAuditNeverStoresPlaintextValues(t *testing.T) {
 	if _, err := reg.Execute(context.Background(), "agent", "secrets.set", ws, map[string]any{"key": "provider/openrouter/api_key", "value": "ultra-sensitive-token"}); err != nil {
 		t.Fatalf("secrets.set: %v", err)
 	}
-	if _, err := reg.Execute(context.Background(), "agent", "secrets.get", ws, map[string]any{"key": "provider/openrouter/api_key"}); err != nil {
-		t.Fatalf("secrets.get: %v", err)
+	if _, err := reg.Execute(context.Background(), "agent", "secrets.list", ws, map[string]any{}); err != nil {
+		t.Fatalf("secrets.list: %v", err)
 	}
 
 	for _, rec := range audit.recs {

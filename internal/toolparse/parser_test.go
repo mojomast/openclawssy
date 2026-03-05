@@ -169,14 +169,14 @@ func TestParseToolCallsAcceptsConfigSetWhenAllowed(t *testing.T) {
 	}
 }
 
-func TestParseToolCallsAcceptsSecretsGetWhenAllowed(t *testing.T) {
-	text := "```json\n{\"tool_name\":\"secrets.get\",\"arguments\":{\"key\":\"provider/openrouter/api_key\"}}\n```"
-	calls, _ := ParseToolCalls(text, []string{"secrets.get"})
+func TestParseToolCallsAcceptsSecretsSetWhenAllowed(t *testing.T) {
+	text := "```json\n{\"tool_name\":\"secrets.set\",\"arguments\":{\"key\":\"provider/openrouter/api_key\",\"value\":\"x\"}}\n```"
+	calls, _ := ParseToolCalls(text, []string{"secrets.set"})
 	if len(calls) != 1 {
 		t.Fatalf("expected one tool call, got %d", len(calls))
 	}
-	if calls[0].Name != "secrets.get" {
-		t.Fatalf("expected secrets.get, got %q", calls[0].Name)
+	if calls[0].Name != "secrets.set" {
+		t.Fatalf("expected secrets.set, got %q", calls[0].Name)
 	}
 }
 

@@ -790,7 +790,7 @@ func TestProviderModelReturnsFriendlyMessageWhenToolPayloadIsInvalid(t *testing.
 }
 
 func TestParseToolDirectiveRepairsTruncatedJSON(t *testing.T) {
-	resp, err := parseToolDirective(`/tool secrets.get {"name":"PERPLEXITY_API_KEY"`, []string{"secrets.get"})
+	resp, err := parseToolDirective(`/tool secrets.set {"name":"PERPLEXITY_API_KEY","value":"x"`, []string{"secrets.set"})
 	if err != nil {
 		t.Fatalf("expected relaxed parse to recover from truncated json, got %v", err)
 	}
@@ -807,8 +807,8 @@ func TestParseToolDirectiveRepairsTruncatedJSON(t *testing.T) {
 }
 
 func TestParseToolCallsFromResponseNormalizesAndDedupesEquivalentSecretsCalls(t *testing.T) {
-	content := "```json\n[{\"tool_name\":\"secrets.get\",\"arguments\":{\"name\":\"PERPLEXITY_API_KEY\"}},{\"tool_name\":\"secrets.get\",\"arguments\":{\"key\":\"provider/perplexity/api_key\"}}]\n```"
-	calls, parseFailure, reason := parseToolCallsFromResponse(content, []string{"secrets.get"}, nil)
+	content := "```json\n[{\"tool_name\":\"secrets.set\",\"arguments\":{\"name\":\"PERPLEXITY_API_KEY\",\"value\":\"x\"}},{\"tool_name\":\"secrets.set\",\"arguments\":{\"key\":\"provider/perplexity/api_key\",\"value\":\"x\"}}]\n```"
+	calls, parseFailure, reason := parseToolCallsFromResponse(content, []string{"secrets.set"}, nil)
 	if parseFailure {
 		t.Fatalf("expected no parse failure, got reason %q", reason)
 	}
@@ -1399,8 +1399,8 @@ func TestToolNameHelpersAndAllowlist(t *testing.T) {
 	if !isToolAllowed("config.set", []string{"config.set"}) {
 		t.Fatal("expected config.set to be allowed when explicitly granted")
 	}
-	if !isToolAllowed("secrets.get", []string{"secrets.get"}) {
-		t.Fatal("expected secrets.get to be allowed when explicitly granted")
+	if !isToolAllowed("secrets.list", []string{"secrets.list"}) {
+		t.Fatal("expected secrets.list to be allowed when explicitly granted")
 	}
 	if !isToolAllowed("scheduler.list", []string{"scheduler.list"}) {
 		t.Fatal("expected scheduler.list to be allowed when explicitly granted")

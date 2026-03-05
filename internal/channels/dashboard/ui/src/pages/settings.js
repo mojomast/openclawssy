@@ -20,6 +20,7 @@ const CATEGORY_LOOKUP = CATEGORY_DEFS.reduce((acc, category) => {
 
 const PROVIDERS = ["openai", "openrouter", "requesty", "zai", "generic"];
 const THINKING_MODES = ["never", "on_error", "always"];
+const DISCORD_SECRET_KEY = "discord/bot_token";
 
 const settingsState = {
   container: null,
@@ -39,6 +40,14 @@ const settingsState = {
   advancedRawError: "",
   selectedAgentProfile: "",
   lastAppliedRouteHint: "",
+  discordSecretPresent: false,
+  discordSecretLoading: false,
+  discordSecretError: "",
+  discordTokenDraft: "",
+  discordTokenSaving: false,
+  discordTokenDeleting: false,
+  discordTokenSuccess: "",
+  discordTokenError: "",
 };
 
 function cloneJSON(value) {
@@ -80,6 +89,79 @@ function parseLineList(value) {
     .split(/[\s,;]+/)
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+}
+
+function resetDiscordSecretFeedback() {
+  settingsState.discordTokenSuccess = "";
+  settingsState.discordTokenError = "";
+}
+
+function updateDiscordSecretPresence(payload) {
+  const keys = Array.isArray(payload?.keys) ? payload.keys : [];
+  settingsState.discordSecretPresent = keys.some((key) => String(key || "").trim() === DISCORD_SECRET_KEY);
+}
+
+async function loadDiscordSecretStatus(options = {}) {
+  const { rerenderPage = true } = options;
+  settingsState.discordSecretLoading = true;
+  settingsState.discordSecretError = "";
+  if (rerenderPage) {
+    rerender();
+  }
+  try {
+    const payload = await settingsState.apiClient.get("/api/admin/secrets");
+    updateDiscordSecretPresence(payload);
+  } catch (error) {
+    settingsState.discordSecretError = error instanceof Error ? error.message : String(error);
+  } finally {
+    settingsState.discordSecretLoading = false;
+    if (rerenderPage) {
+      rerender();
+    }
+  }
+}
+
+async function submitDiscordSecret() {
+  const value = String(settingsState.discordTokenDraft || "");
+  resetDiscordSecretFeedback();
+  if (!value) {
+    settingsState.discordTokenError = "Discord token is required.";
+    rerender();
+    return;
+  }
+  settingsState.discordTokenSaving = true;
+  rerender();
+  try {
+    await settingsState.apiClient.post("/api/admin/secrets", { name: DISCORD_SECRET_KEY, value });
+    settingsState.discordTokenDraft = "";
+    settingsState.discordTokenSuccess = "Token stored (write-only).";
+    await loadDiscordSecretStatus({ rerenderPage: false });
+  } catch (error) {
+    settingsState.discordTokenError = error instanceof Error ? error.message : String(error);
+  } finally {
+    settingsState.discordTokenSaving = false;
+    rerender();
+  }
+}
+
+async function deleteDiscordSecret() {
+  resetDiscordSecretFeedback();
+  if (!window.confirm("Delete the stored Discord token? This cannot be undone.")) {
+    return;
+  }
+  settingsState.discordTokenDeleting = true;
+  rerender();
+  try {
+    await settingsState.apiClient.delete(`/api/admin/secrets/${encodeURIComponent(DISCORD_SECRET_KEY)}`);
+    settingsState.discordTokenDraft = "";
+    settingsState.discordTokenSuccess = "Stored Discord token deleted.";
+    await loadDiscordSecretStatus({ rerenderPage: false });
+  } catch (error) {
+    settingsState.discordTokenError = error instanceof Error ? error.message : String(error);
+  } finally {
+    settingsState.discordTokenDeleting = false;
+    rerender();
+  }
 }
 
 function parseSettingsRouteHint() {
@@ -1001,6 +1083,8 @@ function buildChatCategory(panel, fieldErrors) {
     fieldErrors,
   });
 
+  panel.append(buildDiscordSetupPanel());
+
   const telegramHeader = document.createElement("h4");
   telegramHeader.className = "settings-subheading";
   telegramHeader.textContent = "Telegram";
@@ -1066,6 +1150,116 @@ function buildChatCategory(panel, fieldErrors) {
     helpText: "Optional allowlist of Telegram chat ids.",
     fieldErrors,
   });
+}
+
+function buildDiscordSetupPanel() {
+  const panel = document.createElement("section");
+  panel.className = "settings-section";
+
+  const heading = document.createElement("h4");
+  heading.className = "settings-subheading";
+  heading.textContent = "Discord Setup";
+  panel.append(heading);
+
+  const intro = document.createElement("p");
+  intro.className = "muted";
+  intro.textContent = "Store the Discord bot token in the encrypted secrets store under discord/bot_token. This dashboard flow is write-only and supports rotation by saving a new value.";
+  panel.append(intro);
+
+  const status = document.createElement("p");
+  status.className = "muted";
+  if (settingsState.discordSecretLoading) {
+    status.textContent = "Discord token: checking...";
+  } else {
+    status.textContent = `Discord token: ${settingsState.discordSecretPresent ? "Present ✅" : "Missing ❌"}`;
+  }
+  panel.append(status);
+
+  const envNote = document.createElement("p");
+  envNote.className = "muted";
+  envNote.textContent = `discord.token_env (${asTrimmedString(settingsState.draftConfig?.discord?.token_env) || "DISCORD_BOT_TOKEN"}) is only needed if you want an external environment variable fallback. The dashboard-managed secret is loaded from ${DISCORD_SECRET_KEY}.`;
+  panel.append(envNote);
+
+  if (settingsState.discordSecretError) {
+    const error = document.createElement("p");
+    error.className = "settings-inline-error";
+    error.textContent = `Failed to load Discord token status: ${settingsState.discordSecretError}`;
+    panel.append(error);
+  }
+
+  if (settingsState.draftConfig?.discord?.enabled && !settingsState.discordSecretPresent) {
+    const warning = document.createElement("p");
+    warning.className = "settings-inline-error";
+    warning.textContent = "Discord is enabled but no dashboard-managed token is stored. Save a token here or ensure the external env named by discord.token_env is present before starting the connector.";
+    panel.append(warning);
+  }
+
+  const form = document.createElement("form");
+  form.className = "secrets-form";
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void submitDiscordSecret();
+  });
+
+  const tokenField = document.createElement("label");
+  tokenField.className = "secrets-form-field";
+  const tokenLabel = document.createElement("span");
+  tokenLabel.textContent = settingsState.discordSecretPresent ? "Rotate Discord token" : "Discord bot token";
+  const tokenInput = document.createElement("input");
+  tokenInput.type = "password";
+  tokenInput.autocomplete = "new-password";
+  tokenInput.className = "settings-input";
+  tokenInput.placeholder = settingsState.discordSecretPresent ? "Paste new token to rotate" : "Paste Discord bot token";
+  tokenInput.value = settingsState.discordTokenDraft;
+  tokenInput.addEventListener("input", () => {
+    settingsState.discordTokenDraft = tokenInput.value;
+    resetDiscordSecretFeedback();
+  });
+  tokenField.append(tokenLabel, tokenInput);
+
+  const actions = document.createElement("div");
+  actions.className = "secrets-form-actions";
+  const saveButton = document.createElement("button");
+  saveButton.type = "submit";
+  saveButton.className = "chat-send-button";
+  saveButton.disabled = settingsState.discordTokenSaving;
+  saveButton.textContent = settingsState.discordTokenSaving ? "Saving..." : "Save Token";
+  actions.append(saveButton);
+
+  if (settingsState.discordSecretPresent) {
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "layout-toggle";
+    deleteButton.disabled = settingsState.discordTokenDeleting;
+    deleteButton.textContent = settingsState.discordTokenDeleting ? "Deleting..." : "Delete stored token";
+    deleteButton.addEventListener("click", () => {
+      void deleteDiscordSecret();
+    });
+    actions.append(deleteButton);
+  }
+
+  form.append(tokenField, actions);
+  panel.append(form);
+
+  const rotateNote = document.createElement("p");
+  rotateNote.className = "muted";
+  rotateNote.textContent = "Saving a new token overwrites the previous value. The stored token is never shown again after save.";
+  panel.append(rotateNote);
+
+  if (settingsState.discordTokenError) {
+    const error = document.createElement("p");
+    error.className = "settings-inline-error";
+    error.textContent = settingsState.discordTokenError;
+    panel.append(error);
+  }
+  if (settingsState.discordTokenSuccess) {
+    const success = document.createElement("p");
+    success.className = "settings-save-success";
+    success.textContent = settingsState.discordTokenSuccess;
+    panel.append(success);
+  }
+
+  return panel;
 }
 
 function buildSandboxCategory(panel, fieldErrors) {
@@ -1753,6 +1947,8 @@ async function loadConfig() {
     settingsState.advancedRawError = "";
     settingsState.touchedFields = new Set();
     settingsState.saveAttempted = false;
+    settingsState.discordTokenDraft = "";
+    await loadDiscordSecretStatus({ rerenderPage: false });
   } catch (error) {
     settingsState.loadError = error instanceof Error ? error.message : String(error);
   } finally {

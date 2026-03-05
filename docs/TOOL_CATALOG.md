@@ -71,11 +71,6 @@ All tools are deny-by-default through capability policy, and all tool inputs are
 - Optional: none
 - Notes: encrypted secret store; plaintext value is redacted in audit logs.
 
-### `secrets.get`
-- Required: `key`
-- Optional: none
-- Notes: encrypted secret store; plaintext value is redacted in audit logs.
-
 ### `secrets.list`
 - Required: none
 - Optional: none

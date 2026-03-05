@@ -1,5 +1,7 @@
 import { captureFocusSnapshot, restoreFocusSnapshot } from "../ui/focus_restore.js";
 
+const DISCORD_SECRET_KEY = "discord/bot_token";
+
 const CONVENTIONS = [
   {
     key: "PERPLEXITY_API_KEY",
@@ -22,12 +24,12 @@ const CONVENTIONS = [
     note: "Use when model.provider is zai and api_key_env expects this key.",
   },
   {
-    key: "DISCORD_BOT_TOKEN",
-    note: "Env-style Discord token key; keep token private and rotate regularly.",
+    key: "discord/bot_token",
+    note: "Recommended Discord bot token key for dashboard-guided setup. Write here to use the encrypted secret store.",
   },
   {
-    key: "discord/bot_token",
-    note: "Legacy slash-path naming pattern also supported by existing admin flows.",
+    key: "DISCORD_BOT_TOKEN",
+    note: "Optional external env fallback used only when discord.token_env points here and no encrypted discord/bot_token secret is stored.",
   },
   {
     key: "TELEGRAM_BOT_TOKEN",
@@ -51,6 +53,9 @@ const secretsState = {
   formError: "",
   formSuccess: "",
   saving: false,
+  deletingKey: "",
+  deleteError: "",
+  deleteSuccess: "",
   copyFeedback: "",
 };
 
@@ -123,6 +128,8 @@ async function submitSecret() {
   const value = secretsState.formValue;
   secretsState.formError = "";
   secretsState.formSuccess = "";
+  secretsState.deleteError = "";
+  secretsState.deleteSuccess = "";
 
   if (!name || !value) {
     secretsState.formError = "Name and value are required.";
@@ -145,6 +152,29 @@ async function submitSecret() {
   }
 }
 
+async function deleteSecret(key) {
+  if (!key) {
+    return;
+  }
+  if (!window.confirm(`Delete stored key ${key}? This cannot be undone.`)) {
+    return;
+  }
+  secretsState.deletingKey = key;
+  secretsState.deleteError = "";
+  secretsState.deleteSuccess = "";
+  rerender();
+  try {
+    await secretsState.apiClient.delete(`/api/admin/secrets/${encodeURIComponent(key)}`);
+    secretsState.deleteSuccess = `Deleted key: ${key}`;
+    await loadKeys();
+  } catch (error) {
+    secretsState.deleteError = error instanceof Error ? error.message : String(error);
+  } finally {
+    secretsState.deletingKey = "";
+    rerender();
+  }
+}
+
 function createConventionsPanel() {
   const panel = document.createElement("section");
   panel.className = "secrets-conventions";
@@ -155,7 +185,7 @@ function createConventionsPanel() {
 
   const note = document.createElement("p");
   note.className = "muted";
-  note.textContent = "Use exact key names referenced by config (for example providers.*.api_key_env or discord.token_env). Values remain write-only in this UI.";
+  note.textContent = "Use exact key names referenced by config. Recommended Discord setup stores the token at discord/bot_token; discord.token_env is only for external environment fallback. Values remain write-only in this UI.";
   panel.append(note);
 
   const list = document.createElement("ul");
@@ -268,7 +298,16 @@ function createKeysPanel() {
       rerender();
     });
 
-    item.append(code, copyButton);
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "layout-toggle";
+    deleteButton.disabled = secretsState.deletingKey === key;
+    deleteButton.textContent = secretsState.deletingKey === key ? "Deleting..." : "Delete key";
+    deleteButton.addEventListener("click", () => {
+      void deleteSecret(key);
+    });
+
+    item.append(code, copyButton, deleteButton);
     list.append(item);
   });
 
@@ -288,6 +327,18 @@ function createKeysPanel() {
     feedback.className = "muted";
     feedback.textContent = secretsState.copyFeedback;
     panel.append(feedback);
+  }
+  if (secretsState.deleteError) {
+    const error = document.createElement("p");
+    error.className = "settings-inline-error";
+    error.textContent = secretsState.deleteError;
+    panel.append(error);
+  }
+  if (secretsState.deleteSuccess) {
+    const success = document.createElement("p");
+    success.className = "settings-save-success";
+    success.textContent = secretsState.deleteSuccess;
+    panel.append(success);
   }
 
   return panel;

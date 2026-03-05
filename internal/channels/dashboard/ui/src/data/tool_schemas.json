@@ -24,10 +24,11 @@
       "url": "https://www.ussy.host"
     }
   },
-  "secrets.get": {
-    "required": ["key"],
+  "secrets.set": {
+    "required": ["key", "value"],
     "example": {
-      "key": "provider/perplexity/api_key"
+      "key": "provider/perplexity/api_key",
+      "value": "token-value"
     }
   },
   "shell.exec": {
