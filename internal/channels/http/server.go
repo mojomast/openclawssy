@@ -24,6 +24,7 @@ type Config struct {
 	BearerToken string
 	Store       RunStore
 	Executor    RunExecutor
+	RunTracker  *ActiveRunTracker
 	Chat        ChatConnector
 	EventBus    *RunEventBus
 	RegisterMux func(mux *http.ServeMux)
@@ -34,6 +35,7 @@ type Server struct {
 	bearerToken string
 	store       RunStore
 	executor    RunExecutor
+	runTracker  *ActiveRunTracker
 	chat        ChatConnector
 	eventBus    *RunEventBus
 	httpServer  *http.Server
@@ -115,12 +117,17 @@ func NewServer(cfg Config) *Server {
 	if eventBus == nil {
 		eventBus = NewRunEventBus(0)
 	}
+	runTracker := cfg.RunTracker
+	if runTracker == nil {
+		runTracker = NewActiveRunTracker()
+	}
 
 	s := &Server{
 		addr:        addr,
 		bearerToken: cfg.BearerToken,
 		store:       store,
 		executor:    executor,
+		runTracker:  runTracker,
 		chat:        cfg.Chat,
 		eventBus:    eventBus,
 	}
@@ -288,7 +295,7 @@ func (s *Server) handlePostRun(w http.ResponseWriter, r *http.Request) {
 		"http",
 		"",
 		req.ThinkingMode,
-		QueueRunOptions{EventBus: s.eventBus},
+		QueueRunOptions{EventBus: s.eventBus, Tracker: s.runTracker},
 	)
 	if err != nil {
 		if errors.Is(err, ErrQueueFull) {
@@ -306,6 +313,8 @@ func (s *Server) handlePostRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	statusFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
+	agentFilter := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+	sourceFilter := strings.TrimSpace(r.URL.Query().Get("source"))
 	limit, offset, err := parseListPagination(r, 50, 500)
 	if err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, "request.invalid_input", err.Error(), 0)
@@ -321,6 +330,12 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	filtered := make([]Run, 0, len(runs))
 	for _, run := range runs {
 		if statusFilter != "" && strings.ToLower(strings.TrimSpace(run.Status)) != statusFilter {
+			continue
+		}
+		if agentFilter != "" && strings.TrimSpace(run.AgentID) != agentFilter {
+			continue
+		}
+		if sourceFilter != "" && strings.TrimSpace(run.Source) != sourceFilter {
 			continue
 		}
 		filtered = append(filtered, run)
@@ -414,13 +429,31 @@ func isRateLimitedError(err error) bool {
 }
 
 func (s *Server) handleRunByID(w http.ResponseWriter, r *http.Request) {
+	rel := strings.TrimPrefix(r.URL.Path, "/v1/runs/")
+	clean := strings.Trim(strings.TrimSpace(path.Clean("/"+rel)), "/")
+	if clean == "" || clean == "." {
+		http.Error(w, "run id is required", http.StatusBadRequest)
+		return
+	}
+	if strings.HasSuffix(clean, "/cancel") {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		runID := strings.TrimSuffix(clean, "/cancel")
+		if runID == "" || strings.Contains(runID, "/") {
+			http.Error(w, "run id is required", http.StatusBadRequest)
+			return
+		}
+		s.handleCancelRun(w, r, runID)
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
-	id := strings.TrimPrefix(r.URL.Path, "/v1/runs/")
-	if id == "" || strings.Contains(id, "/") {
+	id := clean
+	if strings.Contains(id, "/") {
 		http.Error(w, "run id is required", http.StatusBadRequest)
 		return
 	}
@@ -437,6 +470,49 @@ func (s *Server) handleRunByID(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(run)
+}
+
+func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request, runID string) {
+	run, err := s.store.Get(r.Context(), runID)
+	if err != nil {
+		if errors.Is(err, ErrRunNotFound) {
+			http.Error(w, "run not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to load run", http.StatusInternalServerError)
+		return
+	}
+	status := strings.ToLower(strings.TrimSpace(run.Status))
+	if status == "completed" || status == "failed" || status == "canceled" || status == "cancelled" {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":        runID,
+			"status":    run.Status,
+			"cancelled": false,
+			"message":   "run is already terminal",
+		})
+		return
+	}
+	if err := s.runTracker.Cancel(runID); err != nil {
+		if errors.Is(err, ErrTrackedRunNotFound) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":        runID,
+				"status":    run.Status,
+				"cancelled": false,
+				"message":   "run is not currently cancellable",
+			})
+			return
+		}
+		http.Error(w, "failed to cancel run", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"id":        runID,
+		"status":    "canceling",
+		"cancelled": true,
+	})
 }
 
 func (s *Server) handleRunEvents(w http.ResponseWriter, r *http.Request) {

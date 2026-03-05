@@ -14,6 +14,7 @@ const (
 	RunEventToolEnd   RunEventType = "tool_end"
 	RunEventModelText RunEventType = "model_text"
 	RunEventCompleted RunEventType = "completed"
+	RunEventCanceled  RunEventType = "canceled"
 	RunEventFailed    RunEventType = "failed"
 	RunEventHeartbeat RunEventType = "heartbeat"
 )
@@ -248,7 +249,7 @@ func enqueueRunEvent(ch chan RunEvent, event RunEvent) bool {
 
 func isTerminalRunEventType(eventType RunEventType) bool {
 	switch eventType {
-	case RunEventCompleted, RunEventFailed:
+	case RunEventCompleted, RunEventCanceled, RunEventFailed:
 		return true
 	default:
 		return false

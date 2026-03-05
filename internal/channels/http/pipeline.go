@@ -30,6 +30,7 @@ var ErrQueueFull = errors.New("httpchannel: run queue is full")
 
 type QueueRunOptions struct {
 	EventBus *RunEventBus
+	Tracker  *ActiveRunTracker
 }
 
 func QueueRun(ctx context.Context, store RunStore, executor RunExecutor, agentID, message, source, sessionID, thinkingMode string) (Run, error) {
@@ -57,12 +58,20 @@ func QueueRunWithOptions(ctx context.Context, store RunStore, executor RunExecut
 		defaultQueuedRunTracker.done()
 		return Run{}, fmt.Errorf("create run: %w", err)
 	}
-	go executeQueuedRun(context.Background(), store, executor, created, opts)
+	runCtx, cancel := context.WithCancel(context.Background())
+	if opts.Tracker != nil {
+		opts.Tracker.Track(created.ID, cancel)
+	}
+	go executeQueuedRun(runCtx, store, executor, created, cancel, opts)
 	return created, nil
 }
 
-func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor, run Run, opts QueueRunOptions) {
+func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor, run Run, cancel context.CancelFunc, opts QueueRunOptions) {
 	defer defaultQueuedRunTracker.done()
+	defer cancel()
+	if opts.Tracker != nil {
+		defer opts.Tracker.Remove(run.ID)
+	}
 	if opts.EventBus != nil {
 		defer opts.EventBus.Close(run.ID)
 	}
@@ -91,19 +100,35 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 
 	result, err := executeWithRetry(ctx, executor, input)
 	if err != nil {
-		run.Status = "failed"
-		run.Error = err.Error()
-		run.Trace = result.Trace
-		run.Provider = result.Provider
-		run.Model = result.Model
-		run.ToolCalls = result.ToolCalls
-		publishQueueRunEvent(opts.EventBus, run.ID, RunEventFailed, map[string]any{
-			"status":     "failed",
-			"error":      run.Error,
-			"provider":   run.Provider,
-			"model":      run.Model,
-			"tool_calls": run.ToolCalls,
-		})
+		if errors.Is(err, context.Canceled) {
+			run.Status = "canceled"
+			run.Error = "run canceled"
+			run.Trace = result.Trace
+			run.Provider = result.Provider
+			run.Model = result.Model
+			run.ToolCalls = result.ToolCalls
+			publishQueueRunEvent(opts.EventBus, run.ID, RunEventCanceled, map[string]any{
+				"status":     "canceled",
+				"error":      run.Error,
+				"provider":   run.Provider,
+				"model":      run.Model,
+				"tool_calls": run.ToolCalls,
+			})
+		} else {
+			run.Status = "failed"
+			run.Error = err.Error()
+			run.Trace = result.Trace
+			run.Provider = result.Provider
+			run.Model = result.Model
+			run.ToolCalls = result.ToolCalls
+			publishQueueRunEvent(opts.EventBus, run.ID, RunEventFailed, map[string]any{
+				"status":     "failed",
+				"error":      run.Error,
+				"provider":   run.Provider,
+				"model":      run.Model,
+				"tool_calls": run.ToolCalls,
+			})
+		}
 	} else {
 		run.Status = "completed"
 		output := strings.TrimSpace(result.Output)

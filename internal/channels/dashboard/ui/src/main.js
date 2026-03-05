@@ -4,6 +4,7 @@ import { createStore } from "./state/store.js";
 import { chatPage } from "./pages/chat.js";
 import { sessionsPage } from "./pages/sessions.js";
 import { runsPage } from "./pages/runs.js";
+import { agentMonitorPage } from "./pages/agent_monitor.js";
 import { schedulerPage } from "./pages/scheduler.js";
 import { settingsPage } from "./pages/settings.js";
 import { secretsPage } from "./pages/secrets.js";
@@ -23,6 +24,7 @@ const ROUTES = [
   { path: "/chat", label: "Chat", page: chatPage },
   { path: "/sessions", label: "Sessions", page: sessionsPage },
   { path: "/runs", label: "Runs", page: runsPage },
+  { path: "/agent-monitor", label: "Agent Monitor", page: agentMonitorPage },
   { path: "/scheduler", label: "Scheduler", page: schedulerPage },
   { path: "/settings", label: "Settings", page: settingsPage },
   { path: "/docs", label: "Docs", page: docsPage },

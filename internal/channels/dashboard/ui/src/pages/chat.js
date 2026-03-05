@@ -329,6 +329,74 @@ function settingsProfileHash(agentID) {
   return `#/settings?${params.toString()}`;
 }
 
+function parseObservedSubagent(event) {
+  if (!event || event.tool !== "agent.run") {
+    return null;
+  }
+  const parsedOutput = parseMaybeJSON(event.outputText);
+  if (!parsedOutput || typeof parsedOutput !== "object") {
+    return null;
+  }
+  const runID = safeText(parsedOutput.run_id);
+  if (!runID) {
+    return null;
+  }
+  return {
+    runID,
+    agentID: safeText(parsedOutput.agent_id) || "unknown",
+    provider: safeText(parsedOutput.provider),
+    model: safeText(parsedOutput.model),
+    output: asDisplayText(parsedOutput.output),
+    durationMS: Number(parsedOutput.duration_ms) || 0,
+    toolCalls: Number(parsedOutput.tool_calls) || 0,
+    ts: safeText(event.ts),
+    status: event.status === "failed" ? "failed" : "completed",
+    summary: firstNonEmpty(event.summary, parsedOutput.output, parsedOutput.agent_id),
+  };
+}
+
+function observedSubagentRuns() {
+  const seen = new Set();
+  const out = [];
+  chatViewState.streamToolEvents.forEach((event) => {
+    const item = parseObservedSubagent(event);
+    if (!item || seen.has(item.runID)) {
+      return;
+    }
+    seen.add(item.runID);
+    out.push(item);
+  });
+  return out.slice().reverse();
+}
+
+async function cancelCurrentChatRun() {
+  const runID = safeText(chatViewState.currentRunID);
+  if (!runID || isTerminalStatus(chatViewState.currentRunStatus)) {
+    return;
+  }
+  try {
+    await chatViewState.apiClient.post(`/v1/runs/${encodeURIComponent(runID)}/cancel`, {});
+    chatViewState.debugCopyStatus = `Cancellation requested for ${runID}.`;
+  } catch (error) {
+    chatViewState.sendError = error?.message || String(error);
+  }
+  rerenderIfActive();
+}
+
+async function cancelObservedSubagentRun(runID) {
+  const targetRunID = safeText(runID);
+  if (!targetRunID) {
+    return;
+  }
+  try {
+    await chatViewState.apiClient.post("/api/admin/monitor/runs/control", { action: "cancel", run_id: targetRunID });
+    chatViewState.debugCopyStatus = `Cancellation requested for subagent ${targetRunID}.`;
+  } catch (error) {
+    chatViewState.sendError = error?.message || String(error);
+  }
+  rerenderIfActive();
+}
+
 function copyToClipboardWithFallback(text) {
   const value = String(text || "");
   if (!value) {
@@ -1242,6 +1310,19 @@ function handleRunStreamCompleted(eventEnvelope) {
   return true;
 }
 
+function handleRunStreamCanceled(eventEnvelope) {
+  const payload = eventEnvelope?.data || {};
+  const message = firstNonEmpty(payload.error, payload.message, "Run canceled.");
+  chatViewState.currentRunStatus = "canceled";
+  chatViewState.currentRunLastUpdatedAt = safeText(eventEnvelope?.ts) || new Date().toISOString();
+  replacePendingAssistant(message);
+  chatViewState.currentStreamingText = "";
+  stopPolling();
+  resetStreamingState();
+  rerenderIfActive();
+  return true;
+}
+
 function handleRunStreamFailed(eventEnvelope) {
   const payload = eventEnvelope?.data || {};
   const message = firstNonEmpty(payload.error, eventEnvelope?.error, "Run failed.");
@@ -1271,6 +1352,8 @@ function handleRunStreamEvent(rawType, eventEnvelope) {
       return handleRunStreamModelText(eventEnvelope);
     case "completed":
       return handleRunStreamCompleted(eventEnvelope);
+    case "canceled":
+      return handleRunStreamCanceled(eventEnvelope);
     case "failed":
       return handleRunStreamFailed(eventEnvelope);
     case "heartbeat":
@@ -1974,6 +2057,14 @@ function renderChatPage() {
 
   const debugActions = document.createElement("div");
   debugActions.className = "chat-composer-actions";
+  const stopRunButton = document.createElement("button");
+  stopRunButton.type = "button";
+  stopRunButton.className = "layout-toggle";
+  stopRunButton.textContent = isTerminalStatus(status) || !runID ? "Run not stoppable" : "Stop current run";
+  stopRunButton.disabled = isTerminalStatus(status) || !runID;
+  stopRunButton.addEventListener("click", () => {
+    void cancelCurrentChatRun();
+  });
   const copyDebugButton = document.createElement("button");
   copyDebugButton.type = "button";
   copyDebugButton.className = "layout-toggle";
@@ -1981,7 +2072,7 @@ function renderChatPage() {
   copyDebugButton.addEventListener("click", () => {
     void copyDebugBundle();
   });
-  debugActions.append(copyDebugButton);
+  debugActions.append(stopRunButton, copyDebugButton);
 
   const latestToolCard = document.createElement("section");
   latestToolCard.className = "chat-activity-card";
@@ -2015,6 +2106,46 @@ function renderChatPage() {
   errorBody.className = chatViewState.lastErrorSummary ? "" : "muted";
   errorBody.textContent = chatViewState.lastErrorSummary || "No recent errors.";
   errorCard.append(errorTitle, errorBody);
+
+  const subagentCard = document.createElement("section");
+  subagentCard.className = "chat-activity-card";
+  const subagentTitle = document.createElement("h4");
+  const subagentRuns = observedSubagentRuns();
+  subagentTitle.textContent = `Observed Subagent Runs (${subagentRuns.length})`;
+  subagentCard.append(subagentTitle);
+  if (!subagentRuns.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "No subagent runs observed from the current chat activity yet.";
+    subagentCard.append(empty);
+  } else {
+    const list = document.createElement("div");
+    list.className = "chat-tool-entry-list";
+    subagentRuns.forEach((item) => {
+      const entry = document.createElement("div");
+      entry.className = "chat-tool-entry";
+      const header = document.createElement("p");
+      header.className = "chat-tool-line ok";
+      header.textContent = `${item.agentID} · ${item.runID}${item.ts ? ` · ${formatDateTime(item.ts)}` : ""}`;
+      const detail = document.createElement("p");
+      detail.className = "muted";
+      const modelLabel = item.provider || item.model ? ` · ${firstNonEmpty(item.provider, "unknown")}/${firstNonEmpty(item.model, "unknown")}` : "";
+      detail.textContent = `${compactText(item.summary, 180) || "subagent completed"}${item.durationMS > 0 ? ` · ${item.durationMS}ms` : ""}${item.toolCalls > 0 ? ` · ${item.toolCalls} tools` : ""}${modelLabel}`;
+      const actions = document.createElement("div");
+      actions.className = "chat-composer-actions";
+      const stopButton = document.createElement("button");
+      stopButton.type = "button";
+      stopButton.className = "layout-toggle";
+      stopButton.textContent = "Stop subagent";
+      stopButton.addEventListener("click", () => {
+        void cancelObservedSubagentRun(item.runID);
+      });
+      actions.append(stopButton);
+      entry.append(header, detail, actions);
+      list.append(entry);
+    });
+    subagentCard.append(list);
+  }
 
   const toolHistoryCard = document.createElement("section");
   toolHistoryCard.className = "chat-activity-card";
@@ -2103,7 +2234,7 @@ function renderChatPage() {
     riskCard.append(warningEl);
   });
 
-  activityPane.append(activityTitle, agentControlCard, runMeta, sessionMeta, debugActions, latestToolCard, errorCard, toolHistoryCard, errorEventsCard, riskCard);
+  activityPane.append(activityTitle, agentControlCard, runMeta, sessionMeta, debugActions, latestToolCard, subagentCard, errorCard, toolHistoryCard, errorEventsCard, riskCard);
 
   page.append(transcriptPane, paneResizer, activityPane);
   container.append(heading, note, page);

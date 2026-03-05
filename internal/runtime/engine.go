@@ -62,6 +62,13 @@ type ParseDiagnosticEntry struct {
 	Reason  string `json:"reason,omitempty"`
 }
 
+func (e *Engine) RunTracker() *RunTracker {
+	if e == nil {
+		return nil
+	}
+	return e.runTracker
+}
+
 type ExecuteInput struct {
 	AgentID           string
 	Message           string

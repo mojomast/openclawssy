@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1015,6 +1016,65 @@ func TestAdminAgentsEndpointListAndSetActive(t *testing.T) {
 	}
 	if agentsConfig["allow_agent_model_overrides"] != true || agentsConfig["self_improvement_enabled"] != true {
 		t.Fatalf("unexpected agents_config payload: %#v", agentsConfig)
+	}
+}
+
+type stubDashboardRunCanceller struct {
+	tracked map[string]bool
+	called  []string
+}
+
+func (s *stubDashboardRunCanceller) Cancel(runID string) error {
+	s.called = append(s.called, runID)
+	if s.tracked[runID] {
+		return nil
+	}
+	return errors.New("not tracked")
+}
+
+func (s *stubDashboardRunCanceller) IsTracked(runID string) bool {
+	return s.tracked[runID]
+}
+
+func TestMonitorRunsEndpointListsMainAndSubagentAuditRuns(t *testing.T) {
+	root := t.TempDir()
+	auditDir := filepath.Join(root, ".openclawssy", "agents", "alpha", "audit")
+	if err := os.MkdirAll(auditDir, 0o755); err != nil {
+		t.Fatalf("mkdir audit dir: %v", err)
+	}
+	auditBody := strings.Join([]string{
+		`{"ts":"2026-03-05T10:00:00Z","type":"run.start","run_id":"run-main","agent_id":"alpha","payload":{"source":"dashboard","message":"main task"}}`,
+		`{"ts":"2026-03-05T10:00:02Z","type":"run.end","run_id":"run-main","agent_id":"alpha","payload":{"artifact_path":"/tmp/run-main"}}`,
+		`{"ts":"2026-03-05T10:01:00Z","type":"run.start","run_id":"run-sub","agent_id":"alpha","payload":{"source":"subagent/delegation","message":"sub task"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(auditDir, "events.jsonl"), []byte(auditBody), 0o600); err != nil {
+		t.Fatalf("write audit log: %v", err)
+	}
+
+	h := NewWithOptions(root, httpchannel.NewInMemoryRunStore(), Options{RunCanceller: &stubDashboardRunCanceller{tracked: map[string]bool{"run-sub": true}}})
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/monitor/runs", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Runs []monitorRunRecord `json:"runs"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload.Runs) != 2 {
+		t.Fatalf("expected 2 monitor runs, got %+v", payload.Runs)
+	}
+	if payload.Runs[0].RunID != "run-sub" || payload.Runs[0].Role != "subagent" || payload.Runs[0].Status != "running" {
+		t.Fatalf("unexpected subagent run record: %+v", payload.Runs[0])
+	}
+	if payload.Runs[1].RunID != "run-main" || payload.Runs[1].Role != "main" || payload.Runs[1].Status != "completed" {
+		t.Fatalf("unexpected main run record: %+v", payload.Runs[1])
 	}
 }
 

@@ -23,12 +23,26 @@ type rateLimitedTestError struct {
 	retryAfter time.Duration
 }
 
+type cancelBlockingExecutor struct {
+	started chan struct{}
+}
+
 func (e rateLimitedTestError) Error() string {
 	return "chat sender is rate limited"
 }
 
 func (e rateLimitedTestError) RetryAfter() time.Duration {
 	return e.retryAfter
+}
+
+func (e cancelBlockingExecutor) Execute(ctx context.Context, _ ExecutionInput) (ExecutionResult, error) {
+	select {
+	case <-e.started:
+	default:
+		close(e.started)
+	}
+	<-ctx.Done()
+	return ExecutionResult{}, ctx.Err()
 }
 
 func (c testChatConnector) HandleMessage(ctx context.Context, msg ChatMessage) (ChatResponse, error) {
@@ -171,6 +185,59 @@ func TestServer_ListRunsRejectsInvalidPagination(t *testing.T) {
 	}
 	if resp.Error.Code != "request.invalid_input" {
 		t.Fatalf("unexpected error code: %#v", resp)
+	}
+}
+
+func TestServer_CancelRunEndpointCancelsTrackedRun(t *testing.T) {
+	tracker := NewActiveRunTracker()
+	executor := cancelBlockingExecutor{started: make(chan struct{})}
+	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore(), Executor: executor, RunTracker: tracker})
+
+	body := bytes.NewBufferString(`{"agent_id":"agent-1","message":"long task"}`)
+	postReq := httptest.NewRequest(http.MethodPost, "/v1/runs", body)
+	postReq.Header.Set("Authorization", "Bearer secret")
+	postRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(postRR, postReq)
+	if postRR.Code != http.StatusAccepted {
+		t.Fatalf("expected %d, got %d", http.StatusAccepted, postRR.Code)
+	}
+	var postRes postRunResponse
+	if err := json.Unmarshal(postRR.Body.Bytes(), &postRes); err != nil {
+		t.Fatalf("decode post response: %v", err)
+	}
+	select {
+	case <-executor.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for run to start")
+	}
+
+	cancelReq := httptest.NewRequest(http.MethodPost, "/v1/runs/"+postRes.ID+"/cancel", bytes.NewBufferString(`{}`))
+	cancelReq.Header.Set("Authorization", "Bearer secret")
+	cancelRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(cancelRR, cancelReq)
+	if cancelRR.Code != http.StatusOK {
+		t.Fatalf("expected cancel status 200, got %d (%s)", cancelRR.Code, cancelRR.Body.String())
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := WaitForQueuedRuns(ctx); err != nil {
+		t.Fatalf("wait for queued runs: %v", err)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/v1/runs/"+postRes.ID, nil)
+	getReq.Header.Set("Authorization", "Bearer secret")
+	getRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(getRR, getReq)
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, getRR.Code)
+	}
+	var run Run
+	if err := json.Unmarshal(getRR.Body.Bytes(), &run); err != nil {
+		t.Fatalf("decode run response: %v", err)
+	}
+	if run.Status != "canceled" {
+		t.Fatalf("expected run status canceled, got %+v", run)
 	}
 }
 

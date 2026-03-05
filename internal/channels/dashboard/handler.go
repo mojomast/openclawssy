@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"bufio"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -30,6 +31,32 @@ type Handler struct {
 	rootDir        string
 	store          httpchannel.RunStore
 	schedulerStore *scheduler.Store
+	runCanceller   dashboardRunCanceller
+}
+
+type dashboardRunCanceller interface {
+	Cancel(runID string) error
+	IsTracked(runID string) bool
+}
+
+type Options struct {
+	SchedulerStore *scheduler.Store
+	RunCanceller   dashboardRunCanceller
+}
+
+type monitorRunRecord struct {
+	RunID        string `json:"run_id"`
+	AgentID      string `json:"agent_id"`
+	Source       string `json:"source,omitempty"`
+	Role         string `json:"role"`
+	Message      string `json:"message,omitempty"`
+	SessionID    string `json:"session_id,omitempty"`
+	Status       string `json:"status"`
+	Tracked      bool   `json:"tracked"`
+	Error        string `json:"error,omitempty"`
+	ArtifactPath string `json:"artifact_path,omitempty"`
+	StartedAt    string `json:"started_at,omitempty"`
+	CompletedAt  string `json:"completed_at,omitempty"`
 }
 
 type dashboardLayoutRecord struct {
@@ -96,11 +123,15 @@ var builtInSkillCatalog = map[string]string{
 var dashboardUIFS embed.FS
 
 func New(rootDir string, store httpchannel.RunStore, schedulerStore ...*scheduler.Store) *Handler {
-	var jobs *scheduler.Store
+	var opts Options
 	if len(schedulerStore) > 0 {
-		jobs = schedulerStore[0]
+		opts.SchedulerStore = schedulerStore[0]
 	}
-	return &Handler{rootDir: rootDir, store: store, schedulerStore: jobs}
+	return NewWithOptions(rootDir, store, opts)
+}
+
+func NewWithOptions(rootDir string, store httpchannel.RunStore, opts Options) *Handler {
+	return &Handler{rootDir: rootDir, store: store, schedulerStore: opts.SchedulerStore, runCanceller: opts.RunCanceller}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -120,6 +151,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/scheduler/control", h.handleSchedulerControl)
 	mux.HandleFunc("/api/admin/chat/sessions", h.listChatSessions)
 	mux.HandleFunc("/api/admin/chat/sessions/", h.chatSessionMessages)
+	mux.HandleFunc("/api/admin/monitor/runs", h.handleMonitorRuns)
+	mux.HandleFunc("/api/admin/monitor/runs/control", h.handleMonitorRunControl)
 	mux.HandleFunc("/api/admin/agents", h.handleAgents)
 	mux.HandleFunc("/api/admin/agent/docs", h.handleAgentDocs)
 	mux.HandleFunc("/api/admin/skills", h.handleSkills)
@@ -1343,6 +1376,201 @@ func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
 		"profile_context": profileContext,
 		"agents_config":   agentsConfig,
 	})
+}
+
+func (h *Handler) handleMonitorRuns(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	limit := 80
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 500 {
+			http.Error(w, "limit must be between 1 and 500", http.StatusBadRequest)
+			return
+		}
+		limit = parsed
+	}
+	agentFilter := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+	runs, err := h.collectMonitorRuns(limit, agentFilter)
+	if err != nil {
+		http.Error(w, "failed to load monitor runs", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"runs":             runs,
+		"available_agents": h.listDashboardAgentIDs(),
+	})
+}
+
+func (h *Handler) handleMonitorRunControl(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Action string `json:"action"`
+		RunID  string `json:"run_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	if strings.ToLower(strings.TrimSpace(req.Action)) != "cancel" {
+		http.Error(w, "action must be cancel", http.StatusBadRequest)
+		return
+	}
+	runID := strings.TrimSpace(req.RunID)
+	if runID == "" || strings.Contains(runID, "/") {
+		http.Error(w, "run_id is required", http.StatusBadRequest)
+		return
+	}
+	if h.runCanceller == nil {
+		http.Error(w, "run canceller not configured", http.StatusNotImplemented)
+		return
+	}
+	if err := h.runCanceller.Cancel(runID); err != nil {
+		writeJSON(w, map[string]any{"run_id": runID, "cancelled": false, "tracked": false})
+		return
+	}
+	writeJSON(w, map[string]any{"run_id": runID, "cancelled": true, "tracked": true})
+}
+
+func (h *Handler) collectMonitorRuns(limit int, agentFilter string) ([]monitorRunRecord, error) {
+	agentsDir := filepath.Join(h.rootDir, ".openclawssy", "agents")
+	entries, err := os.ReadDir(agentsDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	byRunID := map[string]monitorRunRecord{}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		agentID, err := normalizeDashboardAgentID(entry.Name())
+		if err != nil {
+			continue
+		}
+		if agentFilter != "" && agentFilter != agentID {
+			continue
+		}
+		if err := h.collectMonitorRunsForAgent(filepath.Join(agentsDir, agentID, "audit", "events.jsonl"), byRunID); err != nil {
+			return nil, err
+		}
+	}
+	runs := make([]monitorRunRecord, 0, len(byRunID))
+	for _, record := range byRunID {
+		runs = append(runs, record)
+	}
+	sort.Slice(runs, func(i, j int) bool {
+		left := firstMonitorTimestamp(runs[i])
+		right := firstMonitorTimestamp(runs[j])
+		if left == right {
+			return runs[i].RunID > runs[j].RunID
+		}
+		return left > right
+	})
+	if limit > 0 && len(runs) > limit {
+		runs = runs[:limit]
+	}
+	return runs, nil
+}
+
+func (h *Handler) collectMonitorRunsForAgent(auditPath string, byRunID map[string]monitorRunRecord) error {
+	file, err := os.Open(auditPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+	for scanner.Scan() {
+		var event struct {
+			Timestamp time.Time      `json:"ts"`
+			Type      string         `json:"type"`
+			RunID     string         `json:"run_id"`
+			AgentID   string         `json:"agent_id"`
+			Payload   map[string]any `json:"payload"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			continue
+		}
+		runID := strings.TrimSpace(event.RunID)
+		agentID := strings.TrimSpace(event.AgentID)
+		if runID == "" || agentID == "" {
+			continue
+		}
+		record := byRunID[runID]
+		record.RunID = runID
+		record.AgentID = agentID
+		if h.runCanceller != nil && h.runCanceller.IsTracked(runID) {
+			record.Tracked = true
+		}
+		switch strings.TrimSpace(event.Type) {
+		case "run.start":
+			record.StartedAt = event.Timestamp.UTC().Format(time.RFC3339)
+			record.Source = firstStringFromMap(event.Payload, "source")
+			record.Message = firstStringFromMap(event.Payload, "message")
+			record.SessionID = firstStringFromMap(event.Payload, "session_id")
+			if record.Tracked || record.Status == "" {
+				record.Status = "running"
+			}
+		case "run.end":
+			record.CompletedAt = event.Timestamp.UTC().Format(time.RFC3339)
+			record.ArtifactPath = firstStringFromMap(event.Payload, "artifact_path")
+			record.Error = firstStringFromMap(event.Payload, "error")
+			if record.Error != "" {
+				record.Status = "failed"
+			} else {
+				record.Status = "completed"
+			}
+		}
+		record.Role = classifyMonitorRunRole(record.Source)
+		if record.Status == "" {
+			record.Status = "running"
+		}
+		byRunID[runID] = record
+	}
+	return scanner.Err()
+}
+
+func firstStringFromMap(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if values == nil {
+			return ""
+		}
+		raw, ok := values[key]
+		if !ok || raw == nil {
+			continue
+		}
+		text := strings.TrimSpace(fmt.Sprint(raw))
+		if text != "" && text != "<nil>" {
+			return text
+		}
+	}
+	return ""
+}
+
+func classifyMonitorRunRole(source string) string {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(source)), "subagent/") {
+		return "subagent"
+	}
+	return "main"
+}
+
+func firstMonitorTimestamp(record monitorRunRecord) string {
+	if strings.TrimSpace(record.StartedAt) != "" {
+		return record.StartedAt
+	}
+	return record.CompletedAt
 }
 
 func (h *Handler) handleAgentDocs(w http.ResponseWriter, r *http.Request) {

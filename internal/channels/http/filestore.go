@@ -123,7 +123,7 @@ func (s *FileRunStore) compactLocked() {
 	terminal := make([]Run, 0, len(s.runs))
 	for _, run := range s.runs {
 		switch strings.ToLower(strings.TrimSpace(run.Status)) {
-		case "completed", "failed", "cancelled":
+		case "completed", "failed", "canceled", "cancelled":
 			terminal = append(terminal, run)
 		}
 	}

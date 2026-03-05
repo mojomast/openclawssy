@@ -503,12 +503,13 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 		}
 	}
 
-	dash := dashboard.New(".", runStore, jobsStore)
+	dash := dashboard.NewWithOptions(".", runStore, dashboard.Options{SchedulerStore: jobsStore, RunCanceller: engine.RunTracker()})
 	server := httpchannel.NewServer(httpchannel.Config{
 		Addr:        serveCfg.Addr,
 		BearerToken: serveCfg.Token,
 		Store:       runStore,
 		Executor:    exec,
+		RunTracker:  httpchannel.NewActiveRunTracker(),
 		Chat:        buildDashboardChatConnector(runtimeCfg, sharedChat),
 		EventBus:    eventBus,
 		RegisterMux: func(mux *http.ServeMux) {
