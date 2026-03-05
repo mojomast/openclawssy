@@ -271,6 +271,7 @@ Detailed operational/reference content has been moved out of the README into `do
 - Docker deployment: [`DOCKER.md`](DOCKER.md)
 - Usage and workflows: [`docs/USAGE.md`](docs/USAGE.md)
 - Dashboard operations: [`docs/DASHBOARD.md`](docs/DASHBOARD.md)
+- Dashboard Help Center: open `Help` inside the dashboard or use the global `?` Help Drawer
 - Discord setup: [`docs/DISCORD.md`](docs/DISCORD.md)
 - OpenClaw remote integration: [`docs/OPENCLAWREMOTEUSSY.md`](docs/OPENCLAWREMOTEUSSY.md)
 - Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)

@@ -11,6 +11,7 @@ import { docsPage } from "./pages/docs.js";
 import { skillsPage } from "./pages/skills.js";
 import { sandboxPage } from "./pages/sandbox.js";
 import { dashboardsPage } from "./pages/dashboards.js";
+import { helpPage } from "./pages/help.js";
 import { toolInspector } from "./inspectors/tool_inspector.js";
 import { traceInspector } from "./inspectors/trace_inspector.js";
 import { toolSchemaInspector } from "./inspectors/tool_schema_inspector.js";
@@ -29,6 +30,7 @@ const ROUTES = [
   { path: "/secrets", label: "Secrets", page: secretsPage },
   { path: "/sandbox", label: "Sandbox", page: sandboxPage },
   { path: "/dashboards", label: "Custom Dashboards", page: dashboardsPage },
+  { path: "/help", label: "Help", page: helpPage },
 ];
 
 const INSPECTORS = [toolInspector, traceInspector, toolSchemaInspector, fixSuggestionsInspector, pythonEnvInspector];

@@ -1,5 +1,8 @@
+import { contextualHelpTopics, getHelpTopicParam, loadHelpTopics, searchHelpTopics, setHelpTopicInHash } from "../help/content.js";
+
 const LAYOUT_STORAGE_KEY = "dashboard.layout.p1.2";
 const THEME_STORAGE_KEY = "dashboard.theme";
+const HELP_DRAWER_STORAGE_KEY = "dashboard.help_drawer.p1";
 
 function getCurrentTheme() {
   return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
@@ -73,11 +76,45 @@ function persistLayoutPrefs(layoutPrefs) {
   }
 }
 
+function readHelpDrawerPrefs() {
+  const defaults = { open: false, width: 360 };
+  try {
+    const raw = window.localStorage.getItem(HELP_DRAWER_STORAGE_KEY);
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw);
+    return {
+      open: Boolean(parsed.open),
+      width: clamp(Number(parsed.width) || defaults.width, 300, 560),
+    };
+  } catch (_error) {
+    return defaults;
+  }
+}
+
+function persistHelpDrawerPrefs(prefs) {
+  try {
+    window.localStorage.setItem(HELP_DRAWER_STORAGE_KEY, JSON.stringify(prefs));
+  } catch (_error) {
+    // ignore
+  }
+}
+
+function highlightHelpMatch(text, query) {
+  const source = String(text || "");
+  const q = String(query || "").trim();
+  if (!q) return source;
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return source.replace(new RegExp(`(${escaped})`, "ig"), "<mark>$1</mark>");
+}
+
 export function createLayout({ root, routes, store, router, apiClient, inspectors }) {
   root.innerHTML = "";
 
   const layoutPrefs = readLayoutPrefs();
+  const helpDrawerPrefs = readHelpDrawerPrefs();
   let isNarrowScreen = window.matchMedia(NARROW_SCREEN_QUERY).matches;
+  let helpTopics = [];
+  let helpSearch = "";
 
   const header = createElement("header", "shell-header");
   const titleWrap = createElement("div", "shell-header-title");
@@ -114,7 +151,17 @@ export function createLayout({ root, routes, store, router, apiClient, inspector
     themeToggle.textContent = currentTheme === "dark" ? "Light Mode" : "Dark Mode";
   });
 
-  headerActions.append(navToggle, inspectorToggle, themeToggle);
+  const helpToggle = createElement("button", "layout-toggle help-toggle", "?");
+  helpToggle.type = "button";
+  helpToggle.setAttribute("aria-label", "Toggle Help Drawer");
+  helpToggle.addEventListener("click", () => {
+    helpDrawerPrefs.open = !helpDrawerPrefs.open;
+    applyLayoutPrefs();
+    persistHelpDrawerPrefs(helpDrawerPrefs);
+    void renderHelpDrawer(store.getState());
+  });
+
+  headerActions.append(navToggle, inspectorToggle, helpToggle, themeToggle);
   header.append(titleWrap, headerActions);
 
   const shellGrid = createElement("div", "shell-grid");
@@ -148,16 +195,31 @@ export function createLayout({ root, routes, store, router, apiClient, inspector
   bugLink.rel = "noopener noreferrer";
   footer.append(legacyLink, document.createTextNode(" · "), bugLink);
 
-  root.append(header, shellGrid, footer, inspectorBackdrop);
+  const helpDrawer = createElement("aside", "help-drawer");
+  const helpDrawerResizer = createElement("div", "help-drawer-resizer");
+  helpDrawerResizer.setAttribute("role", "separator");
+  helpDrawerResizer.tabIndex = 0;
+  const helpBackdrop = createElement("button", "help-backdrop");
+  helpBackdrop.type = "button";
+  helpBackdrop.setAttribute("aria-label", "Close help drawer");
+  helpBackdrop.addEventListener("click", () => {
+    helpDrawerPrefs.open = false;
+    applyLayoutPrefs();
+    persistHelpDrawerPrefs(helpDrawerPrefs);
+  });
+
+  root.append(header, shellGrid, footer, inspectorBackdrop, helpDrawerResizer, helpDrawer, helpBackdrop);
 
   function applyLayoutPrefs() {
     root.classList.toggle("is-narrow-screen", isNarrowScreen);
     root.classList.toggle("nav-collapsed", !isNarrowScreen && layoutPrefs.navCollapsed);
     root.classList.toggle("inspector-collapsed", !isNarrowScreen && layoutPrefs.inspectorCollapsed);
     root.classList.toggle("inspector-drawer-open", isNarrowScreen && layoutPrefs.inspectorDrawerOpen);
+    root.classList.toggle("help-drawer-open", helpDrawerPrefs.open);
 
     shellGrid.style.setProperty("--pane-left", `${layoutPrefs.leftWidth}px`);
     shellGrid.style.setProperty("--pane-right", `${layoutPrefs.rightWidth}px`);
+    root.style.setProperty("--help-drawer-width", `${helpDrawerPrefs.width}px`);
 
     leftResizer.setAttribute("aria-valuemin", String(PANE_LIMITS.left.min));
     leftResizer.setAttribute("aria-valuemax", String(PANE_LIMITS.left.max));
@@ -177,6 +239,7 @@ export function createLayout({ root, routes, store, router, apiClient, inspector
       inspectorToggle.textContent = layoutPrefs.inspectorCollapsed ? "Show Inspector" : "Hide Inspector";
       inspectorToggle.setAttribute("aria-pressed", String(layoutPrefs.inspectorCollapsed));
     }
+    helpToggle.setAttribute("aria-pressed", String(helpDrawerPrefs.open));
   }
 
   function updatePaneWidth(which, delta) {
@@ -307,6 +370,21 @@ export function createLayout({ root, routes, store, router, apiClient, inspector
       persistLayoutPrefs(layoutPrefs);
       return;
     }
+    if (event.key === "Escape" && helpDrawerPrefs.open) {
+      helpDrawerPrefs.open = false;
+      applyLayoutPrefs();
+      persistHelpDrawerPrefs(helpDrawerPrefs);
+      return;
+    }
+
+    if (event.key === "?" && !isTypingContext) {
+      event.preventDefault();
+      helpDrawerPrefs.open = !helpDrawerPrefs.open;
+      applyLayoutPrefs();
+      persistHelpDrawerPrefs(helpDrawerPrefs);
+      void renderHelpDrawer(store.getState());
+      return;
+    }
 
     if (event.key === "/" && !isTypingContext) {
       event.preventDefault();
@@ -366,6 +444,80 @@ export function createLayout({ root, routes, store, router, apiClient, inspector
       list.append(item);
     }
     nav.append(list);
+  }
+
+  async function ensureHelpTopics() {
+    if (!helpTopics.length) {
+      helpTopics = await loadHelpTopics();
+    }
+    return helpTopics;
+  }
+
+  async function renderHelpDrawer(state) {
+    helpDrawer.innerHTML = "";
+    const title = createElement("div", "help-drawer-header");
+    const titleText = createElement("div", "", "");
+    titleText.innerHTML = `<h3>Help Drawer</h3><p class="muted">Stay oriented while you work.</p>`;
+    const openFull = createElement("button", "layout-toggle", "Open full Help Center");
+    openFull.type = "button";
+    openFull.addEventListener("click", () => {
+      router.navigate(`/help${getHelpTopicParam() ? `?topic=${encodeURIComponent(getHelpTopicParam())}` : ""}`);
+    });
+    title.append(titleText, openFull);
+    helpDrawer.append(title);
+
+    const searchWrap = createElement("label", "help-drawer-search");
+    const searchInput = document.createElement("input");
+    searchInput.type = "search";
+    searchInput.className = "settings-input";
+    searchInput.placeholder = "Search help topics";
+    searchInput.value = helpSearch;
+    searchInput.addEventListener("input", () => {
+      helpSearch = searchInput.value;
+      void renderHelpDrawer(state).then(() => {
+        const next = helpDrawer.querySelector(".help-drawer-search input");
+        next?.focus();
+        if (typeof next?.setSelectionRange === "function") {
+          next.setSelectionRange(helpSearch.length, helpSearch.length);
+        }
+      });
+    });
+    searchWrap.append(searchInput);
+    helpDrawer.append(searchWrap);
+
+    const body = createElement("div", "help-drawer-body");
+    try {
+      const topics = await ensureHelpTopics();
+      const contextual = contextualHelpTopics(topics, state.route).slice(0, 6);
+      const matches = searchHelpTopics(topics, helpSearch).slice(0, helpSearch ? 8 : 5);
+      const sections = [
+        { title: "Contextual help", items: contextual },
+        { title: "Quick links", items: topics.filter((item) => ["discord-bot-setup", "providers-and-models", "secrets-guide", "custom-dashboards", "runs-and-debugging"].includes(item.id)) },
+        { title: helpSearch ? "Search results" : "Top topics", items: matches },
+      ];
+      sections.forEach((section) => {
+        const details = document.createElement("details");
+        details.className = "help-drawer-section";
+        details.open = true;
+        const summary = document.createElement("summary");
+        summary.textContent = section.title;
+        details.append(summary);
+        section.items.forEach((item) => {
+          const button = createElement("button", "help-topic-link", item.title);
+          button.type = "button";
+          button.innerHTML = `${highlightHelpMatch(item.title, helpSearch)}<span class="muted">${item.category}</span>`;
+          button.addEventListener("click", () => {
+            setHelpTopicInHash(item.id);
+            router.navigate(`/help?topic=${encodeURIComponent(item.id)}`);
+          });
+          details.append(button);
+        });
+        body.append(details);
+      });
+    } catch (error) {
+      body.append(createElement("p", "settings-inline-error", error instanceof Error ? error.message : String(error)));
+    }
+    helpDrawer.append(body);
   }
 
   function renderAdminStatusStamp(state) {
@@ -460,7 +612,26 @@ export function createLayout({ root, routes, store, router, apiClient, inspector
     bugLink.href = buildBugReportURL(state);
     await renderContent(state);
     await renderInspector(state);
+    await renderHelpDrawer(state);
   }
+
+  helpDrawerResizer.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || isNarrowScreen) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = helpDrawerPrefs.width;
+    const onMove = (moveEvent) => {
+      helpDrawerPrefs.width = clamp(startWidth - (moveEvent.clientX - startX), 300, 560);
+      applyLayoutPrefs();
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      persistHelpDrawerPrefs(helpDrawerPrefs);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp, { once: true });
+  });
 
   return {
     render,

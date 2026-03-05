@@ -41,6 +41,7 @@ Use dashboard admin sections to manage runtime behavior:
 - **Agents**: profile and routing controls
 - **Memory**: memory health/stat visibility per agent
 - **Custom Dashboards**: operator-defined widget layouts with server-backed persistence
+- **Help**: full Help Center with searchable docs and a route-aware Help Drawer
 
 Depending on your build/runtime features, additional pages (for example sandbox manager) may appear.
 
@@ -55,6 +56,21 @@ The fastest operator flow is:
 5. Set allowlists and command prefix as needed
 
 For full Discord bot creation and invite steps, see `docs/DISCORD.md`.
+
+## Help Center
+
+The dashboard now includes two help surfaces:
+
+- `Help` top-level page for full documentation browsing
+- global `?` Help Drawer that stays open while you switch tabs
+
+Help Drawer features:
+
+- persistent open/closed state
+- contextual help based on the active route
+- instant search across shipped help topics
+- quick links to major setup and troubleshooting guides
+- mobile-friendly full-screen overlay behavior
 
 ## Custom Dashboards
 
@@ -130,6 +146,19 @@ Config API ergonomics:
 8. Switch the global provider/model and run `Validate`
 9. Set an agent profile override and confirm the profile still shows inherited behavior when provider/model fields are blank
 10. Confirm Secrets page and custom dashboard widgets never display secret values
+
+## Help Center QA checklist
+
+1. Open the dashboard and click `?`
+2. Confirm the Help Drawer opens without leaving the current route
+3. Switch between at least three routes and confirm the drawer stays open
+4. Confirm contextual help changes for `Settings`, `Secrets`, and `Custom Dashboards`
+5. Press `Esc` and confirm the drawer closes
+6. Press `?` while not typing and confirm the drawer toggles
+7. Open `Help` from the drawer and confirm topic deep links work
+8. Search for `discord`, `provider`, and `scheduler` and confirm relevant topics appear quickly
+9. Copy a topic link and confirm it opens the correct `Help` topic directly
+10. On mobile or narrow width, confirm the drawer becomes an overlay panel
 
 ## Common troubleshooting
 
