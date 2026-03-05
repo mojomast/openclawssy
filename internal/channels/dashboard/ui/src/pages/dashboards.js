@@ -19,6 +19,10 @@ const dashboardsState = {
   widgetPickerOpen: false,
   widgetMenuFor: "",
   drag: null,
+  saveTimer: null,
+  saveNotice: "",
+  lastErrorAt: 0,
+  knownServerIDs: new Set(),
 };
 
 function nowISO() {
@@ -43,6 +47,13 @@ function writeLocalDashboards() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(dashboardsState.dashboards));
   } catch (_error) {
     // ignore storage failures
+  }
+}
+
+function markServerKnown(id) {
+  const value = String(id || "").trim();
+  if (value) {
+    dashboardsState.knownServerIDs.add(value);
   }
 }
 
@@ -82,14 +93,28 @@ function selectedDashboard() {
   return dashboardsState.dashboards.find((item) => item.id === dashboardsState.selectedID) || dashboardsState.dashboards[0] || null;
 }
 
-function markDirty() {
+function scheduleSave() {
+  if (dashboardsState.saveTimer) {
+    window.clearTimeout(dashboardsState.saveTimer);
+  }
+  dashboardsState.saveTimer = window.setTimeout(() => {
+    dashboardsState.saveTimer = null;
+    void saveAllDashboards();
+  }, 700);
+}
+
+function markDirty(options = {}) {
+  const { autosave = true } = options;
   dashboardsState.dashboards.forEach((item, index) => {
     item.position = index;
   });
   dashboardsState.dirty = true;
+  dashboardsState.saveNotice = autosave ? "Unsaved changes" : dashboardsState.saveNotice;
   writeLocalDashboards();
   rerender();
-  void saveAllDashboards();
+  if (autosave) {
+    scheduleSave();
+  }
 }
 
 async function loadDashboards() {
@@ -100,6 +125,7 @@ async function loadDashboards() {
     const localItems = readLocalDashboards();
     const payload = await dashboardsState.apiClient.get("/api/admin/dashboards");
     const remoteItems = Array.isArray(payload?.dashboards) ? payload.dashboards : [];
+    dashboardsState.knownServerIDs = new Set(remoteItems.map((item) => String(item?.id || "").trim()).filter(Boolean));
     dashboardsState.dashboards = mergeDashboards(localItems, remoteItems);
     if (!dashboardsState.dashboards.length) {
       dashboardsState.dashboards = [normalizeDashboard({ id: uid("dash"), name: "Main Dashboard", layout: [] })];
@@ -123,6 +149,7 @@ async function createDashboard() {
   try {
     const payload = await dashboardsState.apiClient.post("/api/admin/dashboards", { name: `Dashboard ${dashboardsState.dashboards.length + 1}` });
     const created = normalizeDashboard(payload?.dashboard || {});
+    markServerKnown(created.id);
     dashboardsState.dashboards = [...dashboardsState.dashboards, created];
     dashboardsState.selectedID = created.id;
     markDirty();
@@ -141,12 +168,26 @@ async function saveAllDashboards() {
   try {
     for (const dashboard of dashboardsState.dashboards) {
       dashboard.updated_at = nowISO();
+      if (!dashboardsState.knownServerIDs.has(dashboard.id)) {
+        const previousID = dashboard.id;
+        const created = await dashboardsState.apiClient.post("/api/admin/dashboards", { name: dashboard.name });
+        const remote = normalizeDashboard(created?.dashboard || {});
+        dashboard.id = remote.id;
+        dashboard.created_at = remote.created_at;
+        markServerKnown(remote.id);
+        if (dashboardsState.selectedID === previousID) {
+          dashboardsState.selectedID = remote.id;
+        }
+      }
       await dashboardsState.apiClient.put(`/api/admin/dashboards/${encodeURIComponent(dashboard.id)}`, dashboard);
     }
     dashboardsState.dirty = false;
+    dashboardsState.saveNotice = "Saved";
     writeLocalDashboards();
   } catch (error) {
     dashboardsState.error = error instanceof Error ? error.message : String(error);
+    dashboardsState.saveNotice = "Save failed";
+    dashboardsState.lastErrorAt = Date.now();
   } finally {
     dashboardsState.saving = false;
     rerender();
@@ -160,7 +201,10 @@ async function deleteDashboard(id) {
   if (!window.confirm("Delete this custom dashboard?")) {
     return;
   }
-  await dashboardsState.apiClient.delete(`/api/admin/dashboards/${encodeURIComponent(id)}`);
+  if (dashboardsState.knownServerIDs.has(id)) {
+    await dashboardsState.apiClient.delete(`/api/admin/dashboards/${encodeURIComponent(id)}`);
+    dashboardsState.knownServerIDs.delete(id);
+  }
   dashboardsState.dashboards = dashboardsState.dashboards.filter((item) => item.id !== id);
   dashboardsState.selectedID = dashboardsState.dashboards[0]?.id || "";
   markDirty();
@@ -174,6 +218,24 @@ function updateDashboard(mutator) {
   mutator(dashboard);
   dashboard.updated_at = nowISO();
   markDirty();
+}
+
+function updateDashboardLocal(mutator) {
+  const dashboard = selectedDashboard();
+  if (!dashboard) {
+    return;
+  }
+  mutator(dashboard);
+  dashboard.updated_at = nowISO();
+  dashboardsState.dirty = true;
+  writeLocalDashboards();
+  rerender();
+}
+
+function removeWidget(widgetInstanceID) {
+  updateDashboard((next) => {
+    next.layout = next.layout.filter((item) => item.widget_instance_id !== widgetInstanceID);
+  });
 }
 
 async function fetchConfig() {
@@ -362,7 +424,7 @@ function startPointerDrag(event, widget, mode) {
     const colWidth = rect.width / GRID_COLUMNS;
     const dx = Math.round((moveEvent.clientX - dashboardsState.drag.startX) / colWidth);
     const dy = Math.round((moveEvent.clientY - dashboardsState.drag.startY) / ROW_HEIGHT);
-    updateDashboard((dashboard) => {
+    updateDashboardLocal((dashboard) => {
       const target = dashboard.layout.find((item) => item.widget_instance_id === widget.widget_instance_id);
       if (!target) return;
       if (mode === "move") {
@@ -378,6 +440,8 @@ function startPointerDrag(event, widget, mode) {
     window.removeEventListener("pointermove", onMove);
     window.removeEventListener("pointerup", onUp);
     dashboardsState.drag = null;
+    dashboardsState.saveNotice = "Unsaved changes";
+    scheduleSave();
   };
   window.addEventListener("pointermove", onMove);
   window.addEventListener("pointerup", onUp, { once: true });
@@ -416,37 +480,59 @@ function renderWidgetCard(widget, dashboard) {
   title.innerHTML = `<strong>${spec.label}</strong><span>${spec.description}</span>`;
   const actions = document.createElement("div");
   actions.className = "dashboard-widget-actions";
-  const sourceButton = document.createElement("button");
-  sourceButton.type = "button";
-  sourceButton.className = "layout-toggle";
-  sourceButton.textContent = "Open source tab";
-  sourceButton.addEventListener("click", () => dashboardsState.router.navigate(spec.sourcePath));
-  const duplicateButton = document.createElement("button");
-  duplicateButton.type = "button";
-  duplicateButton.className = "layout-toggle";
-  duplicateButton.textContent = "Duplicate";
-  duplicateButton.addEventListener("click", () => {
-    updateDashboard((next) => {
-      next.layout.push({ ...widget, widget_instance_id: uid("widget"), x: Math.min(GRID_COLUMNS - widget.w, widget.x + 1), y: widget.y + 1, widget_state: { ...widget.widget_state } });
-    });
-  });
   const configButton = document.createElement("button");
   configButton.type = "button";
   configButton.className = "layout-toggle";
   configButton.textContent = "...";
   configButton.addEventListener("click", () => {
-    if (typeof spec.configure === "function") {
-      spec.configure({ widget, dashboard });
-      markDirty();
-    } else {
-      updateDashboard((next) => {
-        next.layout = next.layout.filter((item) => item.widget_instance_id !== widget.widget_instance_id);
-      });
-    }
+    dashboardsState.widgetMenuFor = dashboardsState.widgetMenuFor === widget.widget_instance_id ? "" : widget.widget_instance_id;
+    rerender();
   });
-  actions.append(sourceButton, duplicateButton, configButton);
+  actions.append(configButton);
   header.append(title, actions);
   header.addEventListener("pointerdown", (event) => startPointerDrag(event, widget, "move"));
+
+  if (dashboardsState.widgetMenuFor === widget.widget_instance_id) {
+    const menu = document.createElement("div");
+    menu.className = "dashboard-widget-menu";
+    const menuOpenSource = document.createElement("button");
+    menuOpenSource.type = "button";
+    menuOpenSource.className = "layout-toggle";
+    menuOpenSource.textContent = "Open source tab";
+    menuOpenSource.addEventListener("click", () => dashboardsState.router.navigate(spec.sourcePath));
+    const menuDuplicate = document.createElement("button");
+    menuDuplicate.type = "button";
+    menuDuplicate.className = "layout-toggle";
+    menuDuplicate.textContent = "Duplicate widget";
+    menuDuplicate.addEventListener("click", () => {
+      updateDashboard((next) => {
+        next.layout.push({ ...widget, widget_instance_id: uid("widget"), x: Math.min(GRID_COLUMNS - widget.w, widget.x + 1), y: widget.y + 1, widget_state: { ...widget.widget_state } });
+      });
+      dashboardsState.widgetMenuFor = "";
+    });
+    if (typeof spec.configure === "function") {
+      const menuConfigure = document.createElement("button");
+      menuConfigure.type = "button";
+      menuConfigure.className = "layout-toggle";
+      menuConfigure.textContent = "Configure";
+      menuConfigure.addEventListener("click", () => {
+        spec.configure({ widget, dashboard });
+        dashboardsState.widgetMenuFor = "";
+        markDirty();
+      });
+      menu.append(menuConfigure);
+    }
+    const menuRemove = document.createElement("button");
+    menuRemove.type = "button";
+    menuRemove.className = "layout-toggle";
+    menuRemove.textContent = "Remove widget";
+    menuRemove.addEventListener("click", () => {
+      removeWidget(widget.widget_instance_id);
+      dashboardsState.widgetMenuFor = "";
+    });
+    menu.append(menuOpenSource, menuDuplicate, menuRemove);
+    header.append(menu);
+  }
 
   const body = document.createElement("div");
   body.className = "dashboard-widget-body";
@@ -570,10 +656,28 @@ function renderDashboardsPage() {
     resetLayout.className = "layout-toggle";
     resetLayout.textContent = "Reset layout";
     resetLayout.addEventListener("click", () => updateDashboard((dashboard) => { dashboard.layout = []; }));
+    const saveNow = document.createElement("button");
+    saveNow.type = "button";
+    saveNow.className = "layout-toggle";
+    saveNow.textContent = dashboardsState.saving ? "Saving..." : "Save now";
+    saveNow.disabled = dashboardsState.saving || !dashboardsState.dirty;
+    saveNow.addEventListener("click", () => {
+      if (dashboardsState.saveTimer) {
+        window.clearTimeout(dashboardsState.saveTimer);
+        dashboardsState.saveTimer = null;
+      }
+      void saveAllDashboards();
+    });
     const saveIndicator = document.createElement("span");
     saveIndicator.className = "muted";
     saveIndicator.textContent = dashboardsState.saving ? "Saving..." : dashboardsState.dirty ? "Dirty" : "Clean";
-    toolbar.append(nameInput, addWidget, resetLayout, saveIndicator);
+    toolbar.append(nameInput, addWidget, resetLayout, saveNow, saveIndicator);
+    if (dashboardsState.saveNotice) {
+      const note = document.createElement("span");
+      note.className = dashboardsState.saveNotice === "Save failed" ? "settings-inline-error" : "muted";
+      note.textContent = dashboardsState.saveNotice;
+      toolbar.append(note);
+    }
     main.append(toolbar);
 
     if (dashboardsState.widgetPickerOpen) {

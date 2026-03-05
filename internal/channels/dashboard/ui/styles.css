@@ -1911,6 +1911,7 @@ details[open] .sandbox-advanced-summary::before {
   display: flex;
   gap: 0.75rem;
   align-items: center;
+  flex-wrap: wrap;
   margin-bottom: 0.75rem;
 }
 
@@ -1952,6 +1953,20 @@ details[open] .sandbox-advanced-summary::before {
 .dashboard-quick-form {
   display: flex;
   gap: 0.5rem;
+}
+
+.dashboard-widget-menu {
+  position: absolute;
+  top: 2.6rem;
+  right: 0.5rem;
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: var(--card);
+  box-shadow: 0 10px 24px var(--shadow);
+  z-index: 3;
 }
 
 .dashboard-widget-body {
@@ -2089,6 +2104,18 @@ details[open] .sandbox-advanced-summary::before {
   gap: 0.75rem;
 }
 
+.help-drawer-preview {
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  background: var(--background);
+  padding: 0.9rem 1rem;
+}
+
+.help-drawer-preview .help-markdown {
+  max-height: 34vh;
+  overflow: auto;
+}
+
 .help-drawer-section,
 .help-topic-group,
 .help-related-topics {
@@ -2145,6 +2172,53 @@ details[open] .sandbox-advanced-summary::before {
   display: flex;
   gap: 0.5rem;
   margin-bottom: 1rem;
+}
+
+.help-copy-toast {
+  width: fit-content;
+}
+
+.help-topic-toc {
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: var(--muted);
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.help-topic-toc h4,
+.help-related-topics h4 {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+}
+
+.help-toc-link,
+.help-topic-chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--background);
+  color: var(--foreground);
+  padding: 0.35rem 0.7rem;
+  margin: 0.2rem 0.35rem 0 0;
+}
+
+.help-toc-link {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border-radius: 0.5rem;
+  margin: 0.25rem 0 0;
+}
+
+.help-toc-link.level-4 {
+  margin-left: 1rem;
+}
+
+.help-related-topics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: flex-start;
 }
 
 .help-markdown {

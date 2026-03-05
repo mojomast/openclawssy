@@ -7,7 +7,7 @@ import {
   searchHelpTopics,
   setHelpTopicInHash,
 } from "../help/content.js";
-import { renderMarkdownToFragment } from "../help/markdown.js";
+import { extractHeadings, renderMarkdownToFragment } from "../help/markdown.js";
 
 const helpState = {
   container: null,
@@ -16,10 +16,17 @@ const helpState = {
   error: "",
   search: "",
   selectedTopicID: "",
+  copyNotice: "",
+  copyNoticeTimer: null,
 };
 
 function highlightMatch(text, query) {
-  const source = String(text || "");
+  const source = String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
   const q = String(query || "").trim();
   if (!q) {
     return source;
@@ -32,6 +39,24 @@ function rerender() {
   if (helpState.container?.isConnected) {
     renderHelpPage();
   }
+}
+
+function showCopyNotice(message) {
+  helpState.copyNotice = message;
+  if (helpState.copyNoticeTimer) {
+    window.clearTimeout(helpState.copyNoticeTimer);
+  }
+  helpState.copyNoticeTimer = window.setTimeout(() => {
+    helpState.copyNotice = "";
+    rerender();
+  }, 1600);
+  rerender();
+}
+
+function navigateToTopic(topicID) {
+  helpState.selectedTopicID = topicID;
+  setHelpTopicInHash(topicID);
+  rerender();
 }
 
 function selectedTopic() {
@@ -68,11 +93,7 @@ function renderTopicList(parent, topics) {
       button.type = "button";
       button.className = `help-topic-link ${topic.id === helpState.selectedTopicID ? "active" : ""}`;
       button.innerHTML = highlightMatch(topic.title, helpState.search);
-      button.addEventListener("click", () => {
-        helpState.selectedTopicID = topic.id;
-        setHelpTopicInHash(topic.id);
-        rerender();
-      });
+      button.addEventListener("click", () => navigateToTopic(topic.id));
       section.append(button);
     });
     parent.append(section);
@@ -88,6 +109,13 @@ function renderHelpPage() {
   subtitle.className = "muted";
   subtitle.textContent = "Searchable, route-aware guidance you can use alongside the rest of the dashboard.";
   container.append(heading, subtitle);
+
+  if (helpState.copyNotice) {
+    const toast = document.createElement("p");
+    toast.className = "settings-save-success help-copy-toast";
+    toast.textContent = helpState.copyNotice;
+    container.append(toast);
+  }
 
   if (helpState.loading) {
     const loading = document.createElement("p");
@@ -136,6 +164,7 @@ function renderHelpPage() {
   main.className = "help-center-main";
   if (topic) {
     const category = categoryForTopic(topic);
+    const headings = extractHeadings(topic.body);
     const breadcrumbs = document.createElement("p");
     breadcrumbs.className = "help-breadcrumbs";
     breadcrumbs.textContent = `${category.label} / ${topic.title}`;
@@ -150,12 +179,30 @@ function renderHelpPage() {
     copy.addEventListener("click", async () => {
       const url = `${window.location.origin}${window.location.pathname}#/help?topic=${encodeURIComponent(topic.id)}`;
       await navigator.clipboard.writeText(url);
-      copy.textContent = "Link copied";
-      setTimeout(() => {
-        copy.textContent = "Copy link to topic";
-      }, 1200);
+      showCopyNotice("Topic link copied.");
     });
     actions.append(copy);
+    if (headings.length > 1) {
+      const toc = document.createElement("nav");
+      toc.className = "help-topic-toc";
+      const tocTitle = document.createElement("h4");
+      tocTitle.textContent = "On this page";
+      toc.append(tocTitle);
+      headings.forEach((item) => {
+        const link = document.createElement("button");
+        link.type = "button";
+        link.className = `help-toc-link level-${item.level}`;
+        link.textContent = item.title;
+        link.addEventListener("click", () => {
+          const target = container.querySelector(`#${CSS.escape(item.id)}`);
+          target?.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+        toc.append(link);
+      });
+      main.append(breadcrumbs, title, actions, toc);
+    } else {
+      main.append(breadcrumbs, title, actions);
+    }
     const body = document.createElement("div");
     body.className = "help-markdown";
     body.append(renderMarkdownToFragment(topic.body));
@@ -168,16 +215,12 @@ function renderHelpPage() {
     related.forEach((item) => {
       const link = document.createElement("button");
       link.type = "button";
-      link.className = "help-topic-link";
+      link.className = "help-topic-chip";
       link.textContent = item.title;
-      link.addEventListener("click", () => {
-        helpState.selectedTopicID = item.id;
-        setHelpTopicInHash(item.id);
-        rerender();
-      });
+      link.addEventListener("click", () => navigateToTopic(item.id));
       relatedWrap.append(link);
     });
-    main.append(breadcrumbs, title, actions, body, relatedWrap);
+    main.append(body, relatedWrap);
   }
   shell.append(sidebar, main);
   container.append(shell);

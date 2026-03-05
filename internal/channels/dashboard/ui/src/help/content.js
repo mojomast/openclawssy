@@ -39,7 +39,7 @@ export const HELP_ROUTE_CONTEXT = {
 
 let topicsPromise = null;
 
-function parseFrontmatter(raw) {
+export function parseFrontmatter(raw) {
   const text = String(raw || "");
   if (!text.startsWith("---\n")) {
     return { meta: {}, body: text };
@@ -67,7 +67,7 @@ function normalizeList(value) {
     .filter(Boolean);
 }
 
-function stripMarkdown(text) {
+export function stripMarkdown(text) {
   return String(text || "")
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/`([^`]+)`/g, "$1")

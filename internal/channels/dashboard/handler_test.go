@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -108,6 +109,23 @@ func TestDashboardStaticAssetRouteServesToolSchemasJSON(t *testing.T) {
 	required, ok := fsRead["required"].([]any)
 	if !ok || len(required) == 0 || required[0] != "path" {
 		t.Fatalf("expected fs.read.required to include path, got %#v", fsRead["required"])
+	}
+}
+
+func TestDashboardStaticAssetRouteServesHelpMarkdown(t *testing.T) {
+	h := New(t.TempDir(), httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/static/help/getting-started.md", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "title: Getting Started") {
+		t.Fatalf("expected help markdown body, got %q", rr.Body.String())
 	}
 }
 
@@ -362,21 +380,58 @@ func TestAdminConfigPatchMergesAndValidateReturnsFieldErrors(t *testing.T) {
 	validateReq.Header.Set("Content-Type", "application/json")
 	validateResp := httptest.NewRecorder()
 	mux.ServeHTTP(validateResp, validateReq)
-	if validateResp.Code != http.StatusBadRequest {
-		t.Fatalf("expected validate status 400, got %d (%s)", validateResp.Code, validateResp.Body.String())
+	if validateResp.Code != http.StatusOK {
+		t.Fatalf("expected validate status 200, got %d (%s)", validateResp.Code, validateResp.Body.String())
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(validateResp.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode validate response: %v", err)
 	}
-	errorMap, _ := payload["error"].(map[string]any)
-	details, _ := errorMap["details"].(map[string]any)
-	fieldErrors, _ := details["field_errors"].(map[string]any)
+	if ok, _ := payload["ok"].(bool); ok {
+		t.Fatalf("expected ok=false for invalid validate payload, got %#v", payload)
+	}
+	fieldErrors, _ := payload["field_errors"].(map[string]any)
 	if _, ok := fieldErrors["model.provider"]; !ok {
 		t.Fatalf("expected model.provider field error, got %#v", fieldErrors)
 	}
 	if _, ok := fieldErrors["model.name"]; !ok {
 		t.Fatalf("expected model.name field error, got %#v", fieldErrors)
+	}
+}
+
+func TestDashboardLayoutsEndpointRejectsOversizedLayout(t *testing.T) {
+	root := t.TempDir()
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	createReq := httptest.NewRequest(http.MethodPost, "/api/admin/dashboards", bytes.NewBufferString(`{"name":"Ops"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp := httptest.NewRecorder()
+	mux.ServeHTTP(createResp, createReq)
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("expected create status 200, got %d (%s)", createResp.Code, createResp.Body.String())
+	}
+	var createPayload struct {
+		Dashboard dashboardLayoutRecord `json:"dashboard"`
+	}
+	if err := json.Unmarshal(createResp.Body.Bytes(), &createPayload); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	layout := make([]map[string]any, 0, maxDashboardWidgets+1)
+	for i := 0; i < maxDashboardWidgets+1; i++ {
+		layout = append(layout, map[string]any{"widget_key": "runtime.status", "widget_instance_id": fmt.Sprintf("w%d", i), "x": 0, "y": i, "w": 3, "h": 2})
+	}
+	body, err := json.Marshal(map[string]any{"name": "Ops", "layout": layout})
+	if err != nil {
+		t.Fatalf("marshal oversized layout: %v", err)
+	}
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/admin/dashboards/"+createPayload.Dashboard.ID, bytes.NewReader(body))
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateResp := httptest.NewRecorder()
+	mux.ServeHTTP(updateResp, updateReq)
+	if updateResp.Code != http.StatusBadRequest {
+		t.Fatalf("expected update status 400, got %d (%s)", updateResp.Code, updateResp.Body.String())
 	}
 }
 

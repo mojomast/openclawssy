@@ -26,7 +26,7 @@ Use `Settings` -> `Model Provider`.
 3. Adjust `temperature`
 4. Adjust `max_tokens`
 5. Review the provider endpoint card for the selected provider
-6. Use `Test provider`
+6. Use `Test provider` for a safe endpoint reachability probe
 7. Click `Validate` before `Save Config`
 
 ## Per-agent overrides

@@ -130,6 +130,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 const (
 	maxAdminSecretKeyLen   = 256
 	maxAdminSecretValueLen = 16384
+	maxDashboardNameLen    = 80
+	maxDashboardsCount     = 24
+	maxDashboardWidgets    = 64
+	maxWidgetKeyLen        = 80
+	maxWidgetStateBytes    = 4096
 )
 
 func (h *Handler) schedulerStoreOrDefault() (*scheduler.Store, error) {
@@ -318,7 +323,11 @@ func (h *Handler) serveDashboardStatic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if contentType := mime.TypeByExtension(filepath.Ext(assetPath)); contentType != "" {
+	contentType := mime.TypeByExtension(filepath.Ext(assetPath))
+	if contentType == "" && strings.HasSuffix(assetPath, ".md") {
+		contentType = "text/markdown; charset=utf-8"
+	}
+	if contentType != "" {
 		w.Header().Set("Content-Type", contentType)
 	}
 	_, _ = w.Write(content)
@@ -414,7 +423,7 @@ func (h *Handler) handleConfigValidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := merged.Validate(); err != nil {
-		writeDashboardError(w, http.StatusBadRequest, "config.validation_failed", err.Error(), map[string]any{"field_errors": collectConfigFieldErrors(merged, err)})
+		writeJSON(w, map[string]any{"ok": false, "message": err.Error(), "field_errors": collectConfigFieldErrors(merged, err)})
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "field_errors": map[string]string{}})
@@ -437,6 +446,10 @@ func (h *Handler) handleProviderTest(w http.ResponseWriter, r *http.Request) {
 	baseURL := strings.TrimSpace(req.BaseURL)
 	if provider == "" || baseURL == "" {
 		writeDashboardError(w, http.StatusBadRequest, "provider_test.invalid_input", "provider and base_url are required", nil)
+		return
+	}
+	if !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "zai": true, "generic": true}[provider] {
+		writeDashboardError(w, http.StatusBadRequest, "provider_test.invalid_provider", "provider must be one of openai, openrouter, requesty, zai, generic", nil)
 		return
 	}
 	client := &http.Client{Timeout: 4 * time.Second}
@@ -481,9 +494,17 @@ func (h *Handler) handleDashboards(w http.ResponseWriter, r *http.Request) {
 		if name == "" {
 			name = "New Dashboard"
 		}
+		if len(name) > maxDashboardNameLen {
+			writeDashboardError(w, http.StatusBadRequest, "dashboards.invalid_name", fmt.Sprintf("dashboard name exceeds %d characters", maxDashboardNameLen), nil)
+			return
+		}
 		dashboards, err := h.loadDashboardLayouts()
 		if err != nil {
 			writeDashboardError(w, http.StatusInternalServerError, "dashboards.load_failed", err.Error(), nil)
+			return
+		}
+		if len(dashboards) >= maxDashboardsCount {
+			writeDashboardError(w, http.StatusBadRequest, "dashboards.limit_reached", fmt.Sprintf("dashboard limit reached (%d)", maxDashboardsCount), nil)
 			return
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
@@ -532,12 +553,25 @@ func (h *Handler) handleDashboardByID(w http.ResponseWriter, r *http.Request) {
 		if name := strings.TrimSpace(req.Name); name != "" {
 			updated.Name = name
 		}
+		if len(updated.Name) > maxDashboardNameLen {
+			writeDashboardError(w, http.StatusBadRequest, "dashboards.invalid_name", fmt.Sprintf("dashboard name exceeds %d characters", maxDashboardNameLen), nil)
+			return
+		}
 		if req.Position >= 0 {
 			updated.Position = req.Position
 		}
 		updated.Layout = normalizeDashboardLayout(req.Layout)
+		if err := validateDashboardRecord(updated); err != nil {
+			writeDashboardError(w, http.StatusBadRequest, "dashboards.invalid_layout", err.Error(), nil)
+			return
+		}
 		updated.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 		dashboards[index] = updated
+		for i := range dashboards {
+			if i != index && dashboards[i].Position >= updated.Position {
+				dashboards[i].Position = i
+			}
+		}
 		if err := h.saveDashboardLayouts(dashboards); err != nil {
 			writeDashboardError(w, http.StatusInternalServerError, "dashboards.save_failed", err.Error(), nil)
 			return
@@ -549,6 +583,9 @@ func (h *Handler) handleDashboardByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		dashboards = append(dashboards[:index], dashboards[index+1:]...)
+		for i := range dashboards {
+			dashboards[i].Position = i
+		}
 		if err := h.saveDashboardLayouts(dashboards); err != nil {
 			writeDashboardError(w, http.StatusInternalServerError, "dashboards.save_failed", err.Error(), nil)
 			return
@@ -580,6 +617,60 @@ func normalizeDashboardLayout(layout []dashboardWidgetLayout) []dashboardWidgetL
 		out = append(out, item)
 	}
 	return out
+}
+
+func validateDashboardRecord(record dashboardLayoutRecord) error {
+	if strings.TrimSpace(record.ID) == "" {
+		return errors.New("dashboard id is required")
+	}
+	if strings.TrimSpace(record.Name) == "" {
+		return errors.New("dashboard name is required")
+	}
+	if len(record.Name) > maxDashboardNameLen {
+		return fmt.Errorf("dashboard name exceeds %d characters", maxDashboardNameLen)
+	}
+	if len(record.Layout) > maxDashboardWidgets {
+		return fmt.Errorf("dashboard has too many widgets (max %d)", maxDashboardWidgets)
+	}
+	seen := map[string]bool{}
+	for _, item := range record.Layout {
+		if err := validateDashboardWidget(item); err != nil {
+			return err
+		}
+		if seen[item.WidgetInstanceID] {
+			return fmt.Errorf("duplicate widget_instance_id: %s", item.WidgetInstanceID)
+		}
+		seen[item.WidgetInstanceID] = true
+	}
+	return nil
+}
+
+func validateDashboardWidget(item dashboardWidgetLayout) error {
+	if key := strings.TrimSpace(item.WidgetKey); key == "" || len(key) > maxWidgetKeyLen {
+		return fmt.Errorf("invalid widget_key: %q", item.WidgetKey)
+	}
+	if id := strings.TrimSpace(item.WidgetInstanceID); id == "" || len(id) > maxWidgetKeyLen {
+		return fmt.Errorf("invalid widget_instance_id: %q", item.WidgetInstanceID)
+	}
+	if item.X < 0 || item.Y < 0 {
+		return errors.New("widget position must be >= 0")
+	}
+	if item.W < 1 || item.W > 12 {
+		return errors.New("widget width must be between 1 and 12")
+	}
+	if item.H < 1 || item.H > 12 {
+		return errors.New("widget height must be between 1 and 12")
+	}
+	if item.WidgetState != nil {
+		data, err := json.Marshal(item.WidgetState)
+		if err != nil {
+			return errors.New("widget_state must be valid json")
+		}
+		if len(data) > maxWidgetStateBytes {
+			return fmt.Errorf("widget_state exceeds %d bytes", maxWidgetStateBytes)
+		}
+	}
+	return nil
 }
 
 func (h *Handler) dashboardLayoutsPath() string {
@@ -615,6 +706,15 @@ func (h *Handler) loadDashboardLayouts() ([]dashboardLayoutRecord, error) {
 }
 
 func (h *Handler) saveDashboardLayouts(dashboards []dashboardLayoutRecord) error {
+	if len(dashboards) > maxDashboardsCount {
+		return fmt.Errorf("dashboard limit reached (%d)", maxDashboardsCount)
+	}
+	for i := range dashboards {
+		dashboards[i].Position = i
+		if err := validateDashboardRecord(dashboards[i]); err != nil {
+			return err
+		}
+	}
 	path := h.dashboardLayoutsPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

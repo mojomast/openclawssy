@@ -560,7 +560,30 @@ function validateDraftConfig(draft) {
     ) {
       setFieldError(`agents.profiles.${agentID}.model.max_tokens`, "Profile max tokens must be an integer between 0 and 20000.");
     }
+    const profileTemp = profile?.model?.temperature;
+    if (profileTemp !== undefined && profileTemp !== null && Number.isNaN(Number(profileTemp))) {
+      setFieldError(`agents.profiles.${agentID}.model.temperature`, "Profile temperature must be numeric.");
+    }
   });
+
+  const subDefaults = draft?.agents?.subagent_defaults || {};
+  const subDefaultsMaxTools = Number(subDefaults?.max_tool_iterations);
+  if (subDefaults?.max_tool_iterations !== undefined && (!Number.isInteger(subDefaultsMaxTools) || subDefaultsMaxTools < 0)) {
+    setFieldError("agents.subagent_defaults.max_tool_iterations", "Subagent max tool iterations must be an integer >= 0.");
+  }
+  const subDefaultsTimeout = Number(subDefaults?.timeout_ms);
+  if (subDefaults?.timeout_ms !== undefined && (!Number.isInteger(subDefaultsTimeout) || subDefaultsTimeout < 0)) {
+    setFieldError("agents.subagent_defaults.timeout_ms", "Subagent timeout must be an integer >= 0.");
+  }
+  const subThinking = asTrimmedString(subDefaults?.thinking_mode).toLowerCase();
+  if (subThinking && !THINKING_MODES.includes(subThinking)) {
+    setFieldError("agents.subagent_defaults.thinking_mode", "Subagent thinking mode must be one of never, on_error, always.");
+  }
+  const delegationModes = ["", "prompt_only", "tool_gated", "auto_execute"];
+  const subDelegation = asTrimmedString(subDefaults?.delegation_mode);
+  if (subDelegation && !delegationModes.includes(subDelegation)) {
+    setFieldError("agents.subagent_defaults.delegation_mode", "Subagent delegation mode must be prompt_only, tool_gated, or auto_execute.");
+  }
 
   const maxWorkingItems = Number(draft?.memory?.max_working_items);
   if (
@@ -1500,6 +1523,35 @@ function buildAgentsCategory(panel, fieldErrors) {
   const selected = resolveSelectedProfileKey();
   const profiles = settingsState.draftConfig?.agents?.profiles || {};
   const selectedProfile = profiles[selected] || {};
+  const inheritsGlobalModel = !asTrimmedString(selectedProfile?.model?.provider) && !asTrimmedString(selectedProfile?.model?.name) && !selectedProfile?.model?.max_tokens && !selectedProfile?.model?.temperature;
+
+  const tableWrap = document.createElement("section");
+  tableWrap.className = "settings-section";
+  const tableTitle = document.createElement("h4");
+  tableTitle.className = "settings-subheading";
+  tableTitle.textContent = "Agent profile summary";
+  tableWrap.append(tableTitle);
+  const table = document.createElement("table");
+  table.className = "settings-diff-table";
+  const head = document.createElement("thead");
+  head.innerHTML = "<tr><th>Agent</th><th>Enabled</th><th>Provider</th><th>Model</th><th>Temp</th><th>Max tokens</th><th>Mode</th></tr>";
+  const body = document.createElement("tbody");
+  Object.keys(profiles)
+    .sort()
+    .forEach((agentID) => {
+      const profile = profiles[agentID] || {};
+      const row = document.createElement("tr");
+      const inherit = !asTrimmedString(profile?.model?.provider) && !asTrimmedString(profile?.model?.name) && !profile?.model?.max_tokens && !profile?.model?.temperature;
+      row.innerHTML = `<td>${agentID}</td><td>${profile?.enabled === false ? "off" : "on"}</td><td>${asTrimmedString(profile?.model?.provider) || "(global)"}</td><td>${asTrimmedString(profile?.model?.name) || "(global)"}</td><td>${profile?.model?.temperature ?? "(global)"}</td><td>${profile?.model?.max_tokens ?? "(global)"}</td><td>${inherit ? "inherit" : "override"}</td>`;
+      row.addEventListener("click", () => {
+        settingsState.selectedAgentProfile = agentID;
+        rerender();
+      });
+      body.append(row);
+    });
+  table.append(head, body);
+  tableWrap.append(table);
+  panel.append(tableWrap);
 
   const header = document.createElement("h4");
   header.className = "settings-subheading";
@@ -1553,6 +1605,24 @@ function buildAgentsCategory(panel, fieldErrors) {
 
   appendCheckboxField({ parent: panel, query, title: "Profile enabled", path: `agents.profiles.${selected}.enabled`, helpText: "Toggle this agent profile on/off.", fieldErrors });
   appendCheckboxField({ parent: panel, query, title: "Profile self-improvement", path: `agents.profiles.${selected}.self_improvement`, helpText: "Allows this agent to modify its own prompt files when global switch is on.", fieldErrors });
+  appendCheckboxField({ parent: panel, query, title: "Inherit global model", path: `agents.profiles.${selected}.__inherit_model`, helpText: "When enabled, this profile uses the global provider/model/temp/max_tokens.", fieldErrors: {} });
+  const inheritField = panel.lastElementChild?.querySelector?.("input[type='checkbox']");
+  if (inheritField) {
+    inheritField.checked = inheritsGlobalModel;
+    inheritField.addEventListener("change", () => {
+      const next = cloneJSON(settingsState.draftConfig);
+      next.agents.profiles[selected] = next.agents.profiles[selected] || {};
+      if (inheritField.checked) {
+        delete next.agents.profiles[selected].model;
+      } else {
+        next.agents.profiles[selected].model = next.agents.profiles[selected].model || {};
+      }
+      delete next.agents.profiles[selected].__inherit_model;
+      settingsState.draftConfig = normalizeConfigShape(next);
+      settingsState.advancedRaw = `${JSON.stringify(settingsState.draftConfig, null, 2)}\n`;
+      rerender();
+    });
+  }
   appendSelectField({
     parent: panel,
     query,
@@ -1578,6 +1648,16 @@ function buildAgentsCategory(panel, fieldErrors) {
     path: `agents.profiles.${selected}.model.max_tokens`,
     helpText: "Optional override max tokens. Set 0/empty to inherit global.",
     placeholder: "0",
+    fieldErrors,
+  });
+  appendNumberField({
+    parent: panel,
+    query,
+    title: "Profile temperature",
+    path: `agents.profiles.${selected}.model.temperature`,
+    helpText: "Optional override temperature. Leave blank to inherit.",
+    placeholder: "(inherit global)",
+    step: "0.1",
     fieldErrors,
   });
 
@@ -1670,6 +1750,11 @@ function buildAgentsCategory(panel, fieldErrors) {
   appendNumberField({ parent: panel, query, title: "Subagent max tool iterations", path: "agents.subagent_defaults.max_tool_iterations", helpText: "0 uses default.", placeholder: "12", fieldErrors });
   appendSelectField({ parent: panel, query, title: "Subagent thinking mode", path: "agents.subagent_defaults.thinking_mode", helpText: "Controls subagent thinking output.", options: [{ value: "", label: "(inherit)" }, ...THINKING_MODES.map((mode) => ({ value: mode, label: mode }))], fieldErrors });
   appendSelectField({ parent: panel, query, title: "Subagent delegation mode", path: "agents.subagent_defaults.delegation_mode", helpText: "Controls subagent delegation behavior.", options: [{ value: "", label: "(inherit)" }, { value: "prompt_only", label: "prompt_only" }, { value: "tool_gated", label: "tool_gated" }, { value: "auto_execute", label: "auto_execute" }], fieldErrors });
+  const allowedTools = Array.isArray(settingsState.draftConfig?.agents?.subagent_defaults?.allowed_tools) ? settingsState.draftConfig.agents.subagent_defaults.allowed_tools : [];
+  const guardrail = document.createElement("p");
+  guardrail.className = allowedTools.length > 12 ? "settings-inline-error" : "muted";
+  guardrail.textContent = allowedTools.length > 12 ? "Warning: this subagent tool allowlist is broad. Narrower defaults are safer and easier to audit." : "Tip: keep subagent tool lists focused. Prefer narrower permissions and shorter timeouts.";
+  panel.append(guardrail);
 
   const overridesHeader = document.createElement("h4");
   overridesHeader.className = "settings-subheading";
@@ -1686,6 +1771,13 @@ function buildAgentsCategory(panel, fieldErrors) {
     appendListField({ parent: card, query, title: `${agentID} allowed tools`, path: `agents.subagent_overrides.${agentID}.allowed_tools`, helpText: "One tool per line.", placeholder: "fs.read\nagent.run", fieldErrors });
     appendNumberField({ parent: card, query, title: `${agentID} timeout ms`, path: `agents.subagent_overrides.${agentID}.timeout_ms`, helpText: "0 uses default.", placeholder: "30000", fieldErrors });
     appendSelectField({ parent: card, query, title: `${agentID} thinking mode`, path: `agents.subagent_overrides.${agentID}.thinking_mode`, helpText: "Optional override.", options: [{ value: "", label: "(inherit)" }, ...THINKING_MODES.map((mode) => ({ value: mode, label: mode }))], fieldErrors });
+    const overrideTools = Array.isArray(overrides[agentID]?.allowed_tools) ? overrides[agentID].allowed_tools : [];
+    if (overrideTools.length > 12) {
+      const warning = document.createElement("p");
+      warning.className = "settings-inline-error";
+      warning.textContent = "This override grants a broad tool set. Review whether every listed tool is truly needed.";
+      card.append(warning);
+    }
     panel.append(card);
   });
 }
@@ -2062,10 +2154,20 @@ async function validateConfigRemotely() {
   settingsState.validatePending = true;
   settingsState.saveError = null;
   settingsState.saveSuccess = "";
+  settingsState.saveAttempted = true;
   rerender();
   try {
-    await settingsState.apiClient.post("/api/admin/config/validate", settingsState.draftConfig);
-    settingsState.saveSuccess = "Validation passed.";
+    const payload = await settingsState.apiClient.post("/api/admin/config/validate", settingsState.draftConfig);
+    if (payload?.ok === false) {
+      settingsState.saveError = {
+        message: payload?.message || "Validation failed.",
+        status: 200,
+        code: "validate.failed",
+        details: { field_errors: payload?.field_errors || {} },
+      };
+    } else {
+      settingsState.saveSuccess = "Validation passed.";
+    }
   } catch (error) {
     settingsState.saveError = {
       message: error?.message || String(error),

@@ -1,4 +1,5 @@
-import { contextualHelpTopics, getHelpTopicParam, loadHelpTopics, searchHelpTopics, setHelpTopicInHash } from "../help/content.js";
+import { contextualHelpTopics, loadHelpTopics, searchHelpTopics } from "../help/content.js";
+import { renderMarkdownToFragment } from "../help/markdown.js";
 
 const LAYOUT_STORAGE_KEY = "dashboard.layout.p1.2";
 const THEME_STORAGE_KEY = "dashboard.theme";
@@ -100,11 +101,26 @@ function persistHelpDrawerPrefs(prefs) {
 }
 
 function highlightHelpMatch(text, query) {
-  const source = String(text || "");
+  const source = String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
   const q = String(query || "").trim();
   if (!q) return source;
   const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return source.replace(new RegExp(`(${escaped})`, "ig"), "<mark>$1</mark>");
+}
+
+function currentHelpHashTopic() {
+  const hash = window.location.hash || "";
+  const queryIndex = hash.indexOf("?");
+  if (queryIndex < 0) {
+    return "";
+  }
+  const params = new URLSearchParams(hash.slice(queryIndex + 1));
+  return String(params.get("topic") || "").trim();
 }
 
 export function createLayout({ root, routes, store, router, apiClient, inspectors }) {
@@ -114,7 +130,30 @@ export function createLayout({ root, routes, store, router, apiClient, inspector
   const helpDrawerPrefs = readHelpDrawerPrefs();
   let isNarrowScreen = window.matchMedia(NARROW_SCREEN_QUERY).matches;
   let helpTopics = [];
-  let helpSearch = "";
+  const helpDrawerState = {
+    search: "",
+    selectedTopicId: "",
+    renderKey: "",
+    topicsLoaded: false,
+    topicsLoading: false,
+    forceRender: true,
+  };
+
+  function requestHelpDrawerRender() {
+    helpDrawerState.forceRender = true;
+  }
+
+  function toggleHelpDrawer(forceOpen) {
+    helpDrawerPrefs.open = typeof forceOpen === "boolean" ? forceOpen : !helpDrawerPrefs.open;
+    requestHelpDrawerRender();
+    applyLayoutPrefs();
+    persistHelpDrawerPrefs(helpDrawerPrefs);
+    if (!helpDrawerPrefs.open) {
+      helpDrawer.innerHTML = "";
+      helpDrawerState.renderKey = "closed";
+      helpDrawerState.forceRender = false;
+    }
+  }
 
   const header = createElement("header", "shell-header");
   const titleWrap = createElement("div", "shell-header-title");
@@ -155,9 +194,7 @@ export function createLayout({ root, routes, store, router, apiClient, inspector
   helpToggle.type = "button";
   helpToggle.setAttribute("aria-label", "Toggle Help Drawer");
   helpToggle.addEventListener("click", () => {
-    helpDrawerPrefs.open = !helpDrawerPrefs.open;
-    applyLayoutPrefs();
-    persistHelpDrawerPrefs(helpDrawerPrefs);
+    toggleHelpDrawer();
     void renderHelpDrawer(store.getState());
   });
 
@@ -203,9 +240,7 @@ export function createLayout({ root, routes, store, router, apiClient, inspector
   helpBackdrop.type = "button";
   helpBackdrop.setAttribute("aria-label", "Close help drawer");
   helpBackdrop.addEventListener("click", () => {
-    helpDrawerPrefs.open = false;
-    applyLayoutPrefs();
-    persistHelpDrawerPrefs(helpDrawerPrefs);
+    toggleHelpDrawer(false);
   });
 
   root.append(header, shellGrid, footer, inspectorBackdrop, helpDrawerResizer, helpDrawer, helpBackdrop);
@@ -371,17 +406,13 @@ export function createLayout({ root, routes, store, router, apiClient, inspector
       return;
     }
     if (event.key === "Escape" && helpDrawerPrefs.open) {
-      helpDrawerPrefs.open = false;
-      applyLayoutPrefs();
-      persistHelpDrawerPrefs(helpDrawerPrefs);
+      toggleHelpDrawer(false);
       return;
     }
 
-    if (event.key === "?" && !isTypingContext) {
+    if ((event.key === "F1" || event.key === "?" || (event.key === "/" && event.shiftKey)) && !isTypingContext) {
       event.preventDefault();
-      helpDrawerPrefs.open = !helpDrawerPrefs.open;
-      applyLayoutPrefs();
-      persistHelpDrawerPrefs(helpDrawerPrefs);
+      toggleHelpDrawer();
       void renderHelpDrawer(store.getState());
       return;
     }
@@ -447,13 +478,46 @@ export function createLayout({ root, routes, store, router, apiClient, inspector
   }
 
   async function ensureHelpTopics() {
-    if (!helpTopics.length) {
+    if (!helpTopics.length && !helpDrawerState.topicsLoading) {
+      helpDrawerState.topicsLoading = true;
+      requestHelpDrawerRender();
       helpTopics = await loadHelpTopics();
+      helpDrawerState.topicsLoaded = true;
+      helpDrawerState.topicsLoading = false;
+      requestHelpDrawerRender();
     }
     return helpTopics;
   }
 
   async function renderHelpDrawer(state) {
+    if (!helpDrawerPrefs.open) {
+      if (helpDrawerState.renderKey !== "closed" || helpDrawerState.forceRender) {
+        helpDrawer.innerHTML = "";
+        helpDrawerState.renderKey = "closed";
+        helpDrawerState.forceRender = false;
+      }
+      return;
+    }
+
+    if (state.route === "/help") {
+      helpDrawerState.selectedTopicId = currentHelpHashTopic() || helpDrawerState.selectedTopicId || "getting-started";
+    } else if (!helpDrawerState.selectedTopicId) {
+      helpDrawerState.selectedTopicId = "getting-started";
+    }
+
+    const renderKey = JSON.stringify({
+      open: helpDrawerPrefs.open,
+      route: state.route,
+      search: helpDrawerState.search,
+      selected: helpDrawerState.selectedTopicId,
+      topicsLoaded: helpDrawerState.topicsLoaded,
+      topicsLoading: helpDrawerState.topicsLoading,
+    });
+    if (!helpDrawerState.forceRender && helpDrawerState.renderKey === renderKey) {
+      return;
+    }
+    helpDrawerState.renderKey = renderKey;
+    helpDrawerState.forceRender = false;
     helpDrawer.innerHTML = "";
     const title = createElement("div", "help-drawer-header");
     const titleText = createElement("div", "", "");
@@ -461,7 +525,8 @@ export function createLayout({ root, routes, store, router, apiClient, inspector
     const openFull = createElement("button", "layout-toggle", "Open full Help Center");
     openFull.type = "button";
     openFull.addEventListener("click", () => {
-      router.navigate(`/help${getHelpTopicParam() ? `?topic=${encodeURIComponent(getHelpTopicParam())}` : ""}`);
+      const topicParam = helpDrawerState.selectedTopicId ? `?topic=${encodeURIComponent(helpDrawerState.selectedTopicId)}` : "";
+      router.navigate(`/help${topicParam}`);
     });
     title.append(titleText, openFull);
     helpDrawer.append(title);
@@ -471,14 +536,15 @@ export function createLayout({ root, routes, store, router, apiClient, inspector
     searchInput.type = "search";
     searchInput.className = "settings-input";
     searchInput.placeholder = "Search help topics";
-    searchInput.value = helpSearch;
+    searchInput.value = helpDrawerState.search;
     searchInput.addEventListener("input", () => {
-      helpSearch = searchInput.value;
+      helpDrawerState.search = searchInput.value;
+      requestHelpDrawerRender();
       void renderHelpDrawer(state).then(() => {
         const next = helpDrawer.querySelector(".help-drawer-search input");
         next?.focus();
         if (typeof next?.setSelectionRange === "function") {
-          next.setSelectionRange(helpSearch.length, helpSearch.length);
+          next.setSelectionRange(helpDrawerState.search.length, helpDrawerState.search.length);
         }
       });
     });
@@ -487,13 +553,19 @@ export function createLayout({ root, routes, store, router, apiClient, inspector
 
     const body = createElement("div", "help-drawer-body");
     try {
+      if (helpDrawerState.topicsLoading && !helpDrawerState.topicsLoaded) {
+        body.append(createElement("p", "muted", "Loading help topics..."));
+        helpDrawer.append(body);
+        void ensureHelpTopics().then(() => renderHelpDrawer(state));
+        return;
+      }
       const topics = await ensureHelpTopics();
       const contextual = contextualHelpTopics(topics, state.route).slice(0, 6);
-      const matches = searchHelpTopics(topics, helpSearch).slice(0, helpSearch ? 8 : 5);
+      const matches = searchHelpTopics(topics, helpDrawerState.search).slice(0, helpDrawerState.search ? 8 : 5);
       const sections = [
         { title: "Contextual help", items: contextual },
         { title: "Quick links", items: topics.filter((item) => ["discord-bot-setup", "providers-and-models", "secrets-guide", "custom-dashboards", "runs-and-debugging"].includes(item.id)) },
-        { title: helpSearch ? "Search results" : "Top topics", items: matches },
+        { title: helpDrawerState.search ? "Search results" : "Top topics", items: matches },
       ];
       sections.forEach((section) => {
         const details = document.createElement("details");
@@ -503,17 +575,37 @@ export function createLayout({ root, routes, store, router, apiClient, inspector
         summary.textContent = section.title;
         details.append(summary);
         section.items.forEach((item) => {
-          const button = createElement("button", "help-topic-link", item.title);
+          const button = createElement("button", `help-topic-link ${item.id === helpDrawerState.selectedTopicId ? "active" : ""}`.trim(), item.title);
           button.type = "button";
-          button.innerHTML = `${highlightHelpMatch(item.title, helpSearch)}<span class="muted">${item.category}</span>`;
+          button.innerHTML = `${highlightHelpMatch(item.title, helpDrawerState.search)}<span class="muted">${item.category}</span>`;
           button.addEventListener("click", () => {
-            setHelpTopicInHash(item.id);
-            router.navigate(`/help?topic=${encodeURIComponent(item.id)}`);
+            helpDrawerState.selectedTopicId = item.id;
+            requestHelpDrawerRender();
+            void renderHelpDrawer(state);
           });
           details.append(button);
         });
         body.append(details);
       });
+
+      const selectedTopic = topics.find((item) => item.id === helpDrawerState.selectedTopicId) || contextual[0] || matches[0] || topics[0] || null;
+      if (selectedTopic) {
+        helpDrawerState.selectedTopicId = selectedTopic.id;
+        const preview = createElement("section", "help-drawer-preview");
+        const previewTitle = createElement("h4", "", selectedTopic.title);
+        const previewMeta = createElement("p", "muted", `Preview · ${selectedTopic.category}`);
+        const previewBody = createElement("div", "help-markdown");
+        previewBody.append(renderMarkdownToFragment(selectedTopic.body));
+        const previewActions = createElement("div", "help-topic-actions");
+        const openTopic = createElement("button", "layout-toggle", "Open in Help Center");
+        openTopic.type = "button";
+        openTopic.addEventListener("click", () => {
+          router.navigate(`/help?topic=${encodeURIComponent(selectedTopic.id)}`);
+        });
+        previewActions.append(openTopic);
+        preview.append(previewTitle, previewMeta, previewActions, previewBody);
+        body.append(preview);
+      }
     } catch (error) {
       body.append(createElement("p", "settings-inline-error", error instanceof Error ? error.message : String(error)));
     }
@@ -612,7 +704,9 @@ export function createLayout({ root, routes, store, router, apiClient, inspector
     bugLink.href = buildBugReportURL(state);
     await renderContent(state);
     await renderInspector(state);
-    await renderHelpDrawer(state);
+    if (helpDrawerPrefs.open) {
+      await renderHelpDrawer(state);
+    }
   }
 
   helpDrawerResizer.addEventListener("pointerdown", (event) => {

@@ -72,6 +72,11 @@ Help Drawer features:
 - quick links to major setup and troubleshooting guides
 - mobile-friendly full-screen overlay behavior
 
+Developer note:
+
+- Help topics live in `internal/channels/dashboard/ui/help/*.md`
+- They are embedded and served by the dashboard static asset handler under `/dashboard/static/help/*.md`
+
 ## Custom Dashboards
 
 `Custom Dashboards` is a top-level dashboard route for building operator-specific layouts.
@@ -154,7 +159,7 @@ Config API ergonomics:
 3. Switch between at least three routes and confirm the drawer stays open
 4. Confirm contextual help changes for `Settings`, `Secrets`, and `Custom Dashboards`
 5. Press `Esc` and confirm the drawer closes
-6. Press `?` while not typing and confirm the drawer toggles
+6. Press `?` or `F1` while not typing and confirm the drawer toggles
 7. Open `Help` from the drawer and confirm topic deep links work
 8. Search for `discord`, `provider`, and `scheduler` and confirm relevant topics appear quickly
 9. Copy a topic link and confirm it opens the correct `Help` topic directly

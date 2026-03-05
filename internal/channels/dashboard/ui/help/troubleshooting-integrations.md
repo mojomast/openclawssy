@@ -24,7 +24,7 @@ route_hints: /settings, /secrets, /help
 
 ## Provider connectivity problems
 
-- run `Test provider`
+- run `Test provider` to check endpoint reachability from the dashboard
 - verify `base_url`
 - verify `api_key_env`
 - verify the underlying key or token is actually present in the running environment
