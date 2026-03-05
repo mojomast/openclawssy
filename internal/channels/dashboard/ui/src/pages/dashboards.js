@@ -1,5 +1,9 @@
 import { fetchRecentRuns, renderCompactRunsList } from "./runs.js";
 import { fetchSchedulerJobs, renderCompactSchedulerJobs } from "./scheduler.js";
+import { fetchRecentSessions, renderCompactSessionsList } from "./sessions.js";
+import { fetchDocsSummary, renderCompactDocsSummary } from "./docs.js";
+import { fetchSkillsSummary, renderCompactSkillsSummary } from "./skills.js";
+import { fetchSandboxSummary, renderCompactSandboxSummary } from "./sandbox.js";
 import { captureFocusSnapshot, restoreFocusSnapshot } from "../ui/focus_restore.js";
 
 const STORAGE_KEY = "dashboard.custom_dashboards.p1";
@@ -243,9 +247,26 @@ async function fetchConfig() {
   return dashboardsState.apiClient.get("/api/admin/config");
 }
 
+async function fetchAdminStatus() {
+	return dashboardsState.apiClient.get("/api/admin/status");
+}
+
 async function fetchSecretsKeys() {
   const payload = await dashboardsState.apiClient.get("/api/admin/secrets");
   return Array.isArray(payload?.keys) ? payload.keys : [];
+}
+
+function renderKeyValueList(container, rows) {
+	container.innerHTML = "";
+	const list = document.createElement("div");
+	list.className = "widget-list";
+	rows.forEach((item) => {
+		const row = document.createElement("div");
+		row.className = "widget-list-item static";
+		row.innerHTML = `<strong>${item.label}</strong><span>${item.value}</span>`;
+		list.append(row);
+	});
+	container.append(list);
 }
 
 async function sendQuickPrompt(message, agentID = "default") {
@@ -300,6 +321,22 @@ const WIDGETS = [
     async render({ body, store }) {
       const state = store.getState().adminStatus || {};
       body.innerHTML = `<p><strong>${state.provider || "unknown"}</strong> / ${state.model || "unknown"}</p><p class="muted">Runs: ${Number(state.run_count) || 0}</p>`;
+    },
+  }),
+  widgetSpec({
+    key: "runtime.overview",
+    label: "Runtime: Overview",
+    description: "Run count and channel enablement snapshot.",
+    sourcePath: "/chat",
+    defaultW: 4,
+    defaultH: 3,
+    async render({ body }) {
+      const status = await fetchAdminStatus();
+      renderKeyValueList(body, [
+        { label: "Runs", value: String(Number(status?.run_count) || 0) },
+        { label: "Discord", value: status?.discord_enabled ? "enabled" : "disabled" },
+        { label: "Telegram", value: status?.telegram_enabled ? "enabled" : "disabled" },
+      ]);
     },
   }),
   widgetSpec({
@@ -367,6 +404,37 @@ const WIDGETS = [
     },
   }),
   widgetSpec({
+    key: "secrets.discord_token",
+    label: "Secrets: Discord token",
+    description: "Focused Discord/Telegram token presence widget.",
+    sourcePath: "/secrets",
+    defaultW: 4,
+    defaultH: 2,
+    async render({ body }) {
+      const keys = await fetchSecretsKeys();
+      renderKeyValueList(body, [
+        { label: "discord/bot_token", value: keys.includes("discord/bot_token") ? "present" : "missing" },
+        { label: "telegram/bot_token", value: keys.includes("telegram/bot_token") ? "present" : "missing" },
+      ]);
+    },
+  }),
+  widgetSpec({
+    key: "secrets.conventions",
+    label: "Secrets: Key conventions",
+    description: "Recommended secret naming patterns.",
+    sourcePath: "/secrets",
+    defaultW: 5,
+    defaultH: 3,
+    async render({ body }) {
+      renderKeyValueList(body, [
+        { label: "Discord", value: "discord/bot_token" },
+        { label: "Telegram", value: "telegram/bot_token" },
+        { label: "OpenAI", value: "OPENAI_API_KEY" },
+        { label: "OpenRouter", value: "OPENROUTER_API_KEY" },
+      ]);
+    },
+  }),
+  widgetSpec({
     key: "settings.summary",
     label: "Settings: Model summary + Agent overrides summary",
     description: "Global model plus profile overview.",
@@ -377,6 +445,107 @@ const WIDGETS = [
       const cfg = await fetchConfig();
       const profiles = cfg?.agents?.profiles && typeof cfg.agents.profiles === "object" ? Object.keys(cfg.agents.profiles) : [];
       body.innerHTML = `<p><strong>${cfg?.model?.provider || "unknown"}</strong> / ${cfg?.model?.name || "unknown"}</p><p class="muted">Global max_tokens: ${cfg?.model?.max_tokens || 0}</p><p class="muted">Agent profiles with overrides: ${profiles.length}</p>`;
+    },
+  }),
+  widgetSpec({
+    key: "settings.providers",
+    label: "Settings: Provider endpoints",
+    description: "Base URLs and env references for providers.",
+    sourcePath: "/settings?category=model",
+    defaultW: 6,
+    defaultH: 4,
+    async render({ body }) {
+      const cfg = await fetchConfig();
+      const rows = ["openai", "openrouter", "requesty", "zai", "generic"].map((provider) => ({
+        label: provider,
+        value: `${cfg?.providers?.[provider]?.base_url || "(default)"} · ${cfg?.providers?.[provider]?.api_key_env || "(no env ref)"}`,
+      }));
+      renderKeyValueList(body, rows);
+    },
+  }),
+  widgetSpec({
+    key: "settings.agents",
+    label: "Settings: Agents snapshot",
+    description: "Enabled agents and override count.",
+    sourcePath: "/settings?category=agents",
+    defaultW: 5,
+    defaultH: 3,
+    async render({ body }) {
+      const cfg = await fetchConfig();
+      const profiles = cfg?.agents?.profiles && typeof cfg.agents.profiles === "object" ? Object.entries(cfg.agents.profiles) : [];
+      const overrideCount = profiles.filter(([, profile]) => profile?.model && (profile.model.provider || profile.model.name || profile.model.max_tokens || profile.model.temperature)).length;
+      renderKeyValueList(body, [
+        { label: "Enabled agent ids", value: String((cfg?.agents?.enabled_agent_ids || []).length) },
+        { label: "Profiles", value: String(profiles.length) },
+        { label: "Model overrides", value: String(overrideCount) },
+      ]);
+    },
+  }),
+  widgetSpec({
+    key: "settings.subagents",
+    label: "Settings: Subagent defaults",
+    description: "Subagent safety and delegation snapshot.",
+    sourcePath: "/settings?category=agents",
+    defaultW: 5,
+    defaultH: 3,
+    async render({ body }) {
+      const cfg = await fetchConfig();
+      const d = cfg?.agents?.subagent_defaults || {};
+      renderKeyValueList(body, [
+        { label: "Thinking mode", value: d.thinking_mode || "(default)" },
+        { label: "Delegation mode", value: d.delegation_mode || "(default)" },
+        { label: "Timeout ms", value: String(d.timeout_ms ?? 0) },
+        { label: "Allowed tools", value: String((d.allowed_tools || []).length) },
+      ]);
+    },
+  }),
+  widgetSpec({
+    key: "settings.memory",
+    label: "Settings: Memory summary",
+    description: "Memory configuration overview.",
+    sourcePath: "/settings?category=memory",
+    defaultW: 4,
+    defaultH: 3,
+    async render({ body }) {
+      const cfg = await fetchConfig();
+      const memory = cfg?.memory || {};
+      renderKeyValueList(body, [
+        { label: "Enabled", value: memory.enabled ? "yes" : "no" },
+        { label: "Embeddings", value: memory.embeddings_enabled ? "on" : "off" },
+        { label: "Embedding provider", value: memory.embedding_provider || "(none)" },
+        { label: "Max working items", value: String(memory.max_working_items ?? 0) },
+      ]);
+    },
+  }),
+  widgetSpec({
+    key: "settings.network",
+    label: "Settings: Network policy",
+    description: "Allowed domains and shell status.",
+    sourcePath: "/settings?category=network",
+    defaultW: 4,
+    defaultH: 3,
+    async render({ body }) {
+      const cfg = await fetchConfig();
+      renderKeyValueList(body, [
+        { label: "Allowed domains", value: String((cfg?.network?.allowed_domains || []).length) },
+        { label: "Shell exec", value: cfg?.shell?.enable_exec ? "enabled" : "disabled" },
+        { label: "Sandbox", value: cfg?.sandbox?.active ? `${cfg?.sandbox?.provider || "active"}` : "inactive" },
+      ]);
+    },
+  }),
+  widgetSpec({
+    key: "settings.scheduler",
+    label: "Settings: Scheduler config",
+    description: "Scheduler limits and catch-up policy.",
+    sourcePath: "/settings?category=scheduler",
+    defaultW: 4,
+    defaultH: 2,
+    async render({ body }) {
+      const cfg = await fetchConfig();
+      renderKeyValueList(body, [
+        { label: "Catch up", value: cfg?.scheduler?.catch_up ? "enabled" : "disabled" },
+        { label: "Max concurrent jobs", value: String(cfg?.scheduler?.max_concurrent_jobs ?? 0) },
+      ]);
     },
   }),
   widgetSpec({
@@ -391,6 +560,155 @@ const WIDGETS = [
       const discordPresent = keys.includes("discord/bot_token");
       const telegramPresent = keys.includes("telegram/bot_token");
       body.innerHTML = `<p><strong>Discord</strong>: ${cfg?.discord?.enabled ? "enabled" : "disabled"} · token ${discordPresent ? "present" : "missing"}</p><p><strong>Telegram</strong>: ${cfg?.telegram?.enabled ? "enabled" : "disabled"} · token ${telegramPresent ? "present" : "missing"}</p>`;
+    },
+  }),
+  widgetSpec({
+    key: "sessions.recent",
+    label: "Sessions: Recent",
+    description: "Recent chat sessions and activity.",
+    sourcePath: "/sessions",
+    defaultW: 6,
+    defaultH: 3,
+    async render({ body }) {
+      const sessions = await fetchRecentSessions(dashboardsState.apiClient, 5);
+      renderCompactSessionsList(body, sessions, { limit: 5, onOpen: () => dashboardsState.router.navigate("/sessions") });
+    },
+  }),
+  widgetSpec({
+    key: "sessions.overview",
+    label: "Sessions: Overview",
+    description: "Total recent sessions and latest activity.",
+    sourcePath: "/sessions",
+    defaultW: 4,
+    defaultH: 2,
+    async render({ body }) {
+      const sessions = await fetchRecentSessions(dashboardsState.apiClient, 10);
+      const latest = sessions[0];
+      renderKeyValueList(body, [
+        { label: "Recent sessions", value: String(sessions.length) },
+        { label: "Latest", value: latest ? `${latest.title || latest.session_id} · ${latest.agent_id || "default"}` : "none" },
+      ]);
+    },
+  }),
+  widgetSpec({
+    key: "skills.summary",
+    label: "Skills: Summary",
+    description: "Installed and activated skills by agent.",
+    sourcePath: "/skills",
+    defaultW: 4,
+    defaultH: 3,
+    async render({ body, widgetState }) {
+      const summary = await fetchSkillsSummary(dashboardsState.apiClient, widgetState.agent_id || "default");
+      renderCompactSkillsSummary(body, summary);
+    },
+    configure({ widget }) {
+      const next = window.prompt("Agent id for skills summary", String(widget.widget_state.agent_id || "default"));
+      if (next !== null) {
+        widget.widget_state.agent_id = next.trim() || "default";
+      }
+    },
+  }),
+  widgetSpec({
+    key: "skills.active_list",
+    label: "Skills: Active list",
+    description: "Shows active skills for an agent.",
+    sourcePath: "/skills",
+    defaultW: 4,
+    defaultH: 3,
+    async render({ body, widgetState }) {
+      const summary = await fetchSkillsSummary(dashboardsState.apiClient, widgetState.agent_id || "default");
+      const active = summary?.activated_skills || [];
+      if (!active.length) {
+        body.innerHTML = '<p class="muted">No active skills.</p>';
+        return;
+      }
+      renderKeyValueList(body, active.slice(0, 6).map((item) => ({ label: item, value: `active for ${summary.agent_id}` })));
+    },
+    configure({ widget }) {
+      const next = window.prompt("Agent id for active skills widget", String(widget.widget_state.agent_id || "default"));
+      if (next !== null) {
+        widget.widget_state.agent_id = next.trim() || "default";
+      }
+    },
+  }),
+  widgetSpec({
+    key: "docs.summary",
+    label: "Docs: Agent prompt docs",
+    description: "Compact overview of agent doc files.",
+    sourcePath: "/docs",
+    defaultW: 4,
+    defaultH: 3,
+    async render({ body, widgetState }) {
+      const summary = await fetchDocsSummary(dashboardsState.apiClient, widgetState.agent_id || "default");
+      renderCompactDocsSummary(body, summary);
+    },
+    configure({ widget }) {
+      const next = window.prompt("Agent id for docs summary", String(widget.widget_state.agent_id || "default"));
+      if (next !== null) {
+        widget.widget_state.agent_id = next.trim() || "default";
+      }
+    },
+  }),
+  widgetSpec({
+    key: "docs.doc_list",
+    label: "Docs: Top files",
+    description: "Lists key prompt/control docs for an agent.",
+    sourcePath: "/docs",
+    defaultW: 4,
+    defaultH: 3,
+    async render({ body, widgetState }) {
+      const summary = await fetchDocsSummary(dashboardsState.apiClient, widgetState.agent_id || "default");
+      const docs = summary?.documents || [];
+      if (!docs.length) {
+        body.innerHTML = '<p class="muted">No docs found.</p>';
+        return;
+      }
+      renderKeyValueList(body, docs.slice(0, 6).map((doc) => ({ label: doc.name, value: doc.exists ? "present" : "missing" })));
+    },
+    configure({ widget }) {
+      const next = window.prompt("Agent id for doc list widget", String(widget.widget_state.agent_id || "default"));
+      if (next !== null) {
+        widget.widget_state.agent_id = next.trim() || "default";
+      }
+    },
+  }),
+  widgetSpec({
+    key: "sandbox.summary",
+    label: "Sandbox: Status",
+    description: "Docker/local sandbox health and inventory.",
+    sourcePath: "/sandbox",
+    defaultW: 4,
+    defaultH: 3,
+    async render({ body, widgetState }) {
+      const summary = await fetchSandboxSummary(dashboardsState.apiClient, widgetState.agent_id || "default");
+      renderCompactSandboxSummary(body, summary);
+    },
+    configure({ widget }) {
+      const next = window.prompt("Agent id for sandbox summary", String(widget.widget_state.agent_id || "default"));
+      if (next !== null) {
+        widget.widget_state.agent_id = next.trim() || "default";
+      }
+    },
+  }),
+  widgetSpec({
+    key: "sandbox.inventory",
+    label: "Sandbox: Images & volumes",
+    description: "Counts available sandbox images and volumes.",
+    sourcePath: "/sandbox",
+    defaultW: 4,
+    defaultH: 2,
+    async render({ body, widgetState }) {
+      const summary = await fetchSandboxSummary(dashboardsState.apiClient, widgetState.agent_id || "default");
+      renderKeyValueList(body, [
+        { label: "Images", value: String((summary?.images || []).length) },
+        { label: "Volumes", value: String((summary?.volumes || []).length) },
+      ]);
+    },
+    configure({ widget }) {
+      const next = window.prompt("Agent id for sandbox inventory widget", String(widget.widget_state.agent_id || "default"));
+      if (next !== null) {
+        widget.widget_state.agent_id = next.trim() || "default";
+      }
     },
   }),
 ];

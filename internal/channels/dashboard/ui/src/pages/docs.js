@@ -68,6 +68,37 @@ function normalizeDocuments(input) {
   return normalized;
 }
 
+export async function fetchDocsSummary(apiClient, agentID = "default") {
+	const payload = await apiClient.get(`/api/admin/agent/docs?agent_id=${encodeURIComponent(asText(agentID).trim() || "default")}`);
+	const docs = normalizeDocuments(payload?.documents);
+	return {
+		agent_id: asText(payload?.agent_id).trim() || "default",
+		documents: docs,
+		existing_count: docs.filter((item) => item.exists).length,
+	};
+}
+
+export function renderCompactDocsSummary(container, summary) {
+	container.innerHTML = "";
+	const docs = Array.isArray(summary?.documents) ? summary.documents : [];
+	const list = document.createElement("div");
+	list.className = "widget-list";
+	if (!docs.length) {
+		const empty = document.createElement("p");
+		empty.className = "muted";
+		empty.textContent = "No agent docs found.";
+		container.append(empty);
+		return;
+	}
+	list.append(Object.assign(document.createElement("div"), { className: "widget-list-item static", textContent: `Agent: ${summary?.agent_id || "default"}` }));
+	list.append(Object.assign(document.createElement("div"), { className: "widget-list-item static", textContent: `Docs present: ${summary?.existing_count || 0}/${docs.length}` }));
+	const row = document.createElement("div");
+	row.className = "widget-list-item static";
+	row.textContent = `Top docs: ${docs.slice(0, 3).map((doc) => doc.name).join(", ")}`;
+	list.append(row);
+	container.append(list);
+}
+
 function getSelectedDocument() {
   return docsState.documents.find((item) => item.name === docsState.selectedDocName) || null;
 }

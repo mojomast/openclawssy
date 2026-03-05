@@ -41,6 +41,36 @@ function formatDateTime(value) {
   return parsed.toLocaleString();
 }
 
+export async function fetchRecentSessions(apiClient, limit = 5) {
+	const payload = await apiClient.get(buildSessionsListQuery({ limit, offset: 0 }));
+	return Array.isArray(payload?.sessions) ? payload.sessions : [];
+}
+
+export function renderCompactSessionsList(container, sessions, options = {}) {
+	container.innerHTML = "";
+	const items = Array.isArray(sessions) ? sessions : [];
+	if (!items.length) {
+		const empty = document.createElement("p");
+		empty.className = "muted";
+		empty.textContent = "No chat sessions yet.";
+		container.append(empty);
+		return;
+	}
+	const list = document.createElement("div");
+	list.className = "widget-list";
+	items.slice(0, options.limit || 5).forEach((session) => {
+		const row = document.createElement("button");
+		row.type = "button";
+		row.className = "widget-list-item";
+		row.innerHTML = `<strong>${session.title || session.session_id || "session"}</strong><span>${session.agent_id || "default"} · ${formatDateTime(session.updated_at)}</span>`;
+		if (typeof options.onOpen === "function") {
+			row.addEventListener("click", () => options.onOpen(session));
+		}
+		list.append(row);
+	});
+	container.append(list);
+}
+
 function compactText(value, maxChars) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   if (!text) {

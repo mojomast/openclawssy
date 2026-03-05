@@ -60,6 +60,41 @@ function badge(text, variant) {
   return b;
 }
 
+export async function fetchSandboxSummary(apiClient, agentId = "default") {
+	const sandboxApi = createSandboxApi(apiClient);
+	const [status, images, volumes] = await Promise.all([
+		sandboxApi.getStatus(agentId),
+		sandboxApi.getImages().catch(() => ({ images: [] })),
+		sandboxApi.getVolumes().catch(() => ({ volumes: [] })),
+	]);
+	return {
+		agent_id: agentId,
+		status,
+		images: Array.isArray(images?.images) ? images.images : [],
+		volumes: Array.isArray(volumes?.volumes) ? volumes.volumes : [],
+	};
+}
+
+export function renderCompactSandboxSummary(container, summary) {
+	container.innerHTML = "";
+	const status = summary?.status || {};
+	const lines = document.createElement("div");
+	lines.className = "widget-list";
+	[
+		`Provider: ${status?.provider || "unknown"}`,
+		`Agent: ${summary?.agent_id || "default"}`,
+		`Container: ${status?.container?.running ? "running" : "stopped"}`,
+		`Images: ${Array.isArray(summary?.images) ? summary.images.length : 0}`,
+		`Volumes: ${Array.isArray(summary?.volumes) ? summary.volumes.length : 0}`,
+	].forEach((text) => {
+		const row = document.createElement("div");
+		row.className = "widget-list-item static";
+		row.textContent = text;
+		lines.append(row);
+	});
+	container.append(lines);
+}
+
 function spinner() {
   const s = el("span", "sandbox-spinner");
   s.setAttribute("aria-label", "Loading");

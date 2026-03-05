@@ -34,10 +34,27 @@ Custom Dashboards let you build your own operator workspace from reusable widget
 - Runs: Recent
 - Scheduler: Jobs
 - Runtime Status
+- Runtime: Overview
 - Chat: Quick prompt
+- Sessions: Recent
 - Secrets: Presence summary
+- Secrets: Discord token
+- Secrets: Key conventions
 - Settings: Model summary + Agent overrides summary
+- Settings: Provider endpoints
+- Settings: Agents snapshot
+- Settings: Subagent defaults
+- Settings: Memory summary
+- Settings: Network policy
+- Settings: Scheduler config
 - Discord/Telegram status
+- Sessions: Overview
+- Skills: Summary
+- Skills: Active list
+- Docs: Agent prompt docs
+- Docs: Top files
+- Sandbox: Status
+- Sandbox: Images & volumes
 
 ## Keyboard support
 

@@ -35,6 +35,36 @@ function setStatus(text, kind = "") {
   skillsState.statusKind = asText(kind);
 }
 
+export async function fetchSkillsSummary(apiClient, agentID = "default") {
+	const payload = await apiClient.get(`/api/admin/skills?agent_id=${encodeURIComponent(normalizeName(agentID) || "default")}`);
+	return {
+		agent_id: normalizeName(payload?.agent_id) || "default",
+		installable: Array.isArray(payload?.installable) ? payload.installable : [],
+		installed_skills: Array.isArray(payload?.installed_skills) ? payload.installed_skills.map((item) => normalizeName(item)).filter(Boolean) : [],
+		activated_skills: Array.isArray(payload?.activated_skills) ? payload.activated_skills.map((item) => normalizeName(item)).filter(Boolean) : [],
+	};
+}
+
+export function renderCompactSkillsSummary(container, summary) {
+	container.innerHTML = "";
+	const installed = Array.isArray(summary?.installed_skills) ? summary.installed_skills : [];
+	const active = Array.isArray(summary?.activated_skills) ? summary.activated_skills : [];
+	const lines = document.createElement("div");
+	lines.className = "widget-list";
+	[
+		`Agent: ${summary?.agent_id || "default"}`,
+		`Installed skills: ${installed.length}`,
+		`Activated skills: ${active.length}`,
+		active.length ? `Active: ${active.slice(0, 3).join(", ")}` : "No active skills",
+	].forEach((text) => {
+		const row = document.createElement("div");
+		row.className = "widget-list-item static";
+		row.textContent = text;
+		lines.append(row);
+	});
+	container.append(lines);
+}
+
 async function loadSkills(options = {}) {
   const { keepStatus = false } = options;
   skillsState.loading = true;
