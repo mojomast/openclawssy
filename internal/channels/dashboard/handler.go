@@ -1755,28 +1755,50 @@ func (h *Handler) readAgentDoc(agentID, name string) (agentDocPayload, error) {
 }
 
 func (h *Handler) listDashboardAgentIDs() []string {
-	agentsDir := filepath.Join(h.rootDir, ".openclawssy", "agents")
-	entries, err := os.ReadDir(agentsDir)
-	if err != nil {
-		return []string{"default"}
+	ids := map[string]struct{}{"default": {}}
+
+	cfgPath := filepath.Join(h.rootDir, ".openclawssy", "config.json")
+	if cfg, err := config.LoadOrDefault(cfgPath); err == nil {
+		for _, agentID := range cfg.Agents.EnabledAgentIDs {
+			if normalized, err := normalizeDashboardAgentID(agentID); err == nil {
+				ids[normalized] = struct{}{}
+			}
+		}
+		for agentID := range cfg.Agents.Profiles {
+			if normalized, err := normalizeDashboardAgentID(agentID); err == nil {
+				ids[normalized] = struct{}{}
+			}
+		}
+		for _, agentID := range []string{cfg.Chat.DefaultAgentID, cfg.Discord.DefaultAgentID, cfg.Telegram.DefaultAgentID} {
+			if normalized, err := normalizeDashboardAgentID(agentID); err == nil {
+				ids[normalized] = struct{}{}
+			}
+		}
 	}
 
-	ids := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
+	agentsDir := filepath.Join(h.rootDir, ".openclawssy", "agents")
+	entries, err := os.ReadDir(agentsDir)
+	if err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			id, err := normalizeDashboardAgentID(entry.Name())
+			if err != nil {
+				continue
+			}
+			ids[id] = struct{}{}
 		}
-		id, err := normalizeDashboardAgentID(entry.Name())
-		if err != nil {
-			continue
-		}
-		ids = append(ids, id)
 	}
 	if len(ids) == 0 {
 		return []string{"default"}
 	}
-	sort.Strings(ids)
-	return ids
+	out := make([]string, 0, len(ids))
+	for id := range ids {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func resolveDashboardDocNames(raw string) (displayName string, resolvedName string, aliasFor string, ok bool) {

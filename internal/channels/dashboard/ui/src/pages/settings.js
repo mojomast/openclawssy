@@ -39,6 +39,7 @@ const settingsState = {
   advancedRaw: "",
   advancedRawError: "",
   selectedAgentProfile: "",
+  availableAgentIDs: [],
   lastAppliedRouteHint: "",
   discordSecretPresent: false,
   discordSecretLoading: false,
@@ -91,6 +92,37 @@ function parseLineList(value) {
     .split(/[\s,;]+/)
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+}
+
+function sortedUniqueAgentIDs(values) {
+  const seen = new Set();
+  (Array.isArray(values) ? values : []).forEach((value) => {
+    const agentID = asTrimmedString(value);
+    if (agentID) {
+      seen.add(agentID);
+    }
+  });
+  if (!seen.has("default")) {
+    seen.add("default");
+  }
+  return Array.from(seen).sort((left, right) => left.localeCompare(right));
+}
+
+function collectKnownAgentIDs() {
+  const cfg = settingsState.draftConfig || {};
+  return sortedUniqueAgentIDs([
+    ...(settingsState.availableAgentIDs || []),
+    ...(Array.isArray(cfg?.agents?.enabled_agent_ids) ? cfg.agents.enabled_agent_ids : []),
+    ...Object.keys(cfg?.agents?.profiles || {}),
+    cfg?.chat?.default_agent_id,
+    cfg?.discord?.default_agent_id,
+    cfg?.telegram?.default_agent_id,
+  ]);
+}
+
+async function loadAvailableAgents() {
+  const payload = await settingsState.apiClient.get("/api/admin/agents?channel=dashboard&user_id=dashboard_user&room_id=dashboard");
+  settingsState.availableAgentIDs = sortedUniqueAgentIDs(payload?.agents);
 }
 
 function resetDiscordSecretFeedback() {
@@ -1373,8 +1405,7 @@ function buildSandboxCategory(panel, fieldErrors) {
 }
 
 function resolveSelectedProfileKey() {
-  const profiles = settingsState.draftConfig?.agents?.profiles || {};
-  const keys = Object.keys(profiles).sort();
+  const keys = collectKnownAgentIDs();
   if (settingsState.selectedAgentProfile && keys.includes(settingsState.selectedAgentProfile)) {
     return settingsState.selectedAgentProfile;
   }
@@ -1388,12 +1419,6 @@ function resolveSelectedProfileKey() {
     return keys[0];
   }
   settingsState.selectedAgentProfile = preferred;
-  const next = cloneJSON(settingsState.draftConfig);
-  next.agents = next.agents || {};
-  next.agents.profiles = next.agents.profiles || {};
-  next.agents.profiles[preferred] = next.agents.profiles[preferred] || {};
-  settingsState.draftConfig = normalizeConfigShape(next);
-  settingsState.advancedRaw = `${JSON.stringify(settingsState.draftConfig, null, 2)}\n`;
   return preferred;
 }
 
@@ -1523,6 +1548,7 @@ function buildAgentsCategory(panel, fieldErrors) {
   const selected = resolveSelectedProfileKey();
   const profiles = settingsState.draftConfig?.agents?.profiles || {};
   const selectedProfile = profiles[selected] || {};
+  const knownAgentIDs = collectKnownAgentIDs();
   const inheritsGlobalModel = !asTrimmedString(selectedProfile?.model?.provider) && !asTrimmedString(selectedProfile?.model?.name) && !selectedProfile?.model?.max_tokens && !selectedProfile?.model?.temperature;
 
   const tableWrap = document.createElement("section");
@@ -1536,13 +1562,12 @@ function buildAgentsCategory(panel, fieldErrors) {
   const head = document.createElement("thead");
   head.innerHTML = "<tr><th>Agent</th><th>Enabled</th><th>Provider</th><th>Model</th><th>Temp</th><th>Max tokens</th><th>Mode</th></tr>";
   const body = document.createElement("tbody");
-  Object.keys(profiles)
-    .sort()
-    .forEach((agentID) => {
+  knownAgentIDs.forEach((agentID) => {
       const profile = profiles[agentID] || {};
+      const hasSavedProfile = Object.prototype.hasOwnProperty.call(profiles, agentID);
       const row = document.createElement("tr");
       const inherit = !asTrimmedString(profile?.model?.provider) && !asTrimmedString(profile?.model?.name) && !profile?.model?.max_tokens && !profile?.model?.temperature;
-      row.innerHTML = `<td>${agentID}</td><td>${profile?.enabled === false ? "off" : "on"}</td><td>${asTrimmedString(profile?.model?.provider) || "(global)"}</td><td>${asTrimmedString(profile?.model?.name) || "(global)"}</td><td>${profile?.model?.temperature ?? "(global)"}</td><td>${profile?.model?.max_tokens ?? "(global)"}</td><td>${inherit ? "inherit" : "override"}</td>`;
+      row.innerHTML = `<td>${agentID}</td><td>${profile?.enabled === false ? "off" : "on"}</td><td>${asTrimmedString(profile?.model?.provider) || "(global)"}</td><td>${asTrimmedString(profile?.model?.name) || "(global)"}</td><td>${profile?.model?.temperature ?? "(global)"}</td><td>${profile?.model?.max_tokens ?? "(global)"}</td><td>${hasSavedProfile ? (inherit ? "inherit" : "override") : "discovered"}</td>`;
       row.addEventListener("click", () => {
         settingsState.selectedAgentProfile = agentID;
         rerender();
@@ -1561,9 +1586,7 @@ function buildAgentsCategory(panel, fieldErrors) {
   const picker = createField({ title: "Profile agent", path: "agents.profiles", helpText: "Edit per-agent activation and model override values." });
   const select = document.createElement("select");
   select.className = "settings-select";
-  Object.keys(profiles)
-    .sort()
-    .forEach((agentID) => {
+  knownAgentIDs.forEach((agentID) => {
       const option = document.createElement("option");
       option.value = agentID;
       option.textContent = agentID;
@@ -1584,7 +1607,7 @@ function buildAgentsCategory(panel, fieldErrors) {
   const addButton = document.createElement("button");
   addButton.type = "button";
   addButton.className = "layout-toggle";
-  addButton.textContent = "Add Profile";
+  addButton.textContent = "Add / Select Profile";
   addButton.addEventListener("click", () => {
     const nextID = asTrimmedString(addInput.value);
     if (!nextID) return;
@@ -1603,7 +1626,35 @@ function buildAgentsCategory(panel, fieldErrors) {
   picker.append(addRow);
   panel.append(picker);
 
-  appendCheckboxField({ parent: panel, query, title: "Profile enabled", path: `agents.profiles.${selected}.enabled`, helpText: "Toggle this agent profile on/off.", fieldErrors });
+  const profileState = document.createElement("p");
+  profileState.className = "muted";
+  profileState.textContent = Object.prototype.hasOwnProperty.call(profiles, selected)
+    ? `Editing saved profile: ${selected}`
+    : `Editing discovered agent: ${selected}. Fields below will create a profile only when you change them.`;
+  panel.append(profileState);
+
+  if (fieldVisible(query, "Profile enabled", `agents.profiles.${selected}.enabled`, "Toggle this agent profile on/off. Unset defaults to on.")) {
+    const enabledField = createField({
+      title: "Profile enabled",
+      path: `agents.profiles.${selected}.enabled`,
+      helpText: "Toggle this agent profile on/off. Unset defaults to on.",
+      errorText: shouldShowFieldError(`agents.profiles.${selected}.enabled`, fieldErrors) ? fieldErrors[`agents.profiles.${selected}.enabled`] : "",
+    });
+    const enabledRow = document.createElement("label");
+    enabledRow.className = "settings-checkbox-row";
+    const enabledInput = document.createElement("input");
+    enabledInput.type = "checkbox";
+    enabledInput.checked = selectedProfile?.enabled !== false;
+    enabledInput.addEventListener("change", () => {
+      updateDraft(`agents.profiles.${selected}.enabled`, enabledInput.checked ? undefined : false, { deleteIfUndefined: enabledInput.checked });
+    });
+    const enabledText = document.createElement("span");
+    enabledText.textContent = enabledInput.checked ? "Enabled (default)" : "Disabled";
+    enabledRow.append(enabledInput, enabledText);
+    enabledField.append(enabledRow);
+    panel.append(enabledField);
+  }
+
   appendCheckboxField({ parent: panel, query, title: "Profile self-improvement", path: `agents.profiles.${selected}.self_improvement`, helpText: "Allows this agent to modify its own prompt files when global switch is on.", fieldErrors });
   appendCheckboxField({ parent: panel, query, title: "Inherit global model", path: `agents.profiles.${selected}.__inherit_model`, helpText: "When enabled, this profile uses the global provider/model/temp/max_tokens.", fieldErrors: {} });
   const inheritField = panel.lastElementChild?.querySelector?.("input[type='checkbox']");
@@ -2133,6 +2184,11 @@ async function loadConfig() {
     const config = normalizeConfigShape(cleanConfigPayload(payload));
     settingsState.baselineConfig = cloneJSON(config);
     settingsState.draftConfig = cloneJSON(config);
+    try {
+      await loadAvailableAgents();
+    } catch (_error) {
+      settingsState.availableAgentIDs = sortedUniqueAgentIDs([]);
+    }
     settingsState.advancedRaw = `${JSON.stringify(settingsState.draftConfig, null, 2)}\n`;
     settingsState.advancedRawError = "";
     settingsState.touchedFields = new Set();

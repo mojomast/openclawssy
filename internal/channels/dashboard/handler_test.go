@@ -924,7 +924,11 @@ func TestAdminAgentsEndpointListAndSetActive(t *testing.T) {
 				MaxTokens: 1024,
 			},
 		},
+		"reviewer": {},
 	}
+	cfg.Agents.EnabledAgentIDs = []string{"planner"}
+	cfg.Chat.DefaultAgentID = "default"
+	cfg.Discord.DefaultAgentID = "discord-bot"
 	if err := config.Save(filepath.Join(root, ".openclawssy", "config.json"), cfg); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -956,6 +960,19 @@ func TestAdminAgentsEndpointListAndSetActive(t *testing.T) {
 	}
 	if listed["selected_agent"] != "default" {
 		t.Fatalf("expected selected_agent default on first list, got %#v", listed["selected_agent"])
+	}
+	agents, ok := listed["agents"].([]any)
+	if !ok {
+		t.Fatalf("expected agents array, got %#v", listed["agents"])
+	}
+	seen := map[string]bool{}
+	for _, item := range agents {
+		seen[strings.TrimSpace(fmt.Sprint(item))] = true
+	}
+	for _, want := range []string{"default", "alpha", "reviewer", "planner", "discord-bot"} {
+		if !seen[want] {
+			t.Fatalf("expected agent %q in unified list, got %#v", want, listed["agents"])
+		}
 	}
 
 	setReq := httptest.NewRequest(http.MethodPost, "/api/admin/agents", bytes.NewBufferString(`{"channel":"dashboard","user_id":"dashboard_user","room_id":"dashboard","agent_id":"alpha"}`))
