@@ -8,6 +8,7 @@ import {
   setHelpTopicInHash,
 } from "../help/content.js";
 import { extractHeadings, renderMarkdownToFragment } from "../help/markdown.js";
+import { captureFocusSnapshot, restoreFocusSnapshot } from "../ui/focus_restore.js";
 
 const helpState = {
   container: null,
@@ -35,9 +36,13 @@ function highlightMatch(text, query) {
   return source.replace(new RegExp(`(${escaped})`, "ig"), "<mark>$1</mark>");
 }
 
-function rerender() {
+function rerender(options = {}) {
   if (helpState.container?.isConnected) {
+    const focusSnapshot = options.preserveFocus ? captureFocusSnapshot(helpState.container) : null;
     renderHelpPage();
+    if (focusSnapshot) {
+      restoreFocusSnapshot(helpState.container, focusSnapshot);
+    }
   }
 }
 
@@ -135,16 +140,12 @@ function renderHelpPage() {
   const search = document.createElement("input");
   search.type = "search";
   search.className = "settings-input help-search-input";
+  search.setAttribute("data-focus-id", "help:center-search");
   search.placeholder = "Search help topics";
   search.value = helpState.search;
   search.addEventListener("input", () => {
     helpState.search = search.value;
-    rerender();
-    const next = helpState.container?.querySelector?.(".help-search-input");
-    next?.focus();
-    if (typeof next?.setSelectionRange === "function") {
-      next.setSelectionRange(helpState.search.length, helpState.search.length);
-    }
+    rerender({ preserveFocus: true });
   });
   container.append(search);
 

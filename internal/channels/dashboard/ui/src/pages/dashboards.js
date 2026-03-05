@@ -1,5 +1,6 @@
 import { fetchRecentRuns, renderCompactRunsList } from "./runs.js";
 import { fetchSchedulerJobs, renderCompactSchedulerJobs } from "./scheduler.js";
+import { captureFocusSnapshot, restoreFocusSnapshot } from "../ui/focus_restore.js";
 
 const STORAGE_KEY = "dashboard.custom_dashboards.p1";
 const GRID_COLUMNS = 12;
@@ -111,7 +112,7 @@ function markDirty(options = {}) {
   dashboardsState.dirty = true;
   dashboardsState.saveNotice = autosave ? "Unsaved changes" : dashboardsState.saveNotice;
   writeLocalDashboards();
-  rerender();
+  rerender({ preserveFocus: true });
   if (autosave) {
     scheduleSave();
   }
@@ -120,7 +121,7 @@ function markDirty(options = {}) {
 async function loadDashboards() {
   dashboardsState.loading = true;
   dashboardsState.error = "";
-  rerender();
+  rerender({ preserveFocus: true });
   try {
     const localItems = readLocalDashboards();
     const payload = await dashboardsState.apiClient.get("/api/admin/dashboards");
@@ -141,7 +142,7 @@ async function loadDashboards() {
     dashboardsState.selectedID = dashboardsState.selectedID || dashboardsState.dashboards[0].id;
   } finally {
     dashboardsState.loading = false;
-    rerender();
+    rerender({ preserveFocus: true });
   }
 }
 
@@ -155,7 +156,7 @@ async function createDashboard() {
     markDirty();
   } catch (error) {
     dashboardsState.error = error instanceof Error ? error.message : String(error);
-    rerender();
+    rerender({ preserveFocus: true });
   }
 }
 
@@ -164,7 +165,7 @@ async function saveAllDashboards() {
     return;
   }
   dashboardsState.saving = true;
-  rerender();
+  rerender({ preserveFocus: true });
   try {
     for (const dashboard of dashboardsState.dashboards) {
       dashboard.updated_at = nowISO();
@@ -190,7 +191,7 @@ async function saveAllDashboards() {
     dashboardsState.lastErrorAt = Date.now();
   } finally {
     dashboardsState.saving = false;
-    rerender();
+    rerender({ preserveFocus: true });
   }
 }
 
@@ -229,7 +230,7 @@ function updateDashboardLocal(mutator) {
   dashboard.updated_at = nowISO();
   dashboardsState.dirty = true;
   writeLocalDashboards();
-  rerender();
+  rerender({ preserveFocus: true });
 }
 
 function removeWidget(widgetInstanceID) {
@@ -313,6 +314,7 @@ const WIDGETS = [
       form.className = "dashboard-quick-form";
       const input = document.createElement("textarea");
       input.className = "settings-textarea";
+      input.setAttribute("data-focus-id", `dashboard-widget:${widget.widget_instance_id}:quick-prompt`);
       input.rows = 4;
       input.placeholder = "Send a quick prompt";
       const button = document.createElement("button");
@@ -408,9 +410,13 @@ function createDefaultWidget(widgetKey) {
   };
 }
 
-function rerender() {
+function rerender(options = {}) {
   if (dashboardsState.container?.isConnected) {
+    const focusSnapshot = options.preserveFocus ? captureFocusSnapshot(dashboardsState.container) : null;
     renderDashboardsPage();
+    if (focusSnapshot) {
+      restoreFocusSnapshot(dashboardsState.container, focusSnapshot);
+    }
   }
 }
 
@@ -486,7 +492,7 @@ function renderWidgetCard(widget, dashboard) {
   configButton.textContent = "...";
   configButton.addEventListener("click", () => {
     dashboardsState.widgetMenuFor = dashboardsState.widgetMenuFor === widget.widget_instance_id ? "" : widget.widget_instance_id;
-    rerender();
+    rerender({ preserveFocus: true });
   });
   actions.append(configButton);
   header.append(title, actions);
@@ -590,7 +596,7 @@ function renderDashboardsPage() {
     button.textContent = item.name;
     button.addEventListener("click", () => {
       dashboardsState.selectedID = item.id;
-      rerender();
+      rerender({ preserveFocus: true });
     });
     const up = document.createElement("button");
     up.type = "button";
@@ -641,6 +647,7 @@ function renderDashboardsPage() {
     toolbar.className = "dashboards-toolbar";
     const nameInput = document.createElement("input");
     nameInput.className = "settings-input";
+    nameInput.setAttribute("data-focus-id", `dashboard:name:${selected.id}`);
     nameInput.value = selected.name;
     nameInput.addEventListener("input", () => updateDashboard((dashboard) => { dashboard.name = nameInput.value.trim() || "Untitled Dashboard"; }));
     const addWidget = document.createElement("button");
@@ -649,7 +656,7 @@ function renderDashboardsPage() {
     addWidget.textContent = "Add widget";
     addWidget.addEventListener("click", () => {
       dashboardsState.widgetPickerOpen = !dashboardsState.widgetPickerOpen;
-      rerender();
+      rerender({ preserveFocus: true });
     });
     const resetLayout = document.createElement("button");
     resetLayout.type = "button";
@@ -685,6 +692,7 @@ function renderDashboardsPage() {
       picker.className = "dashboard-widget-picker";
       const search = document.createElement("input");
       search.className = "settings-input";
+      search.setAttribute("data-focus-id", `dashboard:widget-search:${selected.id}`);
       search.placeholder = "Search widgets";
       const list = document.createElement("div");
       list.className = "dashboard-widget-picker-list";
@@ -735,6 +743,6 @@ export const dashboardsPage = {
       await loadDashboards();
       return;
     }
-    rerender();
+    rerender({ preserveFocus: true });
   },
 };

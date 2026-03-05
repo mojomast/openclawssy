@@ -535,6 +535,7 @@ export function createLayout({ root, routes, store, router, apiClient, inspector
     const searchInput = document.createElement("input");
     searchInput.type = "search";
     searchInput.className = "settings-input";
+    searchInput.setAttribute("data-focus-id", "layout:help-drawer-search");
     searchInput.placeholder = "Search help topics";
     searchInput.value = helpDrawerState.search;
     searchInput.addEventListener("input", () => {
