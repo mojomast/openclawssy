@@ -32,6 +32,25 @@ type Handler struct {
 	schedulerStore *scheduler.Store
 }
 
+type dashboardLayoutRecord struct {
+	ID        string                  `json:"id"`
+	Name      string                  `json:"name"`
+	Position  int                     `json:"position,omitempty"`
+	CreatedAt string                  `json:"created_at"`
+	UpdatedAt string                  `json:"updated_at"`
+	Layout    []dashboardWidgetLayout `json:"layout"`
+}
+
+type dashboardWidgetLayout struct {
+	WidgetKey        string         `json:"widget_key"`
+	WidgetInstanceID string         `json:"widget_instance_id"`
+	X                int            `json:"x"`
+	Y                int            `json:"y"`
+	W                int            `json:"w"`
+	H                int            `json:"h"`
+	WidgetState      map[string]any `json:"widget_state,omitempty"`
+}
+
 type agentDocPayload struct {
 	Name         string `json:"name"`
 	ResolvedName string `json:"resolved_name"`
@@ -90,8 +109,12 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/dashboard/static/", h.serveDashboardStatic)
 	mux.HandleFunc("/api/admin/status", h.getStatus)
 	mux.HandleFunc("/api/admin/config", h.handleConfig)
+	mux.HandleFunc("/api/admin/config/validate", h.handleConfigValidate)
+	mux.HandleFunc("/api/admin/providers/test", h.handleProviderTest)
 	mux.HandleFunc("/api/admin/secrets", h.handleSecrets)
 	mux.HandleFunc("/api/admin/secrets/", h.handleSecretByKey)
+	mux.HandleFunc("/api/admin/dashboards", h.handleDashboards)
+	mux.HandleFunc("/api/admin/dashboards/", h.handleDashboardByID)
 	mux.HandleFunc("/api/admin/scheduler/jobs", h.handleSchedulerJobs)
 	mux.HandleFunc("/api/admin/scheduler/jobs/", h.handleSchedulerJobByID)
 	mux.HandleFunc("/api/admin/scheduler/control", h.handleSchedulerControl)
@@ -334,26 +357,274 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		cfg, err := config.LoadOrDefault(path)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeDashboardError(w, http.StatusInternalServerError, "config.load_failed", err.Error(), nil)
 			return
 		}
 		writeJSON(w, cfg.Redacted())
 		return
 	}
-	if r.Method == http.MethodPost {
+	switch r.Method {
+	case http.MethodPost:
 		var cfg config.Config
 		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeDashboardError(w, http.StatusBadRequest, "config.invalid_json", "invalid json body", nil)
 			return
 		}
-		if err := config.Save(path, cfg); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		if err := saveDashboardConfig(path, cfg); err != nil {
+			writeConfigValidationError(w, err, cfg)
 			return
 		}
 		writeJSON(w, map[string]any{"ok": true})
 		return
+	case http.MethodPatch:
+		current, err := config.LoadOrDefault(path)
+		if err != nil {
+			writeDashboardError(w, http.StatusInternalServerError, "config.load_failed", err.Error(), nil)
+			return
+		}
+		merged, err := mergeConfigPatch(current, r.Body)
+		if err != nil {
+			writeDashboardError(w, http.StatusBadRequest, "config.invalid_patch", err.Error(), nil)
+			return
+		}
+		if err := saveDashboardConfig(path, merged); err != nil {
+			writeConfigValidationError(w, err, merged)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "config": merged.Redacted()})
+		return
+	default:
+		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 	}
-	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+}
+
+func (h *Handler) handleConfigValidate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
+		return
+	}
+	current, err := config.LoadOrDefault(filepath.Join(h.rootDir, ".openclawssy", "config.json"))
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "config.load_failed", err.Error(), nil)
+		return
+	}
+	merged, err := mergeConfigPatch(current, r.Body)
+	if err != nil {
+		writeDashboardError(w, http.StatusBadRequest, "config.invalid_patch", err.Error(), nil)
+		return
+	}
+	if err := merged.Validate(); err != nil {
+		writeDashboardError(w, http.StatusBadRequest, "config.validation_failed", err.Error(), map[string]any{"field_errors": collectConfigFieldErrors(merged, err)})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "field_errors": map[string]string{}})
+}
+
+func (h *Handler) handleProviderTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
+		return
+	}
+	var req struct {
+		Provider string `json:"provider"`
+		BaseURL  string `json:"base_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeDashboardError(w, http.StatusBadRequest, "provider_test.invalid_json", "invalid json body", nil)
+		return
+	}
+	provider := strings.ToLower(strings.TrimSpace(req.Provider))
+	baseURL := strings.TrimSpace(req.BaseURL)
+	if provider == "" || baseURL == "" {
+		writeDashboardError(w, http.StatusBadRequest, "provider_test.invalid_input", "provider and base_url are required", nil)
+		return
+	}
+	client := &http.Client{Timeout: 4 * time.Second}
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodHead, baseURL, nil)
+	if err != nil {
+		writeDashboardError(w, http.StatusBadRequest, "provider_test.invalid_url", err.Error(), nil)
+		return
+	}
+	resp, err := client.Do(request)
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "provider": provider, "base_url": baseURL, "message": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	writeJSON(w, map[string]any{
+		"ok":          resp.StatusCode < 500,
+		"provider":    provider,
+		"base_url":    baseURL,
+		"status":      resp.StatusCode,
+		"status_text": resp.Status,
+	})
+}
+
+func (h *Handler) handleDashboards(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		dashboards, err := h.loadDashboardLayouts()
+		if err != nil {
+			writeDashboardError(w, http.StatusInternalServerError, "dashboards.load_failed", err.Error(), nil)
+			return
+		}
+		writeJSON(w, map[string]any{"dashboards": dashboards})
+	case http.MethodPost:
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeDashboardError(w, http.StatusBadRequest, "dashboards.invalid_json", "invalid json body", nil)
+			return
+		}
+		name := strings.TrimSpace(req.Name)
+		if name == "" {
+			name = "New Dashboard"
+		}
+		dashboards, err := h.loadDashboardLayouts()
+		if err != nil {
+			writeDashboardError(w, http.StatusInternalServerError, "dashboards.load_failed", err.Error(), nil)
+			return
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		created := dashboardLayoutRecord{ID: "dash_" + strconv.FormatInt(time.Now().UTC().UnixNano(), 10), Name: name, Position: len(dashboards), CreatedAt: now, UpdatedAt: now, Layout: []dashboardWidgetLayout{}}
+		dashboards = append(dashboards, created)
+		if err := h.saveDashboardLayouts(dashboards); err != nil {
+			writeDashboardError(w, http.StatusInternalServerError, "dashboards.save_failed", err.Error(), nil)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "dashboard": created})
+	default:
+		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
+	}
+}
+
+func (h *Handler) handleDashboardByID(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/admin/dashboards/"))
+	if id == "" || strings.Contains(id, "/") {
+		writeDashboardError(w, http.StatusBadRequest, "dashboards.invalid_id", "invalid dashboard id", nil)
+		return
+	}
+	dashboards, err := h.loadDashboardLayouts()
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "dashboards.load_failed", err.Error(), nil)
+		return
+	}
+	index := -1
+	for i := range dashboards {
+		if dashboards[i].ID == id {
+			index = i
+			break
+		}
+	}
+	switch r.Method {
+	case http.MethodPut:
+		if index < 0 {
+			writeDashboardError(w, http.StatusNotFound, "dashboards.not_found", "dashboard not found", nil)
+			return
+		}
+		var req dashboardLayoutRecord
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeDashboardError(w, http.StatusBadRequest, "dashboards.invalid_json", "invalid json body", nil)
+			return
+		}
+		updated := dashboards[index]
+		if name := strings.TrimSpace(req.Name); name != "" {
+			updated.Name = name
+		}
+		if req.Position >= 0 {
+			updated.Position = req.Position
+		}
+		updated.Layout = normalizeDashboardLayout(req.Layout)
+		updated.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		dashboards[index] = updated
+		if err := h.saveDashboardLayouts(dashboards); err != nil {
+			writeDashboardError(w, http.StatusInternalServerError, "dashboards.save_failed", err.Error(), nil)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "dashboard": updated})
+	case http.MethodDelete:
+		if index < 0 {
+			writeDashboardError(w, http.StatusNotFound, "dashboards.not_found", "dashboard not found", nil)
+			return
+		}
+		dashboards = append(dashboards[:index], dashboards[index+1:]...)
+		if err := h.saveDashboardLayouts(dashboards); err != nil {
+			writeDashboardError(w, http.StatusInternalServerError, "dashboards.save_failed", err.Error(), nil)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "deleted": id})
+	default:
+		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
+	}
+}
+
+func normalizeDashboardLayout(layout []dashboardWidgetLayout) []dashboardWidgetLayout {
+	out := make([]dashboardWidgetLayout, 0, len(layout))
+	for _, item := range layout {
+		if strings.TrimSpace(item.WidgetKey) == "" || strings.TrimSpace(item.WidgetInstanceID) == "" {
+			continue
+		}
+		if item.W < 1 {
+			item.W = 3
+		}
+		if item.H < 1 {
+			item.H = 2
+		}
+		if item.X < 0 {
+			item.X = 0
+		}
+		if item.Y < 0 {
+			item.Y = 0
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func (h *Handler) dashboardLayoutsPath() string {
+	return filepath.Join(h.rootDir, ".openclawssy", "dashboard_layouts.json")
+}
+
+func (h *Handler) loadDashboardLayouts() ([]dashboardLayoutRecord, error) {
+	path := h.dashboardLayoutsPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []dashboardLayoutRecord{}, nil
+		}
+		return nil, err
+	}
+	if len(data) == 0 {
+		return []dashboardLayoutRecord{}, nil
+	}
+	var dashboards []dashboardLayoutRecord
+	if err := json.Unmarshal(data, &dashboards); err != nil {
+		return nil, err
+	}
+	for i := range dashboards {
+		dashboards[i].Layout = normalizeDashboardLayout(dashboards[i].Layout)
+	}
+	sort.SliceStable(dashboards, func(i, j int) bool {
+		if dashboards[i].Position != dashboards[j].Position {
+			return dashboards[i].Position < dashboards[j].Position
+		}
+		return dashboards[i].CreatedAt < dashboards[j].CreatedAt
+	})
+	return dashboards, nil
+}
+
+func (h *Handler) saveDashboardLayouts(dashboards []dashboardLayoutRecord) error {
+	path := h.dashboardLayoutsPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(dashboards, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(path, data, 0o600)
 }
 
 func (h *Handler) handleSecrets(w http.ResponseWriter, r *http.Request) {
@@ -475,6 +746,162 @@ func validateAdminSecretValue(value string) error {
 		return fmt.Errorf("value exceeds %d characters", maxAdminSecretValueLen)
 	}
 	return nil
+}
+
+func saveDashboardConfig(path string, cfg config.Config) error {
+	cfg.ApplyDefaults()
+	return config.Save(path, cfg)
+}
+
+func mergeConfigPatch(current config.Config, body any) (config.Config, error) {
+	var patch map[string]any
+	switch raw := body.(type) {
+	case *strings.Reader:
+		_ = raw
+	case interface{ Read([]byte) (int, error) }:
+		if err := json.NewDecoder(raw).Decode(&patch); err != nil {
+			return config.Config{}, errors.New("invalid json body")
+		}
+	default:
+		return config.Config{}, errors.New("invalid patch body")
+	}
+	if patch == nil {
+		patch = map[string]any{}
+	}
+	baseBytes, err := json.Marshal(current)
+	if err != nil {
+		return config.Config{}, err
+	}
+	base := map[string]any{}
+	if err := json.Unmarshal(baseBytes, &base); err != nil {
+		return config.Config{}, err
+	}
+	merged := mergeJSONObjects(base, patch)
+	mergedBytes, err := json.Marshal(merged)
+	if err != nil {
+		return config.Config{}, err
+	}
+	var cfg config.Config
+	if err := json.Unmarshal(mergedBytes, &cfg); err != nil {
+		return config.Config{}, err
+	}
+	return cfg, nil
+}
+
+func mergeJSONObjects(base, patch map[string]any) map[string]any {
+	if base == nil {
+		base = map[string]any{}
+	}
+	for key, value := range patch {
+		if value == nil {
+			delete(base, key)
+			continue
+		}
+		patchMap, patchIsMap := value.(map[string]any)
+		baseMap, baseIsMap := base[key].(map[string]any)
+		if patchIsMap {
+			if !baseIsMap {
+				baseMap = map[string]any{}
+			}
+			base[key] = mergeJSONObjects(baseMap, patchMap)
+			continue
+		}
+		base[key] = value
+	}
+	return base
+}
+
+func collectConfigFieldErrors(cfg config.Config, err error) map[string]string {
+	fieldErrors := map[string]string{}
+	set := func(path, message string) {
+		if path == "" || message == "" {
+			return
+		}
+		if _, ok := fieldErrors[path]; !ok {
+			fieldErrors[path] = message
+		}
+	}
+
+	provider := strings.ToLower(strings.TrimSpace(cfg.Model.Provider))
+	if provider == "" || !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "zai": true, "generic": true}[provider] {
+		set("model.provider", "Provider must be one of openai, openrouter, requesty, zai, generic.")
+	}
+	if strings.TrimSpace(cfg.Model.Name) == "" {
+		set("model.name", "Model name is required.")
+	}
+	if cfg.Model.MaxTokens < 1 || cfg.Model.MaxTokens > 20000 {
+		set("model.max_tokens", "Max tokens must be an integer between 1 and 20000.")
+	}
+	if strings.TrimSpace(cfg.Server.BindAddress) == "" {
+		set("server.bind_address", "Server bind address is required.")
+	}
+	if cfg.Server.Port < 1 || cfg.Server.Port > 65535 {
+		set("server.port", "Server port must be an integer between 1 and 65535.")
+	}
+	if strings.TrimSpace(cfg.Workspace.Root) == "" {
+		set("workspace.root", "Workspace root is required.")
+	}
+	if cfg.Chat.RateLimitPerMin < 1 {
+		set("chat.rate_limit_per_min", "Chat rate limit must be an integer >= 1.")
+	}
+	if cfg.Chat.GlobalRateLimitPerMin < 1 {
+		set("chat.global_rate_limit_per_min", "Global chat rate limit must be an integer >= 1.")
+	}
+	if cfg.Discord.RateLimitPerMin < 1 {
+		set("discord.rate_limit_per_min", "Discord rate limit must be an integer >= 1.")
+	}
+	if cfg.Telegram.RateLimitPerMin < 1 {
+		set("telegram.rate_limit_per_min", "Telegram rate limit must be an integer >= 1.")
+	}
+	if cfg.Sandbox.Active && strings.EqualFold(strings.TrimSpace(cfg.Sandbox.Provider), "none") {
+		set("sandbox.provider", "Sandbox provider must be local or docker when sandbox is active.")
+	}
+	if cfg.Shell.EnableExec && !cfg.Sandbox.Active {
+		set("shell.enable_exec", "Shell execution requires sandbox.active=true.")
+	}
+	for agentID, profile := range cfg.Agents.Profiles {
+		provider := strings.ToLower(strings.TrimSpace(profile.Model.Provider))
+		if provider != "" && !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "zai": true, "generic": true}[provider] {
+			set("agents.profiles."+agentID+".model.provider", "Profile model provider must match a supported provider.")
+		}
+		if profile.Model.MaxTokens < 0 || profile.Model.MaxTokens > 20000 {
+			set("agents.profiles."+agentID+".model.max_tokens", "Profile max tokens must be an integer between 0 and 20000.")
+		}
+	}
+	if cfg.Agents.SubAgentDefaults.MaxToolIterations < 0 {
+		set("agents.subagent_defaults.max_tool_iterations", "Subagent max tool iterations must be >= 0.")
+	}
+	if cfg.Agents.SubAgentDefaults.TimeoutMS < 0 {
+		set("agents.subagent_defaults.timeout_ms", "Subagent timeout must be >= 0.")
+	}
+	if mode := strings.TrimSpace(cfg.Agents.SubAgentDefaults.ThinkingMode); mode != "" && !config.IsValidThinkingMode(mode) {
+		set("agents.subagent_defaults.thinking_mode", "Thinking mode must be one of never, on_error, always.")
+	}
+	validDelegation := map[string]bool{"": true, "prompt_only": true, "tool_gated": true, "auto_execute": true}
+	if !validDelegation[strings.TrimSpace(cfg.Agents.SubAgentDefaults.DelegationMode)] {
+		set("agents.subagent_defaults.delegation_mode", "Delegation mode must be one of prompt_only, tool_gated, auto_execute.")
+	}
+	if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "generic provider base url") && strings.TrimSpace(cfg.Providers.Generic.BaseURL) == "" {
+		set("providers.generic.base_url", "Generic provider base URL is required when model.provider is generic.")
+	}
+	if len(fieldErrors) == 0 {
+		set("config", err.Error())
+	}
+	return fieldErrors
+}
+
+func writeConfigValidationError(w http.ResponseWriter, err error, cfg config.Config) {
+	writeDashboardError(w, http.StatusBadRequest, "config.validation_failed", err.Error(), map[string]any{"field_errors": collectConfigFieldErrors(cfg, err)})
+}
+
+func writeDashboardError(w http.ResponseWriter, status int, code, message string, details map[string]any) {
+	payload := map[string]any{"error": map[string]any{"code": code, "message": message}}
+	if len(details) > 0 {
+		payload["error"].(map[string]any)["details"] = details
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
 }
 
 func (h *Handler) getRunTrace(w http.ResponseWriter, r *http.Request) {

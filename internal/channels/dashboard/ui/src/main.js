@@ -10,6 +10,7 @@ import { secretsPage } from "./pages/secrets.js";
 import { docsPage } from "./pages/docs.js";
 import { skillsPage } from "./pages/skills.js";
 import { sandboxPage } from "./pages/sandbox.js";
+import { dashboardsPage } from "./pages/dashboards.js";
 import { toolInspector } from "./inspectors/tool_inspector.js";
 import { traceInspector } from "./inspectors/trace_inspector.js";
 import { toolSchemaInspector } from "./inspectors/tool_schema_inspector.js";
@@ -27,6 +28,7 @@ const ROUTES = [
   { path: "/skills", label: "Skills", page: skillsPage },
   { path: "/secrets", label: "Secrets", page: secretsPage },
   { path: "/sandbox", label: "Sandbox", page: sandboxPage },
+  { path: "/dashboards", label: "Custom Dashboards", page: dashboardsPage },
 ];
 
 const INSPECTORS = [toolInspector, traceInspector, toolSchemaInspector, fixSuggestionsInspector, pythonEnvInspector];

@@ -325,6 +325,61 @@ func TestAdminConfigEndpointRedactsSecrets(t *testing.T) {
 	}
 }
 
+func TestAdminConfigPatchMergesAndValidateReturnsFieldErrors(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".openclawssy"), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	path := filepath.Join(root, ".openclawssy", "config.json")
+	cfg := config.Default()
+	cfg.Chat.DefaultAgentID = "alpha"
+	if err := config.Save(path, cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	patchReq := httptest.NewRequest(http.MethodPatch, "/api/admin/config", bytes.NewBufferString(`{"model":{"provider":"zai","name":"glm-4.7"}}`))
+	patchReq.Header.Set("Content-Type", "application/json")
+	patchResp := httptest.NewRecorder()
+	mux.ServeHTTP(patchResp, patchReq)
+	if patchResp.Code != http.StatusOK {
+		t.Fatalf("expected patch status 200, got %d (%s)", patchResp.Code, patchResp.Body.String())
+	}
+	updated, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("load updated config: %v", err)
+	}
+	if updated.Chat.DefaultAgentID != "alpha" {
+		t.Fatalf("expected unrelated field preserved, got %q", updated.Chat.DefaultAgentID)
+	}
+	if updated.Model.Provider != "zai" || updated.Model.Name != "glm-4.7" {
+		t.Fatalf("expected model patch applied, got %+v", updated.Model)
+	}
+
+	validateReq := httptest.NewRequest(http.MethodPost, "/api/admin/config/validate", bytes.NewBufferString(`{"model":{"provider":"bad-provider","name":""}}`))
+	validateReq.Header.Set("Content-Type", "application/json")
+	validateResp := httptest.NewRecorder()
+	mux.ServeHTTP(validateResp, validateReq)
+	if validateResp.Code != http.StatusBadRequest {
+		t.Fatalf("expected validate status 400, got %d (%s)", validateResp.Code, validateResp.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(validateResp.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode validate response: %v", err)
+	}
+	errorMap, _ := payload["error"].(map[string]any)
+	details, _ := errorMap["details"].(map[string]any)
+	fieldErrors, _ := details["field_errors"].(map[string]any)
+	if _, ok := fieldErrors["model.provider"]; !ok {
+		t.Fatalf("expected model.provider field error, got %#v", fieldErrors)
+	}
+	if _, ok := fieldErrors["model.name"]; !ok {
+		t.Fatalf("expected model.name field error, got %#v", fieldErrors)
+	}
+}
+
 func TestAdminSecretsEndpointSetAndList(t *testing.T) {
 	root := t.TempDir()
 	masterPath := filepath.Join(root, ".openclawssy", "master.key")
@@ -458,6 +513,64 @@ func TestAdminSecretsEndpointValidatesInputAndDeletesKeys(t *testing.T) {
 	mux.ServeHTTP(deleteMissingResp, deleteMissingReq)
 	if deleteMissingResp.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for missing key, got %d (%s)", deleteMissingResp.Code, deleteMissingResp.Body.String())
+	}
+}
+
+func TestDashboardLayoutsEndpointsPersistRecords(t *testing.T) {
+	root := t.TempDir()
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	createReq := httptest.NewRequest(http.MethodPost, "/api/admin/dashboards", bytes.NewBufferString(`{"name":"Ops"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp := httptest.NewRecorder()
+	mux.ServeHTTP(createResp, createReq)
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("expected create status 200, got %d (%s)", createResp.Code, createResp.Body.String())
+	}
+	var createPayload struct {
+		Dashboard dashboardLayoutRecord `json:"dashboard"`
+	}
+	if err := json.Unmarshal(createResp.Body.Bytes(), &createPayload); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if createPayload.Dashboard.ID == "" {
+		t.Fatal("expected created dashboard id")
+	}
+
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/admin/dashboards/"+createPayload.Dashboard.ID, bytes.NewBufferString(`{"name":"Ops Board","layout":[{"widget_key":"runtime.status","widget_instance_id":"w1","x":0,"y":0,"w":4,"h":2}]}`))
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateResp := httptest.NewRecorder()
+	mux.ServeHTTP(updateResp, updateReq)
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("expected update status 200, got %d (%s)", updateResp.Code, updateResp.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/dashboards", nil)
+	listResp := httptest.NewRecorder()
+	mux.ServeHTTP(listResp, listReq)
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("expected list status 200, got %d (%s)", listResp.Code, listResp.Body.String())
+	}
+	var listPayload struct {
+		Dashboards []dashboardLayoutRecord `json:"dashboards"`
+	}
+	if err := json.Unmarshal(listResp.Body.Bytes(), &listPayload); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if len(listPayload.Dashboards) != 1 || listPayload.Dashboards[0].Name != "Ops Board" {
+		t.Fatalf("unexpected dashboards payload: %#v", listPayload.Dashboards)
+	}
+	if len(listPayload.Dashboards[0].Layout) != 1 || listPayload.Dashboards[0].Layout[0].WidgetKey != "runtime.status" {
+		t.Fatalf("unexpected layout payload: %#v", listPayload.Dashboards[0].Layout)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/admin/dashboards/"+createPayload.Dashboard.ID, nil)
+	deleteResp := httptest.NewRecorder()
+	mux.ServeHTTP(deleteResp, deleteReq)
+	if deleteResp.Code != http.StatusOK {
+		t.Fatalf("expected delete status 200, got %d (%s)", deleteResp.Code, deleteResp.Body.String())
 	}
 }
 

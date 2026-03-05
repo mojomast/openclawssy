@@ -48,6 +48,8 @@ const settingsState = {
   discordTokenDeleting: false,
   discordTokenSuccess: "",
   discordTokenError: "",
+  validatePending: false,
+  providerTestResults: {},
 };
 
 function cloneJSON(value) {
@@ -921,39 +923,64 @@ function buildModelCategory(panel, fieldErrors) {
     fieldErrors,
   });
 
-  const activeProvider = asTrimmedString(settingsState.draftConfig?.model?.provider).toLowerCase();
-  if (!PROVIDERS.includes(activeProvider)) {
-    return;
-  }
+  const providerHeader = document.createElement("h4");
+  providerHeader.className = "settings-subheading";
+  providerHeader.textContent = "Provider endpoints";
+  panel.append(providerHeader);
 
-  const activeProviderTitle = document.createElement("h4");
-  activeProviderTitle.className = "settings-subheading";
-  activeProviderTitle.textContent = `Active Provider Endpoint: ${activeProvider}`;
-  panel.append(activeProviderTitle);
-
-  appendTextField({
-    parent: panel,
-    query,
-    title: "Base URL",
-    path: `providers.${activeProvider}.base_url`,
-    helpText: "Endpoint base URL used for provider HTTP requests.",
-    placeholder: "https://...",
-    fieldErrors,
+  PROVIDERS.forEach((provider) => {
+    const card = document.createElement("section");
+    card.className = "settings-section";
+    const heading = document.createElement("h5");
+    heading.className = "settings-subheading";
+    heading.textContent = provider === settingsState.draftConfig?.model?.provider ? `${provider} (global active)` : provider;
+    card.append(heading);
+    appendTextField({
+      parent: card,
+      query,
+      title: `${provider} base URL`,
+      path: `providers.${provider}.base_url`,
+      helpText: "Endpoint base URL used for provider HTTP requests.",
+      placeholder: "https://...",
+      fieldErrors,
+    });
+    appendTextField({
+      parent: card,
+      query,
+      title: `${provider} API key env`,
+      path: `providers.${provider}.api_key_env`,
+      helpText: "Environment variable containing provider API key. Secret values remain redacted.",
+      placeholder: "PROVIDER_API_KEY",
+      fieldErrors,
+    });
+    const actions = document.createElement("div");
+    actions.className = "settings-advanced-actions";
+    const activate = document.createElement("button");
+    activate.type = "button";
+    activate.className = "layout-toggle";
+    activate.textContent = "Use for global model";
+    activate.addEventListener("click", () => {
+      updateDraft("model.provider", provider);
+    });
+    const test = document.createElement("button");
+    test.type = "button";
+    test.className = "layout-toggle";
+    test.textContent = settingsState.providerTestResults[provider]?.loading ? "Testing..." : "Test provider";
+    test.disabled = settingsState.providerTestResults[provider]?.loading;
+    test.addEventListener("click", () => {
+      void testProvider(provider);
+    });
+    actions.append(activate, test);
+    card.append(actions);
+    const result = settingsState.providerTestResults[provider];
+    if (result?.message) {
+      const status = document.createElement("p");
+      status.className = result.ok ? "settings-save-success" : "settings-inline-error";
+      status.textContent = result.message;
+      card.append(status);
+    }
+    panel.append(card);
   });
-  appendTextField({
-    parent: panel,
-    query,
-    title: "API key env",
-    path: `providers.${activeProvider}.api_key_env`,
-    helpText: "Environment variable containing provider API key.",
-    placeholder: "PROVIDER_API_KEY",
-    fieldErrors,
-  });
-
-  const secretNote = document.createElement("p");
-  secretNote.className = "settings-help muted";
-  secretNote.textContent = "Secret values are intentionally redacted in this view. Use Secrets page to rotate keys.";
-  panel.append(secretNote);
 }
 
 function buildChatCategory(panel, fieldErrors) {
@@ -1590,6 +1617,77 @@ function buildAgentsCategory(panel, fieldErrors) {
     Boolean(selectedProfile.self_improvement)
   )}.`;
   panel.append(summary);
+
+  const bulk = document.createElement("section");
+  bulk.className = "settings-section";
+  const bulkTitle = document.createElement("h4");
+  bulkTitle.className = "settings-subheading";
+  bulkTitle.textContent = "Bulk profile actions";
+  const bulkActions = document.createElement("div");
+  bulkActions.className = "settings-advanced-actions";
+  const bulkProvider = document.createElement("select");
+  bulkProvider.className = "settings-select";
+  PROVIDERS.forEach((provider) => {
+    const option = document.createElement("option");
+    option.value = provider;
+    option.textContent = provider;
+    bulkProvider.append(option);
+  });
+  const bulkModel = document.createElement("input");
+  bulkModel.className = "settings-input";
+  bulkModel.placeholder = "model name";
+  const bulkApply = document.createElement("button");
+  bulkApply.type = "button";
+  bulkApply.className = "layout-toggle";
+  bulkApply.textContent = "Set all agent overrides";
+  bulkApply.addEventListener("click", () => {
+    if (!window.confirm(`Set all agent profiles to ${bulkProvider.value} / ${bulkModel.value || "(keep name)"}?`)) {
+      return;
+    }
+    const next = cloneJSON(settingsState.draftConfig);
+    Object.keys(next.agents.profiles || {}).forEach((agentID) => {
+      next.agents.profiles[agentID] = next.agents.profiles[agentID] || {};
+      next.agents.profiles[agentID].model = next.agents.profiles[agentID].model || {};
+      next.agents.profiles[agentID].model.provider = bulkProvider.value;
+      if (bulkModel.value.trim()) {
+        next.agents.profiles[agentID].model.name = bulkModel.value.trim();
+      }
+    });
+    settingsState.draftConfig = normalizeConfigShape(next);
+    settingsState.advancedRaw = `${JSON.stringify(settingsState.draftConfig, null, 2)}\n`;
+    rerender();
+  });
+  bulkActions.append(bulkProvider, bulkModel, bulkApply);
+  bulk.append(bulkTitle, bulkActions);
+  panel.append(bulk);
+
+  const subHeader = document.createElement("h4");
+  subHeader.className = "settings-subheading";
+  subHeader.textContent = "Subagent defaults";
+  panel.append(subHeader);
+  appendListField({ parent: panel, query, title: "Allowed tools", path: "agents.subagent_defaults.allowed_tools", helpText: "One tool per line. Leave empty to use defaults.", placeholder: "fs.read\ncode.search", fieldErrors });
+  appendNumberField({ parent: panel, query, title: "Subagent timeout ms", path: "agents.subagent_defaults.timeout_ms", helpText: "Per-subagent timeout. 0 uses default.", placeholder: "45000", fieldErrors });
+  appendNumberField({ parent: panel, query, title: "Subagent max tool iterations", path: "agents.subagent_defaults.max_tool_iterations", helpText: "0 uses default.", placeholder: "12", fieldErrors });
+  appendSelectField({ parent: panel, query, title: "Subagent thinking mode", path: "agents.subagent_defaults.thinking_mode", helpText: "Controls subagent thinking output.", options: [{ value: "", label: "(inherit)" }, ...THINKING_MODES.map((mode) => ({ value: mode, label: mode }))], fieldErrors });
+  appendSelectField({ parent: panel, query, title: "Subagent delegation mode", path: "agents.subagent_defaults.delegation_mode", helpText: "Controls subagent delegation behavior.", options: [{ value: "", label: "(inherit)" }, { value: "prompt_only", label: "prompt_only" }, { value: "tool_gated", label: "tool_gated" }, { value: "auto_execute", label: "auto_execute" }], fieldErrors });
+
+  const overridesHeader = document.createElement("h4");
+  overridesHeader.className = "settings-subheading";
+  overridesHeader.textContent = "Subagent overrides";
+  panel.append(overridesHeader);
+  const overrides = settingsState.draftConfig?.agents?.subagent_overrides || {};
+  Object.keys(overrides).sort().forEach((agentID) => {
+    const card = document.createElement("section");
+    card.className = "settings-section";
+    const title = document.createElement("h5");
+    title.className = "settings-subheading";
+    title.textContent = agentID;
+    card.append(title);
+    appendListField({ parent: card, query, title: `${agentID} allowed tools`, path: `agents.subagent_overrides.${agentID}.allowed_tools`, helpText: "One tool per line.", placeholder: "fs.read\nagent.run", fieldErrors });
+    appendNumberField({ parent: card, query, title: `${agentID} timeout ms`, path: `agents.subagent_overrides.${agentID}.timeout_ms`, helpText: "0 uses default.", placeholder: "30000", fieldErrors });
+    appendSelectField({ parent: card, query, title: `${agentID} thinking mode`, path: `agents.subagent_overrides.${agentID}.thinking_mode`, helpText: "Optional override.", options: [{ value: "", label: "(inherit)" }, ...THINKING_MODES.map((mode) => ({ value: mode, label: mode }))], fieldErrors });
+    panel.append(card);
+  });
 }
 
 function buildNetworkCategory(panel, fieldErrors) {
@@ -1957,6 +2055,54 @@ async function loadConfig() {
   }
 }
 
+async function validateConfigRemotely() {
+  if (!settingsState.draftConfig) {
+    return;
+  }
+  settingsState.validatePending = true;
+  settingsState.saveError = null;
+  settingsState.saveSuccess = "";
+  rerender();
+  try {
+    await settingsState.apiClient.post("/api/admin/config/validate", settingsState.draftConfig);
+    settingsState.saveSuccess = "Validation passed.";
+  } catch (error) {
+    settingsState.saveError = {
+      message: error?.message || String(error),
+      status: Number(error?.status) || 0,
+      code: error?.code || "validate.failed",
+      details: error?.details || null,
+    };
+  } finally {
+    settingsState.validatePending = false;
+    rerender();
+  }
+}
+
+async function testProvider(provider) {
+  const cfg = settingsState.draftConfig?.providers?.[provider] || {};
+  settingsState.providerTestResults[provider] = { loading: true, message: "Testing..." };
+  rerender();
+  try {
+    const payload = await settingsState.apiClient.post("/api/admin/providers/test", {
+      provider,
+      base_url: asTrimmedString(cfg.base_url),
+    });
+    settingsState.providerTestResults[provider] = {
+      loading: false,
+      ok: Boolean(payload?.ok),
+      message: payload?.status_text || payload?.message || "Provider probe completed.",
+    };
+  } catch (error) {
+    settingsState.providerTestResults[provider] = {
+      loading: false,
+      ok: false,
+      message: error?.message || String(error),
+    };
+  }
+  rerender();
+}
+
 async function saveConfig() {
   if (!settingsState.draftConfig) {
     return;
@@ -1974,7 +2120,7 @@ async function saveConfig() {
   rerender();
 
   try {
-    await settingsState.apiClient.post("/api/admin/config", settingsState.draftConfig);
+    await settingsState.apiClient.patch("/api/admin/config", settingsState.draftConfig);
     settingsState.saveSuccess = "Config saved successfully.";
     await loadConfig();
   } catch (error) {
@@ -2088,6 +2234,15 @@ function renderSettingsPage() {
     rerender();
   });
 
+  const validateButton = document.createElement("button");
+  validateButton.type = "button";
+  validateButton.className = "layout-toggle";
+  validateButton.textContent = settingsState.validatePending ? "Validating..." : "Validate";
+  validateButton.disabled = settingsState.savePending || settingsState.validatePending;
+  validateButton.addEventListener("click", () => {
+    void validateConfigRemotely();
+  });
+
   const saveButton = document.createElement("button");
   saveButton.type = "button";
   saveButton.className = "chat-send-button";
@@ -2097,7 +2252,7 @@ function renderSettingsPage() {
     void saveConfig();
   });
 
-  actions.append(reloadButton, resetDraftButton, saveButton);
+  actions.append(reloadButton, resetDraftButton, validateButton, saveButton);
   toolbar.append(breadcrumbs, searchField, actions);
   container.append(toolbar);
 

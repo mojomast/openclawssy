@@ -1868,3 +1868,140 @@ details[open] .sandbox-advanced-summary::before {
   background: var(--warning-bg);
   color: var(--warning);
 }
+
+.dashboards-shell {
+  display: grid;
+  grid-template-columns: 19rem minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.dashboards-sidebar,
+.dashboards-main,
+.dashboard-widget-card,
+.dashboard-widget-picker {
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: var(--card);
+}
+
+.dashboards-sidebar,
+.dashboards-main {
+  padding: 1rem;
+}
+
+.dashboards-sidebar {
+  display: grid;
+  gap: 0.5rem;
+  align-content: start;
+}
+
+.dashboard-tab-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(4, auto);
+  gap: 0.35rem;
+}
+
+.dashboard-tab-row.active {
+  padding: 0.25rem;
+  border-radius: 0.5rem;
+  background: var(--muted);
+}
+
+.dashboards-toolbar {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.dashboards-toolbar .settings-input {
+  max-width: 22rem;
+}
+
+.dashboards-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-auto-rows: 110px;
+  gap: 0.75rem;
+}
+
+.dashboard-widget-card {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  padding: 0.75rem;
+  overflow: hidden;
+}
+
+.dashboard-widget-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  cursor: grab;
+}
+
+.dashboard-widget-header span,
+.widget-list-item span {
+  display: block;
+  color: var(--muted-foreground);
+  font-size: 0.9rem;
+}
+
+.dashboard-widget-actions,
+.secrets-form-actions,
+.dashboard-quick-form {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.dashboard-widget-body {
+  min-height: 0;
+  overflow: auto;
+  margin-top: 0.6rem;
+}
+
+.dashboard-widget-resize {
+  position: absolute;
+  right: 0.35rem;
+  bottom: 0.35rem;
+  width: 1.1rem;
+  height: 1.1rem;
+  border: 0;
+  background: linear-gradient(135deg, transparent 40%, var(--border) 40%, var(--border) 55%, transparent 55%);
+  cursor: nwse-resize;
+}
+
+.dashboard-widget-picker {
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.dashboard-widget-picker-list,
+.widget-list {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.widget-list-item {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--muted);
+  color: var(--foreground);
+  padding: 0.6rem 0.75rem;
+  text-align: left;
+}
+
+.widget-list-item.static {
+  cursor: default;
+}
+
+.dashboard-quick-form {
+  flex-direction: column;
+}
+
+@media (max-width: 1100px) {
+  .dashboards-shell {
+    grid-template-columns: 1fr;
+  }
+}

@@ -42,6 +42,37 @@ function formatDateTime(value) {
   return parsed.toLocaleString();
 }
 
+export async function fetchRecentRuns(apiClient, limit = 5) {
+	const payload = await apiClient.get(buildListQuery({ status: "", limit, offset: 0 }));
+	return Array.isArray(payload?.runs) ? payload.runs : [];
+}
+
+export function renderCompactRunsList(container, runs, options = {}) {
+	container.innerHTML = "";
+	const items = Array.isArray(runs) ? runs : [];
+	if (!items.length) {
+		const empty = document.createElement("p");
+		empty.className = "muted";
+		empty.textContent = "No recent runs.";
+		container.append(empty);
+		return;
+	}
+	const list = document.createElement("div");
+	list.className = "widget-list";
+	items.slice(0, options.limit || 5).forEach((run) => {
+		const row = document.createElement("button");
+		row.type = "button";
+		row.className = "widget-list-item";
+		const status = String(run?.status || "unknown").trim();
+		row.innerHTML = `<strong>${run?.id || "run"}</strong><span>${status} · ${formatDateTime(run?.updated_at)}</span>`;
+		if (typeof options.onOpenRun === "function") {
+			row.addEventListener("click", () => options.onOpenRun(run));
+		}
+		list.append(row);
+	});
+	container.append(list);
+}
+
 function buildListQuery({ status, limit, offset }) {
   const params = new URLSearchParams();
   if (status) {

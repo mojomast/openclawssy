@@ -49,6 +49,32 @@ function normalizeJobsPayload(payload) {
   return { paused, jobs: normalizedJobs };
 }
 
+export async function fetchSchedulerJobs(apiClient) {
+	const payload = await apiClient.get("/api/admin/scheduler/jobs");
+	return normalizeJobsPayload(payload);
+}
+
+export function renderCompactSchedulerJobs(container, jobs, options = {}) {
+	container.innerHTML = "";
+	const items = Array.isArray(jobs) ? jobs : [];
+	if (!items.length) {
+		const empty = document.createElement("p");
+		empty.className = "muted";
+		empty.textContent = "No scheduler jobs.";
+		container.append(empty);
+		return;
+	}
+	const list = document.createElement("div");
+	list.className = "widget-list";
+	items.slice(0, options.limit || 5).forEach((job) => {
+		const row = document.createElement("div");
+		row.className = "widget-list-item static";
+		row.innerHTML = `<strong>${job.id}</strong><span>${job.schedule} · ${job.enabled ? "enabled" : "disabled"}</span>`;
+		list.append(row);
+	});
+	container.append(list);
+}
+
 async function loadJobs(options = {}) {
   const { keepNotice = false } = options;
   schedulerState.loading = true;

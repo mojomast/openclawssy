@@ -40,6 +40,7 @@ Use dashboard admin sections to manage runtime behavior:
 - **Scheduler**: recurring job create/pause/resume/delete
 - **Agents**: profile and routing controls
 - **Memory**: memory health/stat visibility per agent
+- **Custom Dashboards**: operator-defined widget layouts with server-backed persistence
 
 Depending on your build/runtime features, additional pages (for example sandbox manager) may appear.
 
@@ -54,6 +55,81 @@ The fastest operator flow is:
 5. Set allowlists and command prefix as needed
 
 For full Discord bot creation and invite steps, see `docs/DISCORD.md`.
+
+## Custom Dashboards
+
+`Custom Dashboards` is a top-level dashboard route for building operator-specific layouts.
+
+Workflow:
+
+1. Open `Custom Dashboards`
+2. Create a dashboard
+3. Rename it from the top bar
+4. Add widgets from the searchable widget picker
+5. Drag widgets by the header and resize from the bottom-right handle
+6. Use arrow keys to nudge a focused widget, or `Delete` to remove it
+
+Current widget registry includes:
+
+- Runs: Recent
+- Scheduler: Jobs
+- Runtime Status
+- Chat: Quick prompt
+- Secrets: Presence summary
+- Settings: Model summary + Agent overrides summary
+- Discord/Telegram status
+
+Persistence model:
+
+- Local-first cache in browser localStorage for instant UX
+- Server-backed persistence in `.openclawssy/dashboard_layouts.json` through:
+  - `GET /api/admin/dashboards`
+  - `POST /api/admin/dashboards`
+  - `PUT /api/admin/dashboards/{id}`
+  - `DELETE /api/admin/dashboards/{id}`
+
+Architectural note:
+
+- Widgets are registered from a stable widget registry keyed by `widget_key`
+- Each saved dashboard stores layout items using `{widget_key, widget_instance_id, x, y, w, h, widget_state}`
+- Compact runs/scheduler widgets reuse exported render helpers from their source page modules instead of duplicating display logic
+- Secret widgets may show only key names or presence booleans; secret values are never rendered
+
+## Model & Provider switching
+
+Use `Settings` -> `Model Provider` for global model/provider changes:
+
+1. Set global `model.provider`
+2. Set global `model.name`
+3. Adjust `temperature` and `max_tokens`
+4. Edit provider endpoint `base_url` and `api_key_env` per provider
+5. Use `Test provider` to probe endpoint reachability before saving
+
+Agent and subagent controls live under `Settings` -> `Agents`:
+
+- per-agent profile overrides with inheritance-friendly blanks
+- bulk action to set all profile model overrides
+- structured subagent defaults editor
+- structured subagent override editor
+
+Config API ergonomics:
+
+- `GET /api/admin/config` returns redacted config
+- `PATCH /api/admin/config` merges partial updates instead of replacing the full blob
+- `POST /api/admin/config/validate` checks a config draft without saving and returns structured `field_errors`
+
+## Manual test script
+
+1. Open `Custom Dashboards`
+2. Create two dashboards
+3. Rename one dashboard
+4. Add at least three widgets to one dashboard
+5. Drag and resize widgets, refresh, and confirm layout persistence
+6. Open the same dashboard from another browser/session and confirm server-backed persistence
+7. Go to `Settings` -> `Model Provider`
+8. Switch the global provider/model and run `Validate`
+9. Set an agent profile override and confirm the profile still shows inherited behavior when provider/model fields are blank
+10. Confirm Secrets page and custom dashboard widgets never display secret values
 
 ## Common troubleshooting
 
