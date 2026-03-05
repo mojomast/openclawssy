@@ -393,6 +393,79 @@ body {
   background: color-mix(in srgb, var(--destructive) 12%, var(--background));
 }
 
+.chat-tool-entry-list {
+  display: grid;
+  gap: 0.55rem;
+  max-height: 24rem;
+  overflow: auto;
+}
+
+.chat-tool-entry {
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--muted);
+  padding: 0.5rem;
+}
+
+.chat-tool-entry.failed {
+  border-color: color-mix(in srgb, var(--destructive) 45%, var(--border));
+}
+
+.chat-tool-entry-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: start;
+}
+
+.chat-tool-entry-title {
+  min-width: 0;
+}
+
+.chat-tool-toggle {
+  width: 1.6rem;
+  height: 1.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--background);
+  color: var(--foreground);
+  font-weight: 700;
+}
+
+.chat-tool-entry-summary {
+  margin: 0.45rem 0 0;
+  color: var(--muted-foreground);
+}
+
+.chat-tool-entry-details {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.55rem;
+}
+
+.chat-tool-detail-block {
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--background);
+  padding: 0.45rem;
+}
+
+.chat-tool-detail-block.failed {
+  border-color: color-mix(in srgb, var(--destructive) 45%, var(--border));
+}
+
+.chat-tool-detail-block h5 {
+  margin: 0 0 0.35rem;
+}
+
+.chat-tool-detail-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 10rem;
+  overflow: auto;
+}
+
 .chat-loop-risk {
   border-left: 4px solid var(--accent);
 }

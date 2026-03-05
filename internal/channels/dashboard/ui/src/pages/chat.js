@@ -30,6 +30,8 @@ const chatViewState = {
   latestToolActivity: null,
   streamToolEvents: [],
   lastErrorSummary: "",
+  expandedToolEntries: {},
+  expandedErrorEntries: {},
   loopRisk: {
     level: "low",
     score: 0,
@@ -487,6 +489,8 @@ function resetViewForAgentSwitch() {
   chatViewState.currentSessionID = "";
   chatViewState.latestToolActivity = null;
   chatViewState.lastErrorSummary = "";
+  chatViewState.expandedToolEntries = {};
+  chatViewState.expandedErrorEntries = {};
   chatViewState.sendError = null;
   chatViewState.debugCopyStatus = "";
   chatViewState.transcript = [];
@@ -611,6 +615,24 @@ function toToolEvent(message, index) {
   };
 }
 
+function toolEventKey(event) {
+	if (!event || typeof event !== "object") {
+		return "";
+	}
+	return [safeText(event.runID), safeText(event.tool), safeText(event.toolCallID), String(event.index || 0), safeText(event.ts)].join("|");
+}
+
+function toggleToolEntryExpanded(eventKey, kind = "tool") {
+	const bucket = kind === "error" ? chatViewState.expandedErrorEntries : chatViewState.expandedToolEntries;
+	bucket[eventKey] = !Boolean(bucket[eventKey]);
+	rerenderIfActive();
+}
+
+function isToolEntryExpanded(eventKey, kind = "tool") {
+	const bucket = kind === "error" ? chatViewState.expandedErrorEntries : chatViewState.expandedToolEntries;
+	return Boolean(bucket[eventKey]);
+}
+
 function normalizeToolEvents(messages) {
   if (!Array.isArray(messages)) {
     return [];
@@ -702,6 +724,71 @@ function buildLoopRisk(toolEvents) {
     failureCount: failures.length,
     windowSize: window.length,
   };
+}
+
+function createToolEntry(event, kind = "tool") {
+	const eventKey = toolEventKey(event);
+	const expanded = isToolEntryExpanded(eventKey, kind);
+	const row = document.createElement("article");
+	row.className = `chat-tool-entry ${event.status === "failed" ? "failed" : "ok"}`;
+
+	const header = document.createElement("div");
+	header.className = "chat-tool-entry-header";
+	const toggle = document.createElement("button");
+	toggle.type = "button";
+	toggle.className = "chat-tool-toggle";
+	toggle.setAttribute("aria-expanded", String(expanded));
+	toggle.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${event.tool}`);
+	toggle.textContent = expanded ? "-" : "+";
+	toggle.addEventListener("click", () => toggleToolEntryExpanded(eventKey, kind));
+
+	const titleWrap = document.createElement("div");
+	titleWrap.className = "chat-tool-entry-title";
+	const title = document.createElement("p");
+	title.className = `chat-tool-line ${event.status === "failed" ? "failed" : "ok"}`;
+	title.textContent = `${event.tool}${event.toolCallID ? ` [${event.toolCallID}]` : ""}`;
+	const meta = document.createElement("p");
+	meta.className = "muted";
+	meta.textContent = `${event.status}${event.ts ? ` · ${formatDateTime(event.ts)}` : ""}${event.runID ? ` · run ${event.runID}` : ""}`;
+	titleWrap.append(title, meta);
+	header.append(toggle, titleWrap);
+	row.append(header);
+
+	const summary = document.createElement("p");
+	summary.className = "chat-tool-entry-summary";
+	summary.textContent = compactText(firstNonEmpty(event.summary, event.errorText, event.outputText, event.argsText), expanded ? 400 : 160) || "(no summary)";
+	row.append(summary);
+
+	if (expanded) {
+		const details = document.createElement("div");
+		details.className = "chat-tool-entry-details";
+		const sections = [
+			{ label: "Arguments", value: event.argsText },
+			{ label: "Output", value: event.outputText },
+			{ label: "Error", value: event.errorText, error: true },
+		].filter((item) => safeText(item.value));
+		if (!sections.length) {
+			const empty = document.createElement("p");
+			empty.className = "muted";
+			empty.textContent = "No additional details.";
+			details.append(empty);
+		} else {
+			sections.forEach((section) => {
+				const block = document.createElement("section");
+				block.className = `chat-tool-detail-block${section.error ? " failed" : ""}`;
+				const label = document.createElement("h5");
+				label.textContent = section.label;
+				const body = document.createElement("pre");
+				body.className = "chat-tool-detail-body";
+				body.textContent = section.value;
+				block.append(label, body);
+				details.append(block);
+			});
+		}
+		row.append(details);
+	}
+
+	return row;
 }
 
 function replacePendingAssistant(message) {
@@ -1885,6 +1972,45 @@ function renderChatPage() {
   errorBody.textContent = chatViewState.lastErrorSummary || "No recent errors.";
   errorCard.append(errorTitle, errorBody);
 
+  const toolHistoryCard = document.createElement("section");
+  toolHistoryCard.className = "chat-activity-card";
+  const toolHistoryTitle = document.createElement("h4");
+  toolHistoryTitle.textContent = `Tool Calls & Results (${chatViewState.streamToolEvents.length})`;
+  toolHistoryCard.append(toolHistoryTitle);
+  if (!chatViewState.streamToolEvents.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "No tool calls captured yet.";
+    toolHistoryCard.append(empty);
+  } else {
+    const list = document.createElement("div");
+    list.className = "chat-tool-entry-list";
+    chatViewState.streamToolEvents.slice().reverse().forEach((event) => {
+      list.append(createToolEntry(event, "tool"));
+    });
+    toolHistoryCard.append(list);
+  }
+
+  const errorEventsCard = document.createElement("section");
+  errorEventsCard.className = "chat-activity-card";
+  const errorEventsTitle = document.createElement("h4");
+  const failedEvents = chatViewState.streamToolEvents.filter((event) => event.status === "failed").slice().reverse();
+  errorEventsTitle.textContent = `Recent Tool Errors (${failedEvents.length})`;
+  errorEventsCard.append(errorEventsTitle);
+  if (!failedEvents.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "No tool errors in the current activity window.";
+    errorEventsCard.append(empty);
+  } else {
+    const list = document.createElement("div");
+    list.className = "chat-tool-entry-list";
+    failedEvents.forEach((event) => {
+      list.append(createToolEntry(event, "error"));
+    });
+    errorEventsCard.append(list);
+  }
+
   const riskCard = document.createElement("section");
   riskCard.className = `chat-activity-card chat-loop-risk ${chatViewState.loopRisk.level}`;
   const riskTitle = document.createElement("h4");
@@ -1933,7 +2059,7 @@ function renderChatPage() {
     riskCard.append(warningEl);
   });
 
-  activityPane.append(activityTitle, agentControlCard, runMeta, sessionMeta, debugActions, latestToolCard, errorCard, riskCard);
+  activityPane.append(activityTitle, agentControlCard, runMeta, sessionMeta, debugActions, latestToolCard, errorCard, toolHistoryCard, errorEventsCard, riskCard);
 
   page.append(transcriptPane, activityPane);
   container.append(heading, note, page);
