@@ -11,6 +11,10 @@ const STREAM_RENDER_THROTTLE_MS = 100;
 const SESSION_MESSAGES_LIMIT = 200;
 const SESSION_LOOKUP_LIMIT = 1;
 const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "canceled"]);
+const CHAT_LAYOUT_STORAGE_KEY = "dashboard.chat_layout.p1";
+const CHAT_ACTIVITY_WIDTH_MIN = 260;
+const CHAT_ACTIVITY_WIDTH_MAX = 720;
+const CHAT_ACTIVITY_WIDTH_DEFAULT = 368;
 
 const chatViewState = {
   draft: "",
@@ -74,7 +78,37 @@ const chatViewState = {
   switchAgentError: "",
   agentProfileContext: null,
   agentGlobalConfig: null,
+  activityPaneWidth: CHAT_ACTIVITY_WIDTH_DEFAULT,
 };
+
+function clamp(value, min, max) {
+	return Math.min(max, Math.max(min, value));
+}
+
+function readChatLayoutPrefs() {
+	try {
+		const raw = window.localStorage.getItem(CHAT_LAYOUT_STORAGE_KEY);
+		if (!raw) {
+			return { activityPaneWidth: CHAT_ACTIVITY_WIDTH_DEFAULT };
+		}
+		const parsed = JSON.parse(raw);
+		return {
+			activityPaneWidth: clamp(Number(parsed.activityPaneWidth) || CHAT_ACTIVITY_WIDTH_DEFAULT, CHAT_ACTIVITY_WIDTH_MIN, CHAT_ACTIVITY_WIDTH_MAX),
+		};
+	} catch (_error) {
+		return { activityPaneWidth: CHAT_ACTIVITY_WIDTH_DEFAULT };
+	}
+}
+
+function persistChatLayoutPrefs() {
+	try {
+		window.localStorage.setItem(CHAT_LAYOUT_STORAGE_KEY, JSON.stringify({
+			activityPaneWidth: chatViewState.activityPaneWidth,
+		}));
+	} catch (_error) {
+		// ignore localStorage failures
+	}
+}
 
 function safeText(value) {
   return String(value || "").trim();
@@ -1706,6 +1740,7 @@ function renderChatPage() {
 
   const page = document.createElement("section");
   page.className = "chat-page";
+  page.style.setProperty("--chat-activity-width", `${chatViewState.activityPaneWidth}px`);
 
   const transcriptPane = document.createElement("section");
   transcriptPane.className = "chat-transcript-pane";
@@ -1867,6 +1902,15 @@ function renderChatPage() {
   }
 
   transcriptPane.append(transcriptTitle, transcript, composer);
+
+  const paneResizer = document.createElement("div");
+  paneResizer.className = "chat-pane-resizer";
+  paneResizer.setAttribute("role", "separator");
+  paneResizer.setAttribute("aria-label", "Resize chat activity pane");
+  paneResizer.setAttribute("aria-valuemin", String(CHAT_ACTIVITY_WIDTH_MIN));
+  paneResizer.setAttribute("aria-valuemax", String(CHAT_ACTIVITY_WIDTH_MAX));
+  paneResizer.setAttribute("aria-valuenow", String(chatViewState.activityPaneWidth));
+  paneResizer.tabIndex = 0;
 
   const activityPane = document.createElement("aside");
   activityPane.className = "chat-activity-pane";
@@ -2061,8 +2105,43 @@ function renderChatPage() {
 
   activityPane.append(activityTitle, agentControlCard, runMeta, sessionMeta, debugActions, latestToolCard, errorCard, toolHistoryCard, errorEventsCard, riskCard);
 
-  page.append(transcriptPane, activityPane);
+  page.append(transcriptPane, paneResizer, activityPane);
   container.append(heading, note, page);
+
+  if (!window.matchMedia("(max-width: 900px)").matches) {
+		paneResizer.addEventListener("pointerdown", (event) => {
+			if (event.button !== 0) {
+				return;
+			}
+			event.preventDefault();
+			const startX = event.clientX;
+			const startWidth = chatViewState.activityPaneWidth;
+			const onMove = (moveEvent) => {
+				chatViewState.activityPaneWidth = clamp(startWidth - (moveEvent.clientX - startX), CHAT_ACTIVITY_WIDTH_MIN, CHAT_ACTIVITY_WIDTH_MAX);
+				renderChatPage();
+			};
+			const onUp = () => {
+				window.removeEventListener("pointermove", onMove);
+				window.removeEventListener("pointerup", onUp);
+				persistChatLayoutPrefs();
+			};
+			window.addEventListener("pointermove", onMove);
+			window.addEventListener("pointerup", onUp, { once: true });
+		});
+		paneResizer.addEventListener("keydown", (event) => {
+			if (event.key === "ArrowLeft") {
+				event.preventDefault();
+				chatViewState.activityPaneWidth = clamp(chatViewState.activityPaneWidth + 16, CHAT_ACTIVITY_WIDTH_MIN, CHAT_ACTIVITY_WIDTH_MAX);
+				renderChatPage();
+				persistChatLayoutPrefs();
+			} else if (event.key === "ArrowRight") {
+				event.preventDefault();
+				chatViewState.activityPaneWidth = clamp(chatViewState.activityPaneWidth - 16, CHAT_ACTIVITY_WIDTH_MIN, CHAT_ACTIVITY_WIDTH_MAX);
+				renderChatPage();
+				persistChatLayoutPrefs();
+			}
+		});
+	}
 
   if (chatViewState.transcriptPinned) {
     transcript.scrollTop = transcript.scrollHeight;
@@ -2091,6 +2170,10 @@ export const chatPage = {
   key: "chat",
   title: "Chat",
   async render({ container, apiClient, store }) {
+    if (!chatViewState.container) {
+		const prefs = readChatLayoutPrefs();
+		chatViewState.activityPaneWidth = prefs.activityPaneWidth;
+	}
     chatViewState.container = container;
     chatViewState.apiClient = apiClient;
     chatViewState.store = store;

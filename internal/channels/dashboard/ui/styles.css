@@ -228,7 +228,7 @@ body {
 
 .chat-page {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(17rem, 23rem);
+  grid-template-columns: minmax(0, 1fr) 10px minmax(16rem, var(--chat-activity-width, 368px));
   gap: 0.9rem;
 }
 
@@ -238,6 +238,19 @@ body {
   border-radius: 0.5rem;
   background: var(--muted);
   padding: 0.75rem;
+}
+
+.chat-pane-resizer {
+  width: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 65%, transparent);
+  cursor: col-resize;
+}
+
+.chat-pane-resizer:hover,
+.chat-pane-resizer:focus-visible {
+  background: color-mix(in srgb, var(--accent) 45%, var(--border));
+  outline: none;
 }
 
 .chat-transcript-pane h3,
@@ -1536,6 +1549,10 @@ pre {
 
   .chat-page {
     grid-template-columns: 1fr;
+  }
+
+  .chat-pane-resizer {
+    display: none;
   }
 
   .settings-workspace {
