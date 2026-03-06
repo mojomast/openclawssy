@@ -112,6 +112,11 @@ Come chat about Openclawssy and other Ussyverse projects.
   - Global workspace skill availability at `workspace/skills/clawdefuckifier.md` so any agent can discover and load the repair workflow
   - Memory admin endpoint (`GET /api/admin/memory/<agent>`) with health + embedding stats
 
+- Provider UX
+  - Hatz model discovery from Settings with inline `Query models`
+  - Automatic `model.name` dropdown once Hatz models are loaded
+  - Inline API key prompt in Settings when a discovery-enabled provider is missing a stored key
+
 - Memory system
   - Event stream persisted under `.openclawssy/agents/<agent>/memory/events/*.jsonl`
   - Working memory store with tools (`memory.search`, `memory.write`, `memory.update`, `memory.forget`, `memory.health`)

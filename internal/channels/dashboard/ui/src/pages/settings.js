@@ -54,6 +54,10 @@ const settingsState = {
   validatePending: false,
   providerTestResults: {},
   providerModelsResults: {},
+  providerSecretDrafts: {},
+  providerSecretSaving: {},
+  providerSecretSuccess: {},
+  providerSecretError: {},
 };
 
 function cloneJSON(value) {
@@ -85,6 +89,18 @@ function asTrimmedString(value) {
 
 function providerSupportsModelDiscovery(provider) {
   return PROVIDERS_WITH_MODEL_DISCOVERY.has(asTrimmedString(provider).toLowerCase());
+}
+
+function providerSecretStoreKey(provider) {
+  return `provider/${asTrimmedString(provider).toLowerCase()}/api_key`;
+}
+
+function providerSecretEnvName(provider) {
+  return asTrimmedString(settingsState.draftConfig?.providers?.[provider]?.api_key_env);
+}
+
+function isMissingProviderAPIKeyMessage(message) {
+  return asTrimmedString(message).toLowerCase().includes("missing api key");
 }
 
 function normalizeDiscoveredModels(models) {
@@ -179,6 +195,15 @@ function resetDiscordSecretFeedback() {
   settingsState.discordTokenError = "";
 }
 
+function resetProviderSecretFeedback(provider) {
+  const normalized = asTrimmedString(provider).toLowerCase();
+  if (!normalized) {
+    return;
+  }
+  settingsState.providerSecretSuccess[normalized] = "";
+  settingsState.providerSecretError[normalized] = "";
+}
+
 function updateDiscordSecretPresence(payload) {
   const keys = Array.isArray(payload?.keys) ? payload.keys : [];
   settingsState.discordSecretPresent = keys.some((key) => String(key || "").trim() === DISCORD_SECRET_KEY);
@@ -243,6 +268,36 @@ async function deleteDiscordSecret() {
     settingsState.discordTokenError = error instanceof Error ? error.message : String(error);
   } finally {
     settingsState.discordTokenDeleting = false;
+    rerender();
+  }
+}
+
+async function submitProviderSecret(provider) {
+  const normalized = asTrimmedString(provider).toLowerCase();
+  if (!normalized) {
+    return;
+  }
+  const value = String(settingsState.providerSecretDrafts[normalized] || "");
+  resetProviderSecretFeedback(normalized);
+  if (!value.trim()) {
+    settingsState.providerSecretError[normalized] = `${normalized} API key is required.`;
+    rerender();
+    return;
+  }
+  settingsState.providerSecretSaving[normalized] = true;
+  rerender();
+  try {
+    await settingsState.apiClient.post("/api/admin/secrets", { name: providerSecretStoreKey(normalized), value });
+    settingsState.providerSecretDrafts[normalized] = "";
+    settingsState.providerSecretSuccess[normalized] = `${normalized} API key stored. Refreshing models...`;
+    await loadProviderModels(normalized);
+    if (settingsState.providerModelsResults?.[normalized]?.error) {
+      settingsState.providerSecretSuccess[normalized] = `${normalized} API key stored.`;
+    }
+  } catch (error) {
+    settingsState.providerSecretError[normalized] = error instanceof Error ? error.message : String(error);
+  } finally {
+    settingsState.providerSecretSaving[normalized] = false;
     rerender();
   }
 }
@@ -968,6 +1023,78 @@ function appendModelNameField({ parent, query, fieldErrors }) {
   });
 }
 
+function appendProviderSecretPrompt({ parent, provider }) {
+  const normalized = asTrimmedString(provider).toLowerCase();
+  const modelsResult = settingsState.providerModelsResults?.[normalized];
+  if (!providerSupportsModelDiscovery(normalized) || !modelsResult?.missingKey) {
+    return;
+  }
+
+  const panel = document.createElement("section");
+  panel.className = "settings-section";
+
+  const heading = document.createElement("h4");
+  heading.className = "settings-subheading";
+  heading.textContent = `${normalized} API key required`;
+  panel.append(heading);
+
+  const intro = document.createElement("p");
+  intro.className = "muted";
+  const envName = providerSecretEnvName(normalized) || `${normalized.toUpperCase()}_API_KEY`;
+  intro.textContent = `OpenClawssy cannot query ${normalized} models yet because no API key is available. Store a key now under ${providerSecretStoreKey(normalized)}. Runtime can also use ${envName} if it is already present in the environment.`;
+  panel.append(intro);
+
+  const form = document.createElement("form");
+  form.className = "secrets-form";
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void submitProviderSecret(normalized);
+  });
+
+  const keyField = document.createElement("label");
+  keyField.className = "secrets-form-field";
+  const keyLabel = document.createElement("span");
+  keyLabel.textContent = `${normalized} API key`;
+  const keyInput = document.createElement("input");
+  keyInput.type = "password";
+  keyInput.autocomplete = "new-password";
+  keyInput.className = "settings-input";
+  keyInput.placeholder = `Paste ${normalized} API key`;
+  keyInput.value = settingsState.providerSecretDrafts[normalized] || "";
+  keyInput.addEventListener("input", () => {
+    settingsState.providerSecretDrafts[normalized] = keyInput.value;
+    resetProviderSecretFeedback(normalized);
+  });
+  keyField.append(keyLabel, keyInput);
+
+  const actions = document.createElement("div");
+  actions.className = "secrets-form-actions";
+  const saveButton = document.createElement("button");
+  saveButton.type = "submit";
+  saveButton.className = "chat-send-button";
+  saveButton.disabled = Boolean(settingsState.providerSecretSaving[normalized]);
+  saveButton.textContent = settingsState.providerSecretSaving[normalized] ? "Saving..." : "Save Key";
+  actions.append(saveButton);
+
+  form.append(keyField, actions);
+  panel.append(form);
+
+  if (settingsState.providerSecretError[normalized]) {
+    const error = document.createElement("p");
+    error.className = "settings-inline-error";
+    error.textContent = settingsState.providerSecretError[normalized];
+    panel.append(error);
+  }
+  if (settingsState.providerSecretSuccess[normalized]) {
+    const success = document.createElement("p");
+    success.className = "settings-save-success";
+    success.textContent = settingsState.providerSecretSuccess[normalized];
+    panel.append(success);
+  }
+
+  parent.append(panel);
+}
+
 function appendListField({ parent, query, title, path, helpText = "", placeholder = "", fieldErrors }) {
   if (!fieldVisible(query, title, path, helpText, "list comma newline")) {
     return;
@@ -1059,6 +1186,7 @@ function buildModelCategory(panel, fieldErrors) {
     normalizeValue: (value) => asTrimmedString(value).toLowerCase(),
   });
   appendModelNameField({ parent: panel, query, fieldErrors });
+  appendProviderSecretPrompt({ parent: panel, provider: settingsState.draftConfig?.model?.provider });
   appendNumberField({
     parent: panel,
     query,
@@ -1126,15 +1254,18 @@ function buildModelCategory(panel, fieldErrors) {
     test.addEventListener("click", () => {
       void testProvider(provider);
     });
-    const queryModels = document.createElement("button");
-    queryModels.type = "button";
-    queryModels.className = "layout-toggle";
-    queryModels.textContent = settingsState.providerModelsResults[provider]?.loading ? "Querying..." : "Query models";
-    queryModels.disabled = settingsState.providerModelsResults[provider]?.loading;
-    queryModels.addEventListener("click", () => {
-      void loadProviderModels(provider);
-    });
-    actions.append(activate, test, queryModels);
+    actions.append(activate, test);
+    if (providerSupportsModelDiscovery(provider)) {
+      const queryModels = document.createElement("button");
+      queryModels.type = "button";
+      queryModels.className = "layout-toggle";
+      queryModels.textContent = settingsState.providerModelsResults[provider]?.loading ? "Querying..." : "Query models";
+      queryModels.disabled = settingsState.providerModelsResults[provider]?.loading;
+      queryModels.addEventListener("click", () => {
+        void loadProviderModels(provider);
+      });
+      actions.append(queryModels);
+    }
     card.append(actions);
     const result = settingsState.providerTestResults[provider];
     if (result?.message) {
@@ -2406,15 +2537,18 @@ async function loadProviderModels(provider) {
     settingsState.providerModelsResults[provider] = {
       loading: false,
       error: false,
+      missingKey: false,
       models,
       message: models.length ? `Loaded ${models.length} model${models.length === 1 ? "" : "s"}.` : "No models returned.",
     };
   } catch (error) {
+    const message = error?.message || String(error);
     settingsState.providerModelsResults[provider] = {
       loading: false,
       error: true,
+      missingKey: isMissingProviderAPIKeyMessage(message),
       models: [],
-      message: error?.message || String(error),
+      message,
     };
   }
   rerender();

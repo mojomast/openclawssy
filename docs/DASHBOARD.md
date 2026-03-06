@@ -164,6 +164,7 @@ Use `Settings` -> `Model Provider` for global model/provider changes:
 5. Use `Test provider` to probe endpoint reachability before saving
 6. Use `Query models` when a provider supports model discovery (for example Hatz)
 7. When Hatz models are loaded, `model.name` switches from free text to a dropdown of discovered model IDs
+8. If Hatz discovery reports a missing API key, use the inline prompt in Settings to store `provider/hatz/api_key` without leaving the page
 
 Agent and subagent controls live under `Settings` -> `Agents`:
 

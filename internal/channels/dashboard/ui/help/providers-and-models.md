@@ -33,6 +33,8 @@ Use `Settings` -> `Model Provider`.
 
 When `hatz` models are successfully discovered, the global `model.name` field changes into a dropdown so you can select an available model id instead of typing it manually.
 
+If model discovery reports a missing API key, Settings now shows an inline password prompt so you can store `provider/hatz/api_key` without leaving the page.
+
 ## Per-agent overrides
 
 Use `Settings` -> `Agents`.
