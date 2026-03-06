@@ -1553,7 +1553,7 @@ func TestProviderRetryAndTimeoutHelpers(t *testing.T) {
 
 func TestProviderEndpointAndMessageHelpers(t *testing.T) {
 	cfg := config.Default()
-	providers := []string{"openai", "openrouter", "requesty", "zai", "generic"}
+	providers := []string{"openai", "openrouter", "requesty", "hatz", "zai", "generic"}
 	for _, name := range providers {
 		if _, err := providerEndpoint(cfg, name); err != nil {
 			t.Fatalf("expected provider %q to resolve, got %v", name, err)
@@ -1582,6 +1582,42 @@ func TestProviderEndpointAndMessageHelpers(t *testing.T) {
 	}
 	if trimmed[len(trimmed)-1].Content != "tail" {
 		t.Fatalf("expected latest turn preserved, got %+v", trimmed)
+	}
+}
+
+func TestListProviderModelsUsesHatzChatModelsEndpoint(t *testing.T) {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/models" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer hatz-secret" {
+			t.Fatalf("unexpected auth header: %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"id": "hatz-coder"}, {"name": "hatz-reasoner"}},
+		})
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.Providers.Hatz.BaseURL = server.URL
+	cfg.Providers.Hatz.APIKey = ""
+	cfg.Providers.Hatz.APIKeyEnv = ""
+
+	models, err := ListProviderModels(context.Background(), cfg, "hatz", func(name string) (string, bool, error) {
+		if name != "provider/hatz/api_key" {
+			t.Fatalf("unexpected secret lookup key: %q", name)
+		}
+		return "hatz-secret", true, nil
+	})
+	if err != nil {
+		t.Fatalf("ListProviderModels failed: %v", err)
+	}
+	if len(models) != 2 || models[0] != "hatz-coder" || models[1] != "hatz-reasoner" {
+		t.Fatalf("unexpected models: %#v", models)
 	}
 }
 

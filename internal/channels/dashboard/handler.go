@@ -23,8 +23,10 @@ import (
 	"openclawssy/internal/config"
 	"openclawssy/internal/memory"
 	memorystore "openclawssy/internal/memory/store"
+	"openclawssy/internal/runtime"
 	"openclawssy/internal/scheduler"
 	"openclawssy/internal/secrets"
+	"openclawssy/internal/skillcatalog"
 )
 
 type Handler struct {
@@ -45,18 +47,22 @@ type Options struct {
 }
 
 type monitorRunRecord struct {
-	RunID        string `json:"run_id"`
-	AgentID      string `json:"agent_id"`
-	Source       string `json:"source,omitempty"`
-	Role         string `json:"role"`
-	Message      string `json:"message,omitempty"`
-	SessionID    string `json:"session_id,omitempty"`
-	Status       string `json:"status"`
-	Tracked      bool   `json:"tracked"`
-	Error        string `json:"error,omitempty"`
-	ArtifactPath string `json:"artifact_path,omitempty"`
-	StartedAt    string `json:"started_at,omitempty"`
-	CompletedAt  string `json:"completed_at,omitempty"`
+	RunID          string `json:"run_id"`
+	AgentID        string `json:"agent_id"`
+	TaskID         string `json:"task_id,omitempty"`
+	Source         string `json:"source,omitempty"`
+	Role           string `json:"role"`
+	Message        string `json:"message,omitempty"`
+	ModelProvider  string `json:"model_provider,omitempty"`
+	ModelName      string `json:"model_name,omitempty"`
+	CheckpointPath string `json:"checkpoint_path,omitempty"`
+	SessionID      string `json:"session_id,omitempty"`
+	Status         string `json:"status"`
+	Tracked        bool   `json:"tracked"`
+	Error          string `json:"error,omitempty"`
+	ArtifactPath   string `json:"artifact_path,omitempty"`
+	StartedAt      string `json:"started_at,omitempty"`
+	CompletedAt    string `json:"completed_at,omitempty"`
 }
 
 type dashboardLayoutRecord struct {
@@ -97,27 +103,11 @@ var dashboardEditableDocNames = []string{
 }
 
 const (
-	playwriteSkillName  = "playwrite"
-	playwriteSkillFile  = "playwrite.md"
 	skillsBlockStartTag = "<!-- OPENCLAWSSY_ACTIVATED_SKILLS_START -->"
 	skillsBlockEndTag   = "<!-- OPENCLAWSSY_ACTIVATED_SKILLS_END -->"
 )
 
-var builtInSkillCatalog = map[string]string{
-	playwriteSkillName: "---\n" +
-		"name: playwrite\n" +
-		"required_secrets: []\n" +
-		"---\n\n" +
-		"# Playwrite Skill\n\n" +
-		"Use this skill for browser automation and UI verification tasks.\n\n" +
-		"Workflow:\n" +
-		"1. Ensure browser dependencies are installed for your environment.\n" +
-		"2. Use `playwright` scripts for deterministic UI checks.\n" +
-		"3. Prefer isolated test selectors and explicit waits.\n\n" +
-		"When this skill is activated for an agent, ask it to load with:\n" +
-		"`skill.read` (name=`playwrite`)\n\n" +
-		"Then execute the generated script with the shell tool if available.\n",
-}
+var builtInSkillCatalog = skillcatalog.Catalog()
 
 //go:embed ui/*
 var dashboardUIFS embed.FS
@@ -142,6 +132,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/config", h.handleConfig)
 	mux.HandleFunc("/api/admin/config/validate", h.handleConfigValidate)
 	mux.HandleFunc("/api/admin/providers/test", h.handleProviderTest)
+	mux.HandleFunc("/api/admin/providers/models", h.handleProviderModels)
 	mux.HandleFunc("/api/admin/secrets", h.handleSecrets)
 	mux.HandleFunc("/api/admin/secrets/", h.handleSecretByKey)
 	mux.HandleFunc("/api/admin/dashboards", h.handleDashboards)
@@ -481,8 +472,8 @@ func (h *Handler) handleProviderTest(w http.ResponseWriter, r *http.Request) {
 		writeDashboardError(w, http.StatusBadRequest, "provider_test.invalid_input", "provider and base_url are required", nil)
 		return
 	}
-	if !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "zai": true, "generic": true}[provider] {
-		writeDashboardError(w, http.StatusBadRequest, "provider_test.invalid_provider", "provider must be one of openai, openrouter, requesty, zai, generic", nil)
+	if !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "generic": true}[provider] {
+		writeDashboardError(w, http.StatusBadRequest, "provider_test.invalid_provider", "provider must be one of openai, openrouter, requesty, hatz, zai, generic", nil)
 		return
 	}
 	client := &http.Client{Timeout: 4 * time.Second}
@@ -504,6 +495,41 @@ func (h *Handler) handleProviderTest(w http.ResponseWriter, r *http.Request) {
 		"status":      resp.StatusCode,
 		"status_text": resp.Status,
 	})
+}
+
+func (h *Handler) handleProviderModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
+		return
+	}
+	provider := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("provider")))
+	if provider == "" {
+		writeDashboardError(w, http.StatusBadRequest, "provider_models.invalid_provider", "provider is required", nil)
+		return
+	}
+	if !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "generic": true}[provider] {
+		writeDashboardError(w, http.StatusBadRequest, "provider_models.invalid_provider", "provider must be one of openai, openrouter, requesty, hatz, zai, generic", nil)
+		return
+	}
+
+	cfg, err := config.LoadOrDefault(filepath.Join(h.rootDir, ".openclawssy", "config.json"))
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "config.load_failed", err.Error(), nil)
+		return
+	}
+	secretStore, err := secrets.NewStore(cfg)
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "provider_models.secret_store_failed", err.Error(), nil)
+		return
+	}
+	models, err := runtime.ListProviderModels(r.Context(), cfg, provider, func(name string) (string, bool, error) {
+		return secretStore.Get(name)
+	})
+	if err != nil {
+		writeDashboardError(w, http.StatusBadGateway, "provider_models.fetch_failed", err.Error(), nil)
+		return
+	}
+	writeJSON(w, map[string]any{"provider": provider, "models": models, "count": len(models)})
 }
 
 func (h *Handler) handleDashboards(w http.ResponseWriter, r *http.Request) {
@@ -956,8 +982,8 @@ func collectConfigFieldErrors(cfg config.Config, err error) map[string]string {
 	}
 
 	provider := strings.ToLower(strings.TrimSpace(cfg.Model.Provider))
-	if provider == "" || !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "zai": true, "generic": true}[provider] {
-		set("model.provider", "Provider must be one of openai, openrouter, requesty, zai, generic.")
+	if provider == "" || !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "generic": true}[provider] {
+		set("model.provider", "Provider must be one of openai, openrouter, requesty, hatz, zai, generic.")
 	}
 	if strings.TrimSpace(cfg.Model.Name) == "" {
 		set("model.name", "Model name is required.")
@@ -994,7 +1020,7 @@ func collectConfigFieldErrors(cfg config.Config, err error) map[string]string {
 	}
 	for agentID, profile := range cfg.Agents.Profiles {
 		provider := strings.ToLower(strings.TrimSpace(profile.Model.Provider))
-		if provider != "" && !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "zai": true, "generic": true}[provider] {
+		if provider != "" && !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "generic": true}[provider] {
 			set("agents.profiles."+agentID+".model.provider", "Profile model provider must match a supported provider.")
 		}
 		if profile.Model.MaxTokens < 0 || profile.Model.MaxTokens > 20000 {
@@ -1338,6 +1364,7 @@ func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
 		"model_override":   false,
 	}
 	agentsConfig := map[string]any{}
+	agentSummaries := map[string]any{}
 	cfgPath := filepath.Join(h.rootDir, ".openclawssy", "config.json")
 	if cfg, err := config.LoadOrDefault(cfgPath); err == nil {
 		agentsConfig = map[string]any{
@@ -1365,6 +1392,7 @@ func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
 				profileContext["model_override"] = true
 			}
 		}
+		agentSummaries = h.buildDashboardAgentSummaries(cfg)
 	}
 	writeJSON(w, map[string]any{
 		"agents":          h.listDashboardAgentIDs(),
@@ -1375,7 +1403,50 @@ func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
 		"room_id":         roomID,
 		"profile_context": profileContext,
 		"agents_config":   agentsConfig,
+		"agent_summaries": agentSummaries,
 	})
+}
+
+func (h *Handler) buildDashboardAgentSummaries(cfg config.Config) map[string]any {
+	agentIDs := h.listDashboardAgentIDs()
+	summaries := make(map[string]any, len(agentIDs))
+	for _, agentID := range agentIDs {
+		summary := map[string]any{
+			"agent_id":                agentID,
+			"exists":                  false,
+			"enabled":                 true,
+			"self_improvement":        false,
+			"self_improvement_ready":  false,
+			"model_provider":          "",
+			"model_name":              "",
+			"model_override":          false,
+			"activated_skills":        []string{},
+			"is_clawdefuckifier":      strings.HasPrefix(strings.ToLower(strings.TrimSpace(agentID)), "clawdefuckifier"),
+			"inter_agent_messaging":   cfg.Agents.AllowInterAgentMessaging,
+			"global_self_improvement": cfg.Agents.SelfImprovementEnabled,
+		}
+		if profile, ok := cfg.Agents.Profiles[agentID]; ok {
+			summary["exists"] = true
+			if profile.Enabled != nil {
+				summary["enabled"] = *profile.Enabled
+			}
+			summary["self_improvement"] = profile.SelfImprovement
+			summary["self_improvement_ready"] = cfg.Agents.SelfImprovementEnabled && profile.SelfImprovement
+			if provider := strings.TrimSpace(profile.Model.Provider); provider != "" {
+				summary["model_provider"] = provider
+				summary["model_override"] = true
+			}
+			if modelName := strings.TrimSpace(profile.Model.Name); modelName != "" {
+				summary["model_name"] = modelName
+				summary["model_override"] = true
+			}
+		}
+		if activated, err := h.readActivatedSkills(agentID); err == nil && len(activated) > 0 {
+			summary["activated_skills"] = activated
+		}
+		summaries[agentID] = summary
+	}
+	return summaries
 }
 
 func (h *Handler) handleMonitorRuns(w http.ResponseWriter, r *http.Request) {
@@ -1517,8 +1588,11 @@ func (h *Handler) collectMonitorRunsForAgent(auditPath string, byRunID map[strin
 		switch strings.TrimSpace(event.Type) {
 		case "run.start":
 			record.StartedAt = event.Timestamp.UTC().Format(time.RFC3339)
+			record.TaskID = firstStringFromMap(event.Payload, "task_id")
 			record.Source = firstStringFromMap(event.Payload, "source")
 			record.Message = firstStringFromMap(event.Payload, "message")
+			record.ModelProvider = firstStringFromMap(event.Payload, "model_provider")
+			record.ModelName = firstStringFromMap(event.Payload, "model_name")
 			record.SessionID = firstStringFromMap(event.Payload, "session_id")
 			if record.Tracked || record.Status == "" {
 				record.Status = "running"
@@ -1526,6 +1600,7 @@ func (h *Handler) collectMonitorRunsForAgent(auditPath string, byRunID map[strin
 		case "run.end":
 			record.CompletedAt = event.Timestamp.UTC().Format(time.RFC3339)
 			record.ArtifactPath = firstStringFromMap(event.Payload, "artifact_path")
+			record.CheckpointPath = firstStringFromMap(event.Payload, "checkpoint_path")
 			record.Error = firstStringFromMap(event.Payload, "error")
 			if record.Error != "" {
 				record.Status = "failed"
@@ -2255,6 +2330,7 @@ summary{cursor:pointer;color:#9db2d4}
 <option value="openai">openai</option>
 <option value="openrouter">openrouter</option>
 <option value="requesty">requesty</option>
+<option value="hatz">hatz</option>
 <option value="zai">zai</option>
 <option value="generic">generic</option>
 </select>

@@ -18,7 +18,8 @@ const CATEGORY_LOOKUP = CATEGORY_DEFS.reduce((acc, category) => {
   return acc;
 }, {});
 
-const PROVIDERS = ["openai", "openrouter", "requesty", "zai", "generic"];
+const MODEL_PROVIDERS = ["openai", "openrouter", "requesty", "hatz", "zai", "generic"];
+const EMBEDDING_PROVIDERS = ["openai", "openrouter", "requesty", "zai", "generic"];
 const THINKING_MODES = ["never", "on_error", "always"];
 const DISCORD_SECRET_KEY = "discord/bot_token";
 
@@ -51,6 +52,7 @@ const settingsState = {
   discordTokenError: "",
   validatePending: false,
   providerTestResults: {},
+  providerModelsResults: {},
 };
 
 function cloneJSON(value) {
@@ -312,7 +314,7 @@ function normalizeConfigShape(input) {
   if (!cfg.providers || typeof cfg.providers !== "object") {
     cfg.providers = {};
   }
-  PROVIDERS.forEach((provider) => {
+  MODEL_PROVIDERS.forEach((provider) => {
     if (!cfg.providers[provider] || typeof cfg.providers[provider] !== "object") {
       cfg.providers[provider] = {};
     }
@@ -462,8 +464,8 @@ function validateDraftConfig(draft) {
   const modelName = asTrimmedString(draft?.model?.name);
   if (!provider) {
     setFieldError("model.provider", "Provider is required.");
-  } else if (!PROVIDERS.includes(provider)) {
-    setFieldError("model.provider", "Provider must be one of openai, openrouter, requesty, zai, generic.");
+  } else if (!MODEL_PROVIDERS.includes(provider)) {
+    setFieldError("model.provider", "Provider must be one of openai, openrouter, requesty, hatz, zai, generic.");
   }
   if (!modelName) {
     setFieldError("model.name", "Model name is required.");
@@ -581,7 +583,7 @@ function validateDraftConfig(draft) {
       return;
     }
     const provider = asTrimmedString(profile?.model?.provider).toLowerCase();
-    if (provider && !PROVIDERS.includes(provider)) {
+    if (provider && !MODEL_PROVIDERS.includes(provider)) {
       setFieldError(`agents.profiles.${agentID}.model.provider`, "Profile model provider must match a supported provider.");
     }
     const maxTokensProfile = profile?.model?.max_tokens;
@@ -642,7 +644,7 @@ function validateDraftConfig(draft) {
   }
 
   const embeddingProvider = asTrimmedString(draft?.memory?.embedding_provider).toLowerCase();
-  if (draft?.memory?.embeddings_enabled && embeddingProvider && !PROVIDERS.includes(embeddingProvider)) {
+  if (draft?.memory?.embeddings_enabled && embeddingProvider && !EMBEDDING_PROVIDERS.includes(embeddingProvider)) {
     setFieldError("memory.embedding_provider", "Embedding provider must be one of the supported providers.");
   }
   if (draft?.memory?.embeddings_enabled && !asTrimmedString(draft?.memory?.embedding_model)) {
@@ -946,7 +948,7 @@ function buildModelCategory(panel, fieldErrors) {
     title: "Model provider",
     path: "model.provider",
     helpText: "Primary provider used by runtime model calls.",
-    options: PROVIDERS.map((provider) => ({ value: provider, label: provider })),
+    options: MODEL_PROVIDERS.map((provider) => ({ value: provider, label: provider })),
     fieldErrors,
   });
   appendTextField({
@@ -983,7 +985,7 @@ function buildModelCategory(panel, fieldErrors) {
   providerHeader.textContent = "Provider endpoints";
   panel.append(providerHeader);
 
-  PROVIDERS.forEach((provider) => {
+  MODEL_PROVIDERS.forEach((provider) => {
     const card = document.createElement("section");
     card.className = "settings-section";
     const heading = document.createElement("h5");
@@ -1025,7 +1027,15 @@ function buildModelCategory(panel, fieldErrors) {
     test.addEventListener("click", () => {
       void testProvider(provider);
     });
-    actions.append(activate, test);
+    const queryModels = document.createElement("button");
+    queryModels.type = "button";
+    queryModels.className = "layout-toggle";
+    queryModels.textContent = settingsState.providerModelsResults[provider]?.loading ? "Querying..." : "Query models";
+    queryModels.disabled = settingsState.providerModelsResults[provider]?.loading;
+    queryModels.addEventListener("click", () => {
+      void loadProviderModels(provider);
+    });
+    actions.append(activate, test, queryModels);
     card.append(actions);
     const result = settingsState.providerTestResults[provider];
     if (result?.message) {
@@ -1033,6 +1043,30 @@ function buildModelCategory(panel, fieldErrors) {
       status.className = result.ok ? "settings-save-success" : "settings-inline-error";
       status.textContent = result.message;
       card.append(status);
+    }
+    const modelsResult = settingsState.providerModelsResults[provider];
+    if (modelsResult?.message) {
+      const status = document.createElement("p");
+      status.className = modelsResult.error ? "settings-inline-error" : "settings-save-success";
+      status.textContent = modelsResult.message;
+      card.append(status);
+    }
+    if (Array.isArray(modelsResult?.models) && modelsResult.models.length) {
+      const list = document.createElement("div");
+      list.className = "settings-advanced-actions";
+      modelsResult.models.slice(0, 12).forEach((modelName) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "layout-toggle";
+        button.textContent = modelName;
+        button.title = `Use ${modelName}`;
+        button.addEventListener("click", () => {
+          updateDraft("model.provider", provider);
+          updateDraft("model.name", modelName);
+        });
+        list.append(button);
+      });
+      card.append(list);
     }
     panel.append(card);
   });
@@ -1495,7 +1529,7 @@ function buildMemoryCategory(panel, fieldErrors) {
     title: "Embedding provider",
     path: "memory.embedding_provider",
     helpText: "Provider for embedding vectors.",
-    options: PROVIDERS.map((provider) => ({ value: provider, label: provider })),
+    options: EMBEDDING_PROVIDERS.map((provider) => ({ value: provider, label: provider })),
     fieldErrors,
   });
   appendTextField({
@@ -1680,7 +1714,7 @@ function buildAgentsCategory(panel, fieldErrors) {
     title: "Profile model provider",
     path: `agents.profiles.${selected}.model.provider`,
     helpText: "Optional override provider for this agent profile.",
-    options: [{ value: "", label: "(inherit global)" }, ...PROVIDERS.map((provider) => ({ value: provider, label: provider }))],
+    options: [{ value: "", label: "(inherit global)" }, ...MODEL_PROVIDERS.map((provider) => ({ value: provider, label: provider }))],
     fieldErrors,
   });
   appendTextField({
@@ -1758,7 +1792,7 @@ function buildAgentsCategory(panel, fieldErrors) {
   bulkActions.className = "settings-advanced-actions";
   const bulkProvider = document.createElement("select");
   bulkProvider.className = "settings-select";
-  PROVIDERS.forEach((provider) => {
+  MODEL_PROVIDERS.forEach((provider) => {
     const option = document.createElement("option");
     option.value = provider;
     option.textContent = provider;
@@ -2255,6 +2289,31 @@ async function testProvider(provider) {
     settingsState.providerTestResults[provider] = {
       loading: false,
       ok: false,
+      message: error?.message || String(error),
+    };
+  }
+  rerender();
+}
+
+async function loadProviderModels(provider) {
+  settingsState.providerModelsResults[provider] = { loading: true, message: "Querying available models...", models: [] };
+  rerender();
+  try {
+    const payload = await settingsState.apiClient.get(`/api/admin/providers/models?provider=${encodeURIComponent(provider)}`);
+    const models = Array.isArray(payload?.models)
+      ? payload.models.map((item) => asTrimmedString(item)).filter((item) => !!item)
+      : [];
+    settingsState.providerModelsResults[provider] = {
+      loading: false,
+      error: false,
+      models,
+      message: models.length ? `Loaded ${models.length} model${models.length === 1 ? "" : "s"}. Click one to use it.` : "No models returned.",
+    };
+  } catch (error) {
+    settingsState.providerModelsResults[provider] = {
+      loading: false,
+      error: true,
+      models: [],
       message: error?.message || String(error),
     };
   }

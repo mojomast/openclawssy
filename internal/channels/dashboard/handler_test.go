@@ -400,6 +400,70 @@ func TestAdminConfigPatchMergesAndValidateReturnsFieldErrors(t *testing.T) {
 	}
 }
 
+func TestAdminProviderModelsUsesStoredHatzSecret(t *testing.T) {
+	root := t.TempDir()
+	masterPath := filepath.Join(root, ".openclawssy", "master.key")
+	if _, err := secrets.GenerateAndWriteMasterKey(masterPath); err != nil {
+		t.Fatalf("generate master key: %v", err)
+	}
+
+	hatzServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/models" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer hatz-secret" {
+			t.Fatalf("unexpected auth header: %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"id": "hatz-coder"}, {"id": "hatz-reasoner"}},
+		})
+	}))
+	defer hatzServer.Close()
+
+	configPath := filepath.Join(root, ".openclawssy", "config.json")
+	cfg := config.Default()
+	cfg.Secrets.MasterKeyFile = masterPath
+	cfg.Secrets.StoreFile = filepath.Join(root, ".openclawssy", "secrets.enc")
+	cfg.Providers.Hatz.BaseURL = hatzServer.URL
+	cfg.Providers.Hatz.APIKey = ""
+	cfg.Providers.Hatz.APIKeyEnv = ""
+	if err := config.Save(configPath, cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	store, err := secrets.NewStore(cfg)
+	if err != nil {
+		t.Fatalf("new secret store: %v", err)
+	}
+	if err := store.Set("provider/hatz/api_key", "hatz-secret"); err != nil {
+		t.Fatalf("store hatz secret: %v", err)
+	}
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/providers/models?provider=hatz", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d (%s)", rr.Code, rr.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode provider models response: %v", err)
+	}
+	if payload["provider"] != "hatz" {
+		t.Fatalf("unexpected provider payload: %#v", payload["provider"])
+	}
+	models, ok := payload["models"].([]any)
+	if !ok || len(models) != 2 || models[0] != "hatz-coder" || models[1] != "hatz-reasoner" {
+		t.Fatalf("unexpected models payload: %#v", payload["models"])
+	}
+}
+
 func TestDashboardLayoutsEndpointRejectsOversizedLayout(t *testing.T) {
 	root := t.TempDir()
 	h := New(root, httpchannel.NewInMemoryRunStore())
@@ -754,6 +818,28 @@ func TestAdminSkillsInstallAndActivation(t *testing.T) {
 	if listResp.Code != http.StatusOK {
 		t.Fatalf("expected list status %d, got %d (%s)", http.StatusOK, listResp.Code, listResp.Body.String())
 	}
+	var listPayload map[string]any
+	if err := json.Unmarshal(listResp.Body.Bytes(), &listPayload); err != nil {
+		t.Fatalf("decode list payload: %v", err)
+	}
+	installable, ok := listPayload["installable"].([]any)
+	if !ok {
+		t.Fatalf("expected installable skills list, got %#v", listPayload["installable"])
+	}
+	foundClawDefuckifier := false
+	for _, item := range installable {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if entry["name"] == "clawdefuckifier" {
+			foundClawDefuckifier = true
+			break
+		}
+	}
+	if !foundClawDefuckifier {
+		t.Fatalf("expected clawdefuckifier in installable skills, got %#v", listPayload["installable"])
+	}
 
 	installReq := httptest.NewRequest(http.MethodPost, "/api/admin/skills", bytes.NewBufferString(`{"action":"install","name":"playwrite","agent_id":"default"}`))
 	installReq.Header.Set("Content-Type", "application/json")
@@ -962,6 +1048,10 @@ func TestAdminAgentsEndpointListAndSetActive(t *testing.T) {
 	if listed["selected_agent"] != "default" {
 		t.Fatalf("expected selected_agent default on first list, got %#v", listed["selected_agent"])
 	}
+	agentSummaries, ok := listed["agent_summaries"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected agent_summaries object, got %#v", listed["agent_summaries"])
+	}
 	agents, ok := listed["agents"].([]any)
 	if !ok {
 		t.Fatalf("expected agents array, got %#v", listed["agents"])
@@ -974,6 +1064,20 @@ func TestAdminAgentsEndpointListAndSetActive(t *testing.T) {
 		if !seen[want] {
 			t.Fatalf("expected agent %q in unified list, got %#v", want, listed["agents"])
 		}
+	}
+	alphaSummary, ok := agentSummaries["alpha"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected alpha summary object, got %#v", agentSummaries["alpha"])
+	}
+	if alphaSummary["self_improvement_ready"] != true {
+		t.Fatalf("expected alpha self_improvement_ready=true, got %#v", alphaSummary)
+	}
+	activatedSkills, ok := alphaSummary["activated_skills"].([]any)
+	if !ok {
+		activatedSkills = []any{}
+	}
+	if len(activatedSkills) != 0 {
+		t.Fatalf("expected no activated skills for alpha in fixture, got %#v", activatedSkills)
 	}
 
 	setReq := httptest.NewRequest(http.MethodPost, "/api/admin/agents", bytes.NewBufferString(`{"channel":"dashboard","user_id":"dashboard_user","room_id":"dashboard","agent_id":"alpha"}`))
@@ -1043,9 +1147,10 @@ func TestMonitorRunsEndpointListsMainAndSubagentAuditRuns(t *testing.T) {
 		t.Fatalf("mkdir audit dir: %v", err)
 	}
 	auditBody := strings.Join([]string{
-		`{"ts":"2026-03-05T10:00:00Z","type":"run.start","run_id":"run-main","agent_id":"alpha","payload":{"source":"dashboard","message":"main task"}}`,
-		`{"ts":"2026-03-05T10:00:02Z","type":"run.end","run_id":"run-main","agent_id":"alpha","payload":{"artifact_path":"/tmp/run-main"}}`,
-		`{"ts":"2026-03-05T10:01:00Z","type":"run.start","run_id":"run-sub","agent_id":"alpha","payload":{"source":"subagent/delegation","message":"sub task"}}`,
+		`{"ts":"2026-03-05T10:00:00Z","type":"run.start","run_id":"run-main","agent_id":"alpha","payload":{"source":"dashboard","message":"main task","task_id":"cdf-main-1","model_provider":"hatz","model_name":"hatz-coder"}}`,
+		`{"ts":"2026-03-05T10:00:02Z","type":"run.end","run_id":"run-main","agent_id":"alpha","payload":{"artifact_path":"/tmp/run-main","checkpoint_path":"clawdefuckifier/alpha/runs/run-main.md"}}`,
+		`{"ts":"2026-03-05T10:01:00Z","type":"run.start","run_id":"run-sub","agent_id":"alpha","payload":{"source":"subagent/delegation","message":"sub task","task_id":"cdf-diagnose-2","model_provider":"hatz","model_name":"hatz-coder"}}`,
+		`{"ts":"2026-03-05T10:01:04Z","type":"run.end","run_id":"run-sub","agent_id":"alpha","payload":{"error":"timeout","checkpoint_path":"clawdefuckifier/alpha/runs/run-sub.md"}}`,
 	}, "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(auditDir, "events.jsonl"), []byte(auditBody), 0o600); err != nil {
 		t.Fatalf("write audit log: %v", err)
@@ -1070,11 +1175,23 @@ func TestMonitorRunsEndpointListsMainAndSubagentAuditRuns(t *testing.T) {
 	if len(payload.Runs) != 2 {
 		t.Fatalf("expected 2 monitor runs, got %+v", payload.Runs)
 	}
-	if payload.Runs[0].RunID != "run-sub" || payload.Runs[0].Role != "subagent" || payload.Runs[0].Status != "running" {
+	if payload.Runs[0].RunID != "run-sub" || payload.Runs[0].Role != "subagent" || payload.Runs[0].Status != "failed" {
 		t.Fatalf("unexpected subagent run record: %+v", payload.Runs[0])
+	}
+	if payload.Runs[0].TaskID != "cdf-diagnose-2" || payload.Runs[0].ModelProvider != "hatz" || payload.Runs[0].ModelName != "hatz-coder" {
+		t.Fatalf("expected task/model metadata on subagent run, got %+v", payload.Runs[0])
+	}
+	if payload.Runs[0].CheckpointPath != "clawdefuckifier/alpha/runs/run-sub.md" {
+		t.Fatalf("expected checkpoint path on subagent run, got %+v", payload.Runs[0])
 	}
 	if payload.Runs[1].RunID != "run-main" || payload.Runs[1].Role != "main" || payload.Runs[1].Status != "completed" {
 		t.Fatalf("unexpected main run record: %+v", payload.Runs[1])
+	}
+	if payload.Runs[1].TaskID != "cdf-main-1" || payload.Runs[1].ModelProvider != "hatz" || payload.Runs[1].ModelName != "hatz-coder" {
+		t.Fatalf("expected task/model metadata on main run, got %+v", payload.Runs[1])
+	}
+	if payload.Runs[1].CheckpointPath != "clawdefuckifier/alpha/runs/run-main.md" {
+		t.Fatalf("expected checkpoint path on main run, got %+v", payload.Runs[1])
 	}
 }
 

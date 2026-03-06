@@ -2110,6 +2110,52 @@ func TestAgentCreateForceOverwriteBehavior(t *testing.T) {
 	}
 }
 
+func TestAgentCreateSeedsClawDefuckifierBootstrap(t *testing.T) {
+	ws, _, agentsPath, cfgPath, reg := setupAgentToolRegistry(t, fakePolicy{})
+
+	if _, err := reg.Execute(context.Background(), "agent", "agent.create", ws, map[string]any{"agent_id": "clawdefuckifier"}); err != nil {
+		t.Fatalf("agent.create clawdefuckifier: %v", err)
+	}
+
+	rawSoul, err := os.ReadFile(filepath.Join(agentsPath, "clawdefuckifier", "SOUL.md"))
+	if err != nil {
+		t.Fatalf("read clawdefuckifier SOUL.md: %v", err)
+	}
+	if !strings.Contains(string(rawSoul), "You are ClawDefuckifier") {
+		t.Fatalf("expected clawdefuckifier identity in SOUL.md, got %q", string(rawSoul))
+	}
+
+	rawTools, err := os.ReadFile(filepath.Join(agentsPath, "clawdefuckifier", "TOOLS.md"))
+	if err != nil {
+		t.Fatalf("read clawdefuckifier TOOLS.md: %v", err)
+	}
+	toolsText := string(rawTools)
+	if !strings.Contains(toolsText, "OPENCLAWSSY_ACTIVATED_SKILLS_START") || !strings.Contains(toolsText, "- clawdefuckifier") {
+		t.Fatalf("expected clawdefuckifier skill activation block, got %q", toolsText)
+	}
+
+	rawSkill, err := os.ReadFile(filepath.Join(ws, "skills", "clawdefuckifier.md"))
+	if err != nil {
+		t.Fatalf("read workspace clawdefuckifier skill: %v", err)
+	}
+	skillText := string(rawSkill)
+	if !strings.Contains(skillText, "agent.run") || !strings.Contains(skillText, "run.list") {
+		t.Fatalf("expected clawdefuckifier skill to mention recovery loop tools, got %q", skillText)
+	}
+
+	cfg, err := config.LoadOrDefault(cfgPath)
+	if err != nil {
+		t.Fatalf("load config after clawdefuckifier create: %v", err)
+	}
+	if !cfg.Agents.AllowInterAgentMessaging || !cfg.Agents.SelfImprovementEnabled {
+		t.Fatalf("expected clawdefuckifier creation to enable loop controls, got %+v", cfg.Agents)
+	}
+	profile, ok := cfg.Agents.Profiles["clawdefuckifier"]
+	if !ok || !profile.SelfImprovement || profile.Enabled == nil || !*profile.Enabled {
+		t.Fatalf("expected clawdefuckifier profile enabled for self-improvement, got %#v", cfg.Agents.Profiles["clawdefuckifier"])
+	}
+}
+
 func TestAgentToolsRejectInvalidAgentID(t *testing.T) {
 	ws, _, _, _, reg := setupAgentToolRegistry(t, fakePolicy{})
 
@@ -2218,6 +2264,45 @@ func TestAgentRunUsesConfiguredRunner(t *testing.T) {
 	}
 	if runner.lastInput.TargetAgentID != "agent" || runner.lastInput.Message != "hello" {
 		t.Fatalf("unexpected runner input: %#v", runner.lastInput)
+	}
+}
+
+func TestAgentRunPassesOptionalRestrictionsToRunner(t *testing.T) {
+	root := t.TempDir()
+	ws := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	cfgPath := filepath.Join(root, ".openclawssy", "config.json")
+	cfg := config.Default()
+	cfg.Workspace.Root = ws
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save config fixture: %v", err)
+	}
+	runner := &fakeAgentRunner{result: AgentRunOutput{RunID: "run_sub", FinalText: "done"}}
+	enforcer := policy.NewEnforcer(ws, map[string][]string{"agent": {"agent.run"}})
+	reg := NewRegistry(enforcer, nil)
+	if err := RegisterCoreWithOptions(reg, CoreOptions{EnableShellExec: true, ConfigPath: cfgPath, AgentsPath: filepath.Join(root, ".openclawssy", "agents"), AgentRunner: runner}); err != nil {
+		t.Fatalf("register core: %v", err)
+	}
+	_, err := reg.Execute(context.Background(), "agent", "agent.run", ws, map[string]any{
+		"agent_id":            "agent",
+		"message":             "hello",
+		"allowed_tools":       []any{"fs.read", "memory.search", ""},
+		"max_tool_iterations": 7,
+		"timeout_ms":          45000,
+	})
+	if err != nil {
+		t.Fatalf("agent.run: %v", err)
+	}
+	if runner.lastInput.TimeoutMS != 45000 {
+		t.Fatalf("expected TimeoutMS=45000, got %d", runner.lastInput.TimeoutMS)
+	}
+	if runner.lastInput.MaxToolIterations != 7 {
+		t.Fatalf("expected MaxToolIterations=7, got %d", runner.lastInput.MaxToolIterations)
+	}
+	if len(runner.lastInput.AllowedTools) != 2 || runner.lastInput.AllowedTools[0] != "fs.read" || runner.lastInput.AllowedTools[1] != "memory.search" {
+		t.Fatalf("unexpected AllowedTools: %#v", runner.lastInput.AllowedTools)
 	}
 }
 

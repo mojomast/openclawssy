@@ -2,7 +2,7 @@
 id: providers-and-models
 title: Providers & Models
 category: Settings
-keywords: providers models openai openrouter requesty zai generic agent overrides subagent defaults validation
+keywords: providers models openai openrouter requesty hatz zai generic agent overrides subagent defaults validation
 related_topics: agent-overrides-and-subagents, secrets-guide, faq
 route_hints: /settings, /help
 ---
@@ -14,6 +14,7 @@ route_hints: /settings, /help
 - `openai`
 - `openrouter`
 - `requesty`
+- `hatz`
 - `zai`
 - `generic`
 
@@ -27,7 +28,8 @@ Use `Settings` -> `Model Provider`.
 4. Adjust `max_tokens`
 5. Review the provider endpoint card for the selected provider
 6. Use `Test provider` for a safe endpoint reachability probe
-7. Click `Validate` before `Save Config`
+7. Use `Query models` to pull provider-advertised model ids into the settings UI when supported (for example Hatz)
+8. Click `Validate` before `Save Config`
 
 ## Per-agent overrides
 
@@ -57,7 +59,7 @@ Recommended best practices:
 
 ### Unsupported provider
 
-You entered something other than `openai`, `openrouter`, `requesty`, `zai`, or `generic`.
+You entered something other than `openai`, `openrouter`, `requesty`, `hatz`, `zai`, or `generic`.
 
 ### Missing model name
 

@@ -18,6 +18,7 @@ import (
 	"openclawssy/internal/artifacts"
 	"openclawssy/internal/audit"
 	"openclawssy/internal/chatstore"
+	clawdefuckifierpkg "openclawssy/internal/clawdefuckifier"
 	"openclawssy/internal/config"
 	"openclawssy/internal/memory"
 	memorystore "openclawssy/internal/memory/store"
@@ -72,6 +73,7 @@ func (e *Engine) RunTracker() *RunTracker {
 type ExecuteInput struct {
 	AgentID           string
 	Message           string
+	TaskID            string
 	Source            string
 	SessionID         string
 	ThinkingMode      string
@@ -151,6 +153,9 @@ func (e *Engine) Init(agentID string, force bool) error {
 		if err := config.Save(cfgPath, cfg); err != nil {
 			return fmt.Errorf("runtime: write config: %w", err)
 		}
+	}
+	if err := clawdefuckifierpkg.EnsureBootstrap(agentID, e.workspaceDir, cfgPath); err != nil {
+		return fmt.Errorf("runtime: clawdefuckifier bootstrap: %w", err)
 	}
 
 	return nil
@@ -253,6 +258,9 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	startEvent := map[string]any{"run_id": runID, "agent_id": agentID, "message": message, "model_provider": selectedModel.Provider, "model_name": selectedModel.Name}
 	if source != "" {
 		startEvent["source"] = source
+	}
+	if strings.TrimSpace(in.TaskID) != "" {
+		startEvent["task_id"] = strings.TrimSpace(in.TaskID)
 	}
 	if sessionID != "" {
 		startEvent["session_id"] = sessionID
@@ -521,6 +529,32 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		}
 	}
 
+	traceCollector.RecordThinking(persistedThinking, thinkingPresent)
+	traceCollector.RecordToolExecution(out.ToolCalls)
+	traceSnapshot := traceCollector.Snapshot()
+	parseDiagnostics := buildRunParseDiagnostics(traceSnapshot, thinkingMode == config.ThinkingModeAlways || out.ToolParseFailure)
+	checkpointPath, checkpointErr := clawdefuckifierpkg.WriteRunCheckpoint(e.workspaceDir, clawdefuckifierpkg.RunCheckpointInput{
+		AgentID:         agentID,
+		RunID:           runID,
+		TaskID:          strings.TrimSpace(in.TaskID),
+		Source:          source,
+		Status:          checkpointStatus(runErr),
+		Message:         message,
+		FinalText:       out.FinalText,
+		Error:           errorString(runErr),
+		ArtifactPath:    artifactPath,
+		ModelProvider:   model.ProviderName(),
+		ModelName:       model.ModelName(),
+		StartedAt:       out.StartedAt,
+		CompletedAt:     out.CompletedAt,
+		DurationMS:      time.Since(start).Milliseconds(),
+		ToolCalls:       len(out.ToolCalls),
+		ParseRejections: parseDiagnosticCount(parseDiagnostics),
+	})
+	if checkpointErr != nil {
+		slog.Warn("runtime: failed to write clawdefuckifier checkpoint", "agent_id", agentID, "run_id", runID, "error", checkpointErr)
+	}
+
 	fields := map[string]any{"run_id": runID, "agent_id": agentID}
 	if source != "" {
 		fields["source"] = source
@@ -528,19 +562,20 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	if sessionID != "" {
 		fields["session_id"] = sessionID
 	}
+	if strings.TrimSpace(in.TaskID) != "" {
+		fields["task_id"] = strings.TrimSpace(in.TaskID)
+	}
 	if runErr != nil {
 		fields["error"] = runErr.Error()
 	} else {
 		fields["artifact_path"] = artifactPath
 	}
+	if checkpointPath != "" {
+		fields["checkpoint_path"] = checkpointPath
+	}
 	fields["thinking"] = persistedThinking
 	fields["thinking_present"] = thinkingPresent
 	_ = aud.LogEvent(runCtx, audit.EventRunEnd, fields)
-
-	traceCollector.RecordThinking(persistedThinking, thinkingPresent)
-	traceCollector.RecordToolExecution(out.ToolCalls)
-	traceSnapshot := traceCollector.Snapshot()
-	parseDiagnostics := buildRunParseDiagnostics(traceSnapshot, thinkingMode == config.ThinkingModeAlways || out.ToolParseFailure)
 
 	if runErr != nil {
 		if includeThinking {
@@ -583,6 +618,27 @@ func shouldIncludeThinking(mode string, runError bool, parseFailure bool, thinki
 	default:
 		return false
 	}
+}
+
+func checkpointStatus(runErr error) string {
+	if runErr != nil {
+		return "failed"
+	}
+	return "completed"
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func parseDiagnosticCount(diag *ParseDiagnostics) int {
+	if diag == nil {
+		return 0
+	}
+	return len(diag.Rejected)
 }
 
 func sanitizedPersistedThinking(thinking string, present bool, maxChars int) (string, bool) {
@@ -1128,7 +1184,7 @@ func toolCallingBestPracticesDocWithAgentTools() string {
 		"Use fs.append for additive edits, fs.delete for intentional removals, and fs.move for renames or moves.",
 		"Use config.get/config.set for safe runtime knobs and secrets.set/secrets.list for secret storage and presence checks; never echo secret values.",
 		"Use skill.list/skill.read, scheduler.add/scheduler.resume with scheduler.list/scheduler.remove/scheduler.pause, and session.list/session.close for built-in workflow state.",
-		"Use agent.list/agent.switch/agent.create for routing and scaffolding, agent.profile.get/agent.profile.set for per-agent controls, agent.message.send/agent.message.inbox for coordination, and agent.run for direct subagent execution.",
+		"Use agent.list/agent.switch/agent.create for routing and scaffolding, agent.profile.get/agent.profile.set for per-agent controls, agent.message.send/agent.message.inbox for coordination, and agent.run for direct subagent execution. Give iterative agent.run calls descriptive task_id values so Agent Monitor can distinguish phases.",
 		"Use agent.prompt.read/agent.prompt.suggest for prompt governance; use agent.prompt.update only when self-improvement controls allow it.",
 		"Use agent.identity.set to bootstrap SOUL identity fields when SOUL.md is empty; provide assistant_name and user_name.",
 		"Use policy.list/policy.grant/policy.revoke for capability governance, run.list/run.get/run.cancel for run control, metrics.get for run-level trends, and http.request for network reads when allowed.",
@@ -1771,10 +1827,12 @@ func (s *subAgentRunner) ExecuteSubAgent(ctx context.Context, input tools.AgentR
 	result, err := s.engine.ExecuteWithInput(ctx, ExecuteInput{
 		AgentID:           strings.TrimSpace(input.TargetAgentID),
 		Message:           input.Message,
+		TaskID:            strings.TrimSpace(input.TaskID),
 		Source:            strings.TrimSpace(input.Source),
 		ThinkingMode:      strings.TrimSpace(input.ThinkingMode),
 		AllowedTools:      input.AllowedTools,
 		MaxToolIterations: input.MaxToolIterations,
+		TimeoutMS:         input.TimeoutMS,
 	})
 	if err != nil {
 		return tools.AgentRunOutput{}, err
@@ -1852,6 +1910,7 @@ func (a *agentSubAgentRunnerAdapter) ExecuteSubAgent(ctx context.Context, task a
 		ThinkingMode:      thinkingMode,
 		AllowedTools:      restrictions.AllowedTools,
 		MaxToolIterations: restrictions.MaxToolIterations,
+		TimeoutMS:         restrictions.TimeoutMS,
 	})
 	if err != nil {
 		return agent.SubAgentOutput{Success: false, Error: err.Error()}, err

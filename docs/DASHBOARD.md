@@ -39,11 +39,30 @@ Use dashboard admin sections to manage runtime behavior:
 - **Secrets**: write-only secret updates and key cleanup (values are not re-displayed)
 - **Scheduler**: recurring job create/pause/resume/delete
 - **Agents**: profile and routing controls
+- **Agent Monitor**: live main/subagent monitoring, launch, cancel, task IDs, and checkpoint visibility
 - **Memory**: memory health/stat visibility per agent
 - **Custom Dashboards**: operator-defined widget layouts with server-backed persistence
 - **Help**: full Help Center with searchable docs and a route-aware Help Drawer
 
 Depending on your build/runtime features, additional pages (for example sandbox manager) may appear.
+
+## Agent Monitor
+
+Use `Agent Monitor` when you need to supervise long-running or self-iterating agents.
+
+What it shows now:
+
+- main-agent runs and subagent runs in one timeline
+- task IDs for iterative phases like diagnose/patch/verify
+- model provider/model name used for the run
+- latest error text for failed runs
+- checkpoint paths for agents that emit resumable run notes
+
+ClawDefuckifier-specific behavior:
+
+- agents whose id starts with `clawdefuckifier` auto-bootstrap with self-improvement enabled
+- their latest resumable checkpoint is mirrored to `workspace/clawdefuckifier/<agent-id>/LATEST.md`
+- per-run checkpoints are written under `workspace/clawdefuckifier/<agent-id>/runs/`
 
 ## Discord onboarding from the dashboard
 
@@ -142,6 +161,7 @@ Use `Settings` -> `Model Provider` for global model/provider changes:
 3. Adjust `temperature` and `max_tokens`
 4. Edit provider endpoint `base_url` and `api_key_env` per provider
 5. Use `Test provider` to probe endpoint reachability before saving
+6. Use `Query models` when a provider supports model discovery (for example Hatz)
 
 Agent and subagent controls live under `Settings` -> `Agents`:
 

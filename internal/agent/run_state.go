@@ -25,6 +25,7 @@ const (
 	agentMessageSendCap          = 1
 	agentMessageInboxCap         = 2
 	agentRunCap                  = 1
+	agentCreateGlobalCap         = 8
 	shellExecRepetitionCap       = 3
 	memoryWriteRepetitionCap     = 2
 	noChoicesRetryCap            = 2
@@ -294,11 +295,11 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 			// Global cap on total agent.create calls to prevent agent spam
 			globalCreateKey := "agent.create|total"
 			s.repetitionPrevention[globalCreateKey]++
-			if s.repetitionPrevention[globalCreateKey] > 2 {
+			if s.repetitionPrevention[globalCreateKey] > agentCreateGlobalCap {
 				result := ToolCallResult{
 					ID:     call.ID,
 					Output: "",
-					Error:  fmt.Sprintf("agent creation limit reached: you have already created %d agents. Use one of the existing agents instead of creating more.", s.repetitionPrevention[globalCreateKey]-1),
+					Error:  fmt.Sprintf("agent creation limit reached: you have already created %d agents in this run. Reuse existing agents or finish with the current roster before creating more.", s.repetitionPrevention[globalCreateKey]-1),
 				}
 				record := ToolCallRecord{
 					Request:     call,

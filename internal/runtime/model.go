@@ -151,30 +151,9 @@ func NewProviderModelForConfig(cfg config.Config, modelCfg config.ModelConfig, l
 	if err != nil {
 		return nil, err
 	}
-	apiKey := strings.TrimSpace(endpoint.APIKey)
-	if apiKey == "" && lookup != nil {
-		if v, ok, err := lookup("provider/" + pName + "/api_key"); err == nil && ok {
-			apiKey = strings.TrimSpace(v)
-		}
-	}
-	if apiKey == "" && endpoint.APIKeyEnv != "" {
-		apiKey = strings.TrimSpace(os.Getenv(endpoint.APIKeyEnv))
-	}
-	if apiKey == "" {
-		return nil, fmt.Errorf("model provider %q is missing API key (set %s or providers.%s.api_key)", pName, endpoint.APIKeyEnv, pName)
-	}
-
-	base := strings.TrimRight(strings.TrimSpace(endpoint.BaseURL), "/")
-	if base == "" {
-		return nil, fmt.Errorf("model provider %q requires a base_url", pName)
-	}
-	if strings.HasSuffix(base, "/chat/completions") {
-		base = strings.TrimSuffix(base, "/chat/completions")
-	}
-
-	headers := map[string]string{}
-	for k, v := range endpoint.Headers {
-		headers[k] = v
+	base, apiKey, headers, err := resolveProviderAccess(endpoint, pName, lookup)
+	if err != nil {
+		return nil, err
 	}
 
 	responseMaxTokens := modelCfg.MaxTokens
@@ -192,6 +171,57 @@ func NewProviderModelForConfig(cfg config.Config, modelCfg config.ModelConfig, l
 		responseMaxTokens: responseMaxTokens,
 		contextWindow:     contextWindowForModel(pName, modelCfg.Name),
 	}, nil
+}
+
+func ListProviderModels(ctx context.Context, cfg config.Config, provider string, lookup SecretLookup) ([]string, error) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	endpoint, err := providerEndpoint(cfg, provider)
+	if err != nil {
+		return nil, err
+	}
+	baseURL, apiKey, headers, err := resolveProviderAccess(endpoint, provider, lookup)
+	if err != nil {
+		return nil, err
+	}
+	path := providerModelsPath(provider)
+	if path == "" {
+		return nil, fmt.Errorf("provider %q does not support model discovery", provider)
+	}
+
+	httpClient := &http.Client{Timeout: defaultProviderTimeout}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Authorization", "Bearer "+apiKey)
+	request.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		request.Header.Set(k, v)
+	}
+
+	resp, err := httpClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("provider %s model discovery failed: status=%d error=%v", provider, resp.StatusCode, parseProviderErrorBody(body))
+	}
+
+	var payload any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("provider %s model discovery returned invalid json: %w", provider, err)
+	}
+	models := extractProviderModelNames(payload)
+	if len(models) == 0 {
+		return nil, fmt.Errorf("provider %s model discovery returned no models", provider)
+	}
+	return models, nil
 }
 
 func contextWindowForModel(providerName, modelName string) int {
@@ -2195,12 +2225,98 @@ func providerEndpoint(cfg config.Config, provider string) (config.ProviderEndpoi
 		return cfg.Providers.OpenRouter, nil
 	case "requesty":
 		return cfg.Providers.Requesty, nil
+	case "hatz":
+		return cfg.Providers.Hatz, nil
 	case "zai":
 		return cfg.Providers.ZAI, nil
 	case "generic":
 		return cfg.Providers.Generic, nil
 	default:
 		return config.ProviderEndpointConfig{}, fmt.Errorf("unsupported provider: %s", provider)
+	}
+}
+
+func resolveProviderAccess(endpoint config.ProviderEndpointConfig, provider string, lookup SecretLookup) (string, string, map[string]string, error) {
+	apiKey := strings.TrimSpace(endpoint.APIKey)
+	if apiKey == "" && lookup != nil {
+		if v, ok, err := lookup("provider/" + provider + "/api_key"); err == nil && ok {
+			apiKey = strings.TrimSpace(v)
+		}
+	}
+	if apiKey == "" && endpoint.APIKeyEnv != "" {
+		apiKey = strings.TrimSpace(os.Getenv(endpoint.APIKeyEnv))
+	}
+	if apiKey == "" {
+		return "", "", nil, fmt.Errorf("model provider %q is missing API key (set %s or providers.%s.api_key)", provider, endpoint.APIKeyEnv, provider)
+	}
+
+	baseURL := normalizeProviderBaseURL(endpoint.BaseURL)
+	if baseURL == "" {
+		return "", "", nil, fmt.Errorf("model provider %q requires a base_url", provider)
+	}
+
+	headers := map[string]string{}
+	for k, v := range endpoint.Headers {
+		headers[k] = v
+	}
+	return baseURL, apiKey, headers, nil
+}
+
+func normalizeProviderBaseURL(raw string) string {
+	baseURL := strings.TrimRight(strings.TrimSpace(raw), "/")
+	for _, suffix := range []string{"/chat/completions", "/chat/models", "/models"} {
+		if strings.HasSuffix(baseURL, suffix) {
+			baseURL = strings.TrimSuffix(baseURL, suffix)
+		}
+	}
+	return strings.TrimRight(baseURL, "/")
+}
+
+func providerModelsPath(provider string) string {
+	switch provider {
+	case "hatz":
+		return "/chat/models"
+	default:
+		return "/models"
+	}
+}
+
+func extractProviderModelNames(payload any) []string {
+	collected := map[string]struct{}{}
+	visitProviderModelNames(payload, collected)
+	out := make([]string, 0, len(collected))
+	for name := range collected {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func visitProviderModelNames(payload any, collected map[string]struct{}) {
+	switch value := payload.(type) {
+	case []any:
+		for _, item := range value {
+			visitProviderModelNames(item, collected)
+		}
+	case map[string]any:
+		hadNestedCollection := false
+		for _, key := range []string{"data", "models", "items", "results", "apps"} {
+			if nested, ok := value[key]; ok {
+				hadNestedCollection = true
+				visitProviderModelNames(nested, collected)
+			}
+		}
+		if hadNestedCollection {
+			return
+		}
+		for _, key := range []string{"id", "model", "slug", "name"} {
+			if raw, ok := value[key]; ok {
+				if name := strings.TrimSpace(fmt.Sprint(raw)); name != "" && name != "<nil>" {
+					collected[name] = struct{}{}
+					break
+				}
+			}
+		}
 	}
 }
 

@@ -18,6 +18,7 @@ Default shipping profile:
 - `openai` (OpenAI endpoint)
 - `openrouter`
 - `requesty`
+- `hatz` (Hatz AI endpoint with `/chat/completions` and `/chat/models` support)
 - `zai` (ZAI coding-plan compatible OpenAI-style endpoint)
 - `generic` (any OpenAI-compatible base URL)
 
@@ -25,6 +26,7 @@ Provider API key env defaults:
 - `openai` -> `OPENAI_API_KEY`
 - `openrouter` -> `OPENROUTER_API_KEY`
 - `requesty` -> `REQUESTY_API_KEY`
+- `hatz` -> `HATZ_API_KEY`
 - `zai` -> `ZAI_API_KEY`
 - `generic` -> `OPENAI_COMPAT_API_KEY`
 
@@ -93,6 +95,10 @@ Provider API key env defaults:
     "requesty": {
       "base_url": "https://router.requesty.ai/v1",
       "api_key_env": "REQUESTY_API_KEY"
+    },
+    "hatz": {
+      "base_url": "https://ai.hatz.ai/v1",
+      "api_key_env": "HATZ_API_KEY"
     },
     "zai": {
       "base_url": "https://api.z.ai/api/coding/paas/v4",

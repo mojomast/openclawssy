@@ -53,6 +53,7 @@ Supported model providers:
 - `openai` (`OPENAI_API_KEY`)
 - `openrouter` (`OPENROUTER_API_KEY`)
 - `requesty` (`REQUESTY_API_KEY`)
+- `hatz` (`HATZ_API_KEY` or `provider/hatz/api_key`)
 - `zai` (`ZAI_API_KEY`)
 - `generic` (`OPENAI_COMPAT_API_KEY` + `providers.generic.base_url`)
 

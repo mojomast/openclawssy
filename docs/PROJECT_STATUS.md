@@ -44,6 +44,8 @@ What works now:
 - **Auto-delegation system** with complexity scoring, task decomposition, cycle detection, cooldown, and configurable delegation modes (`prompt_only`, `tool_gated`, `auto_execute`)
 - **Subagent capability restrictions**: deny-by-default tool allowlists, per-subagent config overrides, iteration/timeout limits, context token tracking from model responses
 - **Skills ingestion pipeline** (`skill.list`, `skill.read`): workspace skill discovery with path safety, byte limits, secret detection, and `.git`/`node_modules` exclusion
+- **Agent monitor + self-repair visibility**: dashboard monitor for main/subagent runs with task/model/checkpoint metadata, plus `clawdefuckifier*` bootstrap and automatic run checkpoints
+- **Hatz provider support**: API key ingestion via secrets or env, OpenAI-style model use, and provider model discovery in dashboard settings
 
 What is not production-ready:
 - compatibility and schema stability

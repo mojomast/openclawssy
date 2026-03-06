@@ -116,7 +116,7 @@ All tools are deny-by-default through capability policy, and all tool inputs are
 ### `agent.create`
 - Required: `agent_id`
 - Optional: `force`
-- Notes: scaffolds `.openclawssy/agents/<agent_id>` with `memory`, `audit`, `runs` and seeded control docs (`SOUL.md`, `RULES.md`, `TOOLS.md`, `SPECPLAN.md`, `DEVPLAN.md`, `HANDOFF.md`).
+- Notes: scaffolds `.openclawssy/agents/<agent_id>` with `memory`, `audit`, `runs` and seeded control docs (`SOUL.md`, `RULES.md`, `TOOLS.md`, `SPECPLAN.md`, `DEVPLAN.md`, `HANDOFF.md`). `clawdefuckifier*` agent IDs also auto-seed the workspace skill and self-improvement bootstrap.
 
 ### `agent.switch`
 - Required: `agent_id`
@@ -176,6 +176,11 @@ All tools are deny-by-default through capability policy, and all tool inputs are
 - Required: none
 - Optional: `agent_id`, `status`, `limit`, `offset`
 - Notes: filtered/paginated summaries from run store.
+
+### `agent.run`
+- Required: `agent_id`, `message`
+- Optional: `task_id`, `thinking_mode`, `allowed_tools`, `max_tool_iterations`, `timeout_ms`
+- Notes: runs a bounded subagent task and returns structured output. Use descriptive `task_id` values for iterative workflows so Agent Monitor can distinguish phases.
 
 ### `run.get`
 - Required: `run_id`

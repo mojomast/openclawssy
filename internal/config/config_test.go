@@ -182,6 +182,7 @@ func TestRedactedClearsSensitiveFieldsOnly(t *testing.T) {
 	cfg.Providers.OpenAI.APIKey = "openai-key"
 	cfg.Providers.OpenRouter.APIKey = "openrouter-key"
 	cfg.Providers.Requesty.APIKey = "requesty-key"
+	cfg.Providers.Hatz.APIKey = "hatz-key"
 	cfg.Providers.ZAI.APIKey = "zai-key"
 	cfg.Providers.Generic.APIKey = "generic-key"
 	cfg.Discord.Token = "discord-token"
@@ -190,7 +191,7 @@ func TestRedactedClearsSensitiveFieldsOnly(t *testing.T) {
 
 	redacted := cfg.Redacted()
 
-	if redacted.Providers.OpenAI.APIKey != "" || redacted.Providers.OpenRouter.APIKey != "" || redacted.Providers.Requesty.APIKey != "" || redacted.Providers.ZAI.APIKey != "" || redacted.Providers.Generic.APIKey != "" {
+	if redacted.Providers.OpenAI.APIKey != "" || redacted.Providers.OpenRouter.APIKey != "" || redacted.Providers.Requesty.APIKey != "" || redacted.Providers.Hatz.APIKey != "" || redacted.Providers.ZAI.APIKey != "" || redacted.Providers.Generic.APIKey != "" {
 		t.Fatalf("expected provider api keys redacted, got %+v", redacted.Providers)
 	}
 	if redacted.Discord.Token != "" {

@@ -20,6 +20,14 @@ const CONVENTIONS = [
     note: "Use for Requesty integrations when configured as api_key_env.",
   },
   {
+    key: "HATZ_API_KEY",
+    note: "Use for Hatz when providers.hatz.api_key_env matches this env-style key.",
+  },
+  {
+    key: "provider/hatz/api_key",
+    note: "Recommended encrypted secret-store key for Hatz model access and model discovery.",
+  },
+  {
     key: "ZAI_API_KEY",
     note: "Use when model.provider is zai and api_key_env expects this key.",
   },

@@ -177,6 +177,7 @@ type ProvidersConfig struct {
 	OpenAI     ProviderEndpointConfig `json:"openai"`
 	OpenRouter ProviderEndpointConfig `json:"openrouter"`
 	Requesty   ProviderEndpointConfig `json:"requesty"`
+	Hatz       ProviderEndpointConfig `json:"hatz"`
 	ZAI        ProviderEndpointConfig `json:"zai"`
 	Generic    ProviderEndpointConfig `json:"generic"`
 }
@@ -308,6 +309,10 @@ func Default() Config {
 			Requesty: ProviderEndpointConfig{
 				BaseURL:   "https://router.requesty.ai/v1",
 				APIKeyEnv: "REQUESTY_API_KEY",
+			},
+			Hatz: ProviderEndpointConfig{
+				BaseURL:   "https://ai.hatz.ai/v1",
+				APIKeyEnv: "HATZ_API_KEY",
 			},
 			ZAI: ProviderEndpointConfig{
 				BaseURL:   "https://api.z.ai/api/coding/paas/v4",
@@ -575,6 +580,9 @@ func (c *Config) ApplyDefaults() {
 	if c.Providers.Requesty.BaseURL == "" {
 		c.Providers.Requesty = d.Providers.Requesty
 	}
+	if c.Providers.Hatz.BaseURL == "" {
+		c.Providers.Hatz = d.Providers.Hatz
+	}
 	if c.Providers.ZAI.BaseURL == "" {
 		c.Providers.ZAI = d.Providers.ZAI
 	}
@@ -655,7 +663,7 @@ func (c Config) Validate() error {
 		if strings.TrimSpace(profile.Model.Provider) != "" {
 			provider := strings.ToLower(strings.TrimSpace(profile.Model.Provider))
 			supported := map[string]bool{
-				"openai": true, "openrouter": true, "requesty": true, "zai": true, "generic": true,
+				"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "generic": true,
 			}
 			if !supported[provider] {
 				return fmt.Errorf("agents.profiles.%s.model.provider unsupported: %q", agentID, profile.Model.Provider)
@@ -716,7 +724,7 @@ func (c Config) Validate() error {
 
 	provider := strings.ToLower(strings.TrimSpace(c.Model.Provider))
 	supported := map[string]bool{
-		"openai": true, "openrouter": true, "requesty": true, "zai": true, "generic": true,
+		"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "generic": true,
 	}
 	if !supported[provider] {
 		return fmt.Errorf("unsupported model provider: %q", c.Model.Provider)
@@ -854,6 +862,7 @@ func (c Config) Redacted() Config {
 	redacted.Providers.OpenAI.APIKey = ""
 	redacted.Providers.OpenRouter.APIKey = ""
 	redacted.Providers.Requesty.APIKey = ""
+	redacted.Providers.Hatz.APIKey = ""
 	redacted.Providers.ZAI.APIKey = ""
 	redacted.Providers.Generic.APIKey = ""
 	redacted.Discord.Token = ""

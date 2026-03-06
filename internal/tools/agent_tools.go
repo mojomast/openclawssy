@@ -14,6 +14,7 @@ import (
 
 	"openclawssy/internal/agentdocs"
 	"openclawssy/internal/chatstore"
+	clawdefuckifierpkg "openclawssy/internal/clawdefuckifier"
 	"openclawssy/internal/config"
 )
 
@@ -31,6 +32,7 @@ type AgentRunInput struct {
 	ThinkingMode      string
 	AllowedTools      []string // Restricts which tools the subagent may use.
 	MaxToolIterations int      // Caps tool iterations for this subagent run (0 = use default).
+	TimeoutMS         int      // Applies a run timeout to this subagent when > 0.
 }
 
 type AgentRunOutput struct {
@@ -66,7 +68,7 @@ func registerAgentTools(reg *Registry, agentsPath, configPath, workspaceRoot str
 			"agent_id": ArgTypeString,
 			"force":    ArgTypeBool,
 		},
-	}, agentCreate(agentsPath)); err != nil {
+	}, agentCreate(agentsPath, configPath)); err != nil {
 		return err
 	}
 	if err := reg.Register(ToolSpec{
@@ -138,10 +140,13 @@ func registerAgentTools(reg *Registry, agentsPath, configPath, workspaceRoot str
 		Description: "Run a subagent task and return structured output",
 		Required:    []string{"agent_id", "message"},
 		ArgTypes: map[string]ArgType{
-			"agent_id":      ArgTypeString,
-			"message":       ArgTypeString,
-			"task_id":       ArgTypeString,
-			"thinking_mode": ArgTypeString,
+			"agent_id":            ArgTypeString,
+			"message":             ArgTypeString,
+			"task_id":             ArgTypeString,
+			"thinking_mode":       ArgTypeString,
+			"allowed_tools":       ArgTypeArray,
+			"max_tool_iterations": ArgTypeNumber,
+			"timeout_ms":          ArgTypeNumber,
 		},
 	}, agentRun(configPath, runner)); err != nil {
 		return err
@@ -227,7 +232,7 @@ func agentList(configuredPath string) Handler {
 	}
 }
 
-func agentCreate(configuredPath string) Handler {
+func agentCreate(configuredPath, configPath string) Handler {
 	return func(_ context.Context, req Request) (map[string]any, error) {
 		agentID, err := validatedAgentID(valueString(req.Args, "agent_id"))
 		if err != nil {
@@ -247,6 +252,9 @@ func agentCreate(configuredPath string) Handler {
 
 		seeded, err := createAgentScaffold(agentRoot, getBoolArg(req.Args, "force", false))
 		if err != nil {
+			return nil, err
+		}
+		if err := maybeBootstrapClawDefuckifier(req.Workspace, configPath, agentID); err != nil {
 			return nil, err
 		}
 
@@ -280,6 +288,9 @@ func agentSwitch(agentsPath, configPath string) Handler {
 				return nil, fmt.Errorf("agent does not exist: %s", agentID)
 			}
 			if _, err := createAgentScaffold(agentRoot, false); err != nil {
+				return nil, err
+			}
+			if err := maybeBootstrapClawDefuckifier(req.Workspace, configPath, agentID); err != nil {
 				return nil, err
 			}
 		}
@@ -631,7 +642,7 @@ func agentRun(configPath string, runner AgentRunner) Handler {
 			return nil, errors.New("request agent id is invalid")
 		}
 		if caller != targetAgentID && !hasPolicyAdmin(req) {
-			return nil, errors.New("cross-agent runs require policy.admin capability")
+			return nil, errors.New("cross-agent runs require policy.admin capability; use the main orchestrator agent or grant policy.admin explicitly")
 		}
 
 		msg := strings.TrimSpace(valueString(req.Args, "message"))
@@ -639,12 +650,15 @@ func agentRun(configPath string, runner AgentRunner) Handler {
 			return nil, errors.New("message is required")
 		}
 		out, err := runner.ExecuteSubAgent(ctx, AgentRunInput{
-			CallerAgentID: caller,
-			TargetAgentID: targetAgentID,
-			Message:       msg,
-			TaskID:        strings.TrimSpace(valueString(req.Args, "task_id")),
-			Source:        "subagent/" + caller,
-			ThinkingMode:  strings.TrimSpace(valueString(req.Args, "thinking_mode")),
+			CallerAgentID:     caller,
+			TargetAgentID:     targetAgentID,
+			Message:           msg,
+			TaskID:            strings.TrimSpace(valueString(req.Args, "task_id")),
+			Source:            "subagent/" + caller,
+			ThinkingMode:      strings.TrimSpace(valueString(req.Args, "thinking_mode")),
+			AllowedTools:      stringSliceArg(req.Args, "allowed_tools"),
+			MaxToolIterations: getIntArg(req.Args, "max_tool_iterations", 0),
+			TimeoutMS:         getIntArg(req.Args, "timeout_ms", 0),
 		})
 		if err != nil {
 			return nil, err
@@ -660,6 +674,33 @@ func agentRun(configPath string, runner AgentRunner) Handler {
 			"model":         out.Model,
 		}, nil
 	}
+}
+
+func stringSliceArg(args map[string]any, key string) []string {
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		text, ok := item.(string)
+		if !ok {
+			continue
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
+		out = append(out, text)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func agentPromptRead(agentsPath string) Handler {
@@ -936,6 +977,17 @@ func hasPolicyAdmin(req Request) bool {
 
 func createAgentScaffold(agentRoot string, force bool) ([]string, error) {
 	return agentdocs.SeedAgentScaffold(agentRoot, force)
+}
+
+func maybeBootstrapClawDefuckifier(workspace, configPath, agentID string) error {
+	if !agentdocs.IsClawDefuckifierAgent(agentID) {
+		return nil
+	}
+	cfgPath, err := resolveOpenClawssyPath(workspace, configPath, "config", "config.json")
+	if err != nil {
+		return err
+	}
+	return clawdefuckifierpkg.EnsureBootstrap(agentID, workspace, cfgPath)
 }
 
 func soulIdentityContent(assistantName, userName string) string {

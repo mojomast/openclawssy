@@ -55,6 +55,32 @@ func TestEngineInitCreatesAgentArtifacts(t *testing.T) {
 	}
 }
 
+func TestEngineInitBootstrapsClawDefuckifier(t *testing.T) {
+	root := t.TempDir()
+	e, err := NewEngine(root)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	if err := e.Init("clawdefuckifier", false); err != nil {
+		t.Fatalf("init clawdefuckifier: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(root, "workspace", "skills", "clawdefuckifier.md")); err != nil {
+		t.Fatalf("expected clawdefuckifier skill to be seeded: %v", err)
+	}
+	cfg, err := config.LoadOrDefault(filepath.Join(root, ".openclawssy", "config.json"))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if !cfg.Agents.AllowInterAgentMessaging || !cfg.Agents.SelfImprovementEnabled {
+		t.Fatalf("expected clawdefuckifier bootstrap to enable loop controls, got %+v", cfg.Agents)
+	}
+	profile, ok := cfg.Agents.Profiles["clawdefuckifier"]
+	if !ok || !profile.SelfImprovement || profile.Enabled == nil || !*profile.Enabled {
+		t.Fatalf("expected clawdefuckifier profile ready for self-improvement, got %#v", cfg.Agents.Profiles["clawdefuckifier"])
+	}
+}
+
 func TestNewEngineRequiresRootDir(t *testing.T) {
 	if _, err := NewEngine(""); err == nil {
 		t.Fatal("expected error when root dir is empty")
@@ -90,6 +116,105 @@ func TestEngineExecuteWritesRunBundle(t *testing.T) {
 	}
 	if _, ok := res.Trace["input_message_hash"]; !ok {
 		t.Fatalf("expected input_message_hash in trace, got %#v", res.Trace)
+	}
+}
+
+func TestExecuteWithInputLogsTaskIDInAuditRunStart(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ZAI_API_KEY", "test-key")
+	e, err := NewEngine(root)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	if err := e.Init("default", false); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	_, err = e.ExecuteWithInput(context.Background(), ExecuteInput{
+		AgentID: "default",
+		Message: `/tool fs.list {"path":"."}`,
+		Source:  "dashboard",
+		TaskID:  "cdf-diagnose-1",
+	})
+	if err != nil {
+		t.Fatalf("execute with task id: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(root, ".openclawssy", "agents", "default", "audit", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read audit log: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	found := false
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var evt struct {
+			Type    string         `json:"type"`
+			Payload map[string]any `json:"payload"`
+		}
+		if err := json.Unmarshal([]byte(line), &evt); err != nil {
+			t.Fatalf("decode audit event: %v", err)
+		}
+		if evt.Type != "run.start" {
+			continue
+		}
+		if evt.Payload["task_id"] == "cdf-diagnose-1" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected run.start audit payload to include task_id, got %q", string(raw))
+	}
+}
+
+func TestExecuteWithInputWritesClawDefuckifierCheckpoint(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ZAI_API_KEY", "test-key")
+	e, err := NewEngine(root)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	if err := e.Init("clawdefuckifier", false); err != nil {
+		t.Fatalf("init clawdefuckifier: %v", err)
+	}
+
+	res, err := e.ExecuteWithInput(context.Background(), ExecuteInput{
+		AgentID: "clawdefuckifier",
+		Message: `/tool fs.list {"path":"."}`,
+		Source:  "dashboard",
+		TaskID:  "cdf-verify-1",
+	})
+	if err != nil {
+		t.Fatalf("execute clawdefuckifier run: %v", err)
+	}
+
+	checkpointPath := filepath.Join(root, "workspace", "clawdefuckifier", "clawdefuckifier", "runs", res.RunID+".md")
+	rawCheckpoint, err := os.ReadFile(checkpointPath)
+	if err != nil {
+		t.Fatalf("read clawdefuckifier checkpoint: %v", err)
+	}
+	checkpointText := string(rawCheckpoint)
+	if !strings.Contains(checkpointText, "run_id: "+res.RunID) || !strings.Contains(checkpointText, "task_id: cdf-verify-1") || !strings.Contains(checkpointText, "status: completed") {
+		t.Fatalf("unexpected checkpoint content: %q", checkpointText)
+	}
+
+	rawLatest, err := os.ReadFile(filepath.Join(root, "workspace", "clawdefuckifier", "clawdefuckifier", "LATEST.md"))
+	if err != nil {
+		t.Fatalf("read clawdefuckifier latest checkpoint: %v", err)
+	}
+	if !strings.Contains(string(rawLatest), res.RunID) {
+		t.Fatalf("expected latest checkpoint to mirror run %s, got %q", res.RunID, string(rawLatest))
+	}
+
+	auditRaw, err := os.ReadFile(filepath.Join(root, ".openclawssy", "agents", "clawdefuckifier", "audit", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read audit log: %v", err)
+	}
+	if !strings.Contains(string(auditRaw), `"checkpoint_path":"clawdefuckifier/clawdefuckifier/runs/`+res.RunID+`.md"`) {
+		t.Fatalf("expected checkpoint path in audit log, got %q", string(auditRaw))
 	}
 }
 

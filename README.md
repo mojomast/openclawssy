@@ -99,6 +99,7 @@ Come chat about Openclawssy and other Ussyverse projects.
   - Agent lifecycle tools (`agent.list`, `agent.create`, `agent.switch`)
   - Per-agent config profiles (`agents.profiles.<agent_id>`) with model override fields
   - Inter-agent tooling (`agent.message.send`, `agent.message.inbox`, `agent.run`)
+  - Workspace skill loading (`skill.list`, `skill.read`) plus built-in `clawdefuckifier` bootstrap for self-repair agents
   - Policy-gated admin operations (`policy.admin` for sensitive cross-agent edits)
 
 - Safety and observability
@@ -106,6 +107,8 @@ Come chat about Openclawssy and other Ussyverse projects.
   - Structured tool errors and bounded loop execution
   - Persisted bundles per run (`input`, `prompt`, `toolcalls`, `output`, `meta`)
   - Audit logs with redaction behavior
+  - Agent Monitor UI for main runs + subagent runs with task IDs, model info, and cancel controls
+  - Automatic checkpoint trails for `clawdefuckifier*` agents under `workspace/clawdefuckifier/<agent-id>/`
   - Memory admin endpoint (`GET /api/admin/memory/<agent>`) with health + embedding stats
 
 - Memory system
@@ -123,7 +126,7 @@ Pick a path:
 - **Docker:** fastest for most users; good default for trying it now.
 - **Build from source:** best for contributors or custom runtime modifications.
 
-Provider note: set at least one provider API key (for most users, `ZAI_API_KEY`), then run `setup` + `doctor -v`.
+Provider note: set at least one provider API key (for example `ZAI_API_KEY` or `HATZ_API_KEY`), then run `setup` + `doctor -v`.
 
 ### Option A: Docker (Recommended)
 
@@ -192,7 +195,8 @@ Good first dashboard flow:
 1. Open Chat and send a simple prompt (`hello`)
 2. Run a tool-backed prompt (`/tool time.now {}`)
 3. Open run details to inspect tool summary + artifacts
-4. Check Settings/Secrets/Scheduler pages for operator controls
+4. Open Agent Monitor to watch main/subagent execution and cancellation state
+5. Check Settings/Secrets/Scheduler pages for operator controls
 
 For a full frontend guide, see [`docs/DASHBOARD.md`](docs/DASHBOARD.md).
 
