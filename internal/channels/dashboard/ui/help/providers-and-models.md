@@ -31,6 +31,8 @@ Use `Settings` -> `Model Provider`.
 7. Use `Query models` to pull provider-advertised model ids into the settings UI when supported (for example Hatz)
 8. Click `Validate` before `Save Config`
 
+When `hatz` models are successfully discovered, the global `model.name` field changes into a dropdown so you can select an available model id instead of typing it manually.
+
 ## Per-agent overrides
 
 Use `Settings` -> `Agents`.

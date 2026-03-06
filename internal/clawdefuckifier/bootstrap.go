@@ -32,11 +32,11 @@ type RunCheckpointInput struct {
 }
 
 func EnsureBootstrap(agentID, workspaceDir, cfgPath string) error {
-	if !agentdocs.IsClawDefuckifierAgent(agentID) {
-		return nil
-	}
 	if err := ensureSkill(workspaceDir); err != nil {
 		return err
+	}
+	if !agentdocs.IsClawDefuckifierAgent(agentID) {
+		return nil
 	}
 	if err := ensureConfig(agentID, cfgPath); err != nil {
 		return err

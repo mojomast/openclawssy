@@ -99,7 +99,7 @@ Come chat about Openclawssy and other Ussyverse projects.
   - Agent lifecycle tools (`agent.list`, `agent.create`, `agent.switch`)
   - Per-agent config profiles (`agents.profiles.<agent_id>`) with model override fields
   - Inter-agent tooling (`agent.message.send`, `agent.message.inbox`, `agent.run`)
-  - Workspace skill loading (`skill.list`, `skill.read`) plus built-in `clawdefuckifier` bootstrap for self-repair agents
+  - Workspace skill loading (`skill.list`, `skill.read`) plus built-in `clawdefuckifier` bootstrap with a globally seeded workspace skill
   - Policy-gated admin operations (`policy.admin` for sensitive cross-agent edits)
 
 - Safety and observability
@@ -109,6 +109,7 @@ Come chat about Openclawssy and other Ussyverse projects.
   - Audit logs with redaction behavior
   - Agent Monitor UI for main runs + subagent runs with task IDs, model info, and cancel controls
   - Automatic checkpoint trails for `clawdefuckifier*` agents under `workspace/clawdefuckifier/<agent-id>/`
+  - Global workspace skill availability at `workspace/skills/clawdefuckifier.md` so any agent can discover and load the repair workflow
   - Memory admin endpoint (`GET /api/admin/memory/<agent>`) with health + embedding stats
 
 - Memory system

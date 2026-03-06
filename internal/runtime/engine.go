@@ -181,8 +181,12 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	if err := os.MkdirAll(e.workspaceDir, 0o755); err != nil {
 		return RunResult{}, fmt.Errorf("runtime: create workspace dir: %w", err)
 	}
+	cfgPath := filepath.Join(e.rootDir, ".openclawssy", "config.json")
+	if err := clawdefuckifierpkg.EnsureBootstrap(agentID, e.workspaceDir, cfgPath); err != nil {
+		return RunResult{}, fmt.Errorf("runtime: clawdefuckifier bootstrap: %w", err)
+	}
 
-	cfg, err := config.LoadOrDefault(filepath.Join(e.rootDir, ".openclawssy", "config.json"))
+	cfg, err := config.LoadOrDefault(cfgPath)
 	if err != nil {
 		return RunResult{}, fmt.Errorf("runtime: load config: %w", err)
 	}

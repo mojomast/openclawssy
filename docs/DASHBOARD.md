@@ -60,6 +60,7 @@ What it shows now:
 
 ClawDefuckifier-specific behavior:
 
+- the shared skill is also seeded at `workspace/skills/clawdefuckifier.md`, so non-ClawDefuckifier agents can still discover and load it
 - agents whose id starts with `clawdefuckifier` auto-bootstrap with self-improvement enabled
 - their latest resumable checkpoint is mirrored to `workspace/clawdefuckifier/<agent-id>/LATEST.md`
 - per-run checkpoints are written under `workspace/clawdefuckifier/<agent-id>/runs/`
@@ -162,6 +163,7 @@ Use `Settings` -> `Model Provider` for global model/provider changes:
 4. Edit provider endpoint `base_url` and `api_key_env` per provider
 5. Use `Test provider` to probe endpoint reachability before saving
 6. Use `Query models` when a provider supports model discovery (for example Hatz)
+7. When Hatz models are loaded, `model.name` switches from free text to a dropdown of discovered model IDs
 
 Agent and subagent controls live under `Settings` -> `Agents`:
 

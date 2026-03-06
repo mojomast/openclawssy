@@ -41,6 +41,7 @@ func TestEngineInitCreatesAgentArtifacts(t *testing.T) {
 
 	paths := []string{
 		filepath.Join(root, "workspace"),
+		filepath.Join(root, "workspace", "skills", "clawdefuckifier.md"),
 		filepath.Join(root, ".openclawssy", "agents", "default", "SOUL.md"),
 		filepath.Join(root, ".openclawssy", "agents", "default", "RULES.md"),
 		filepath.Join(root, ".openclawssy", "agents", "default", "TOOLS.md"),
@@ -97,6 +98,9 @@ func TestEngineExecuteWritesRunBundle(t *testing.T) {
 	if err := e.Init("default", false); err != nil {
 		t.Fatalf("init: %v", err)
 	}
+	if err := os.Remove(filepath.Join(root, "workspace", "skills", "clawdefuckifier.md")); err != nil {
+		t.Fatalf("remove seeded clawdefuckifier skill before execute: %v", err)
+	}
 
 	res, err := e.Execute(context.Background(), "default", `/tool fs.list {"path":"."}`)
 	if err != nil {
@@ -116,6 +120,9 @@ func TestEngineExecuteWritesRunBundle(t *testing.T) {
 	}
 	if _, ok := res.Trace["input_message_hash"]; !ok {
 		t.Fatalf("expected input_message_hash in trace, got %#v", res.Trace)
+	}
+	if _, err := os.Stat(filepath.Join(root, "workspace", "skills", "clawdefuckifier.md")); err != nil {
+		t.Fatalf("expected global clawdefuckifier skill to be seeded during run execution: %v", err)
 	}
 }
 

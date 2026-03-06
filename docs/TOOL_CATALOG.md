@@ -116,7 +116,7 @@ All tools are deny-by-default through capability policy, and all tool inputs are
 ### `agent.create`
 - Required: `agent_id`
 - Optional: `force`
-- Notes: scaffolds `.openclawssy/agents/<agent_id>` with `memory`, `audit`, `runs` and seeded control docs (`SOUL.md`, `RULES.md`, `TOOLS.md`, `SPECPLAN.md`, `DEVPLAN.md`, `HANDOFF.md`). `clawdefuckifier*` agent IDs also auto-seed the workspace skill and self-improvement bootstrap.
+- Notes: scaffolds `.openclawssy/agents/<agent_id>` with `memory`, `audit`, `runs` and seeded control docs (`SOUL.md`, `RULES.md`, `TOOLS.md`, `SPECPLAN.md`, `DEVPLAN.md`, `HANDOFF.md`). `clawdefuckifier*` agent IDs also auto-seed the workspace skill and self-improvement bootstrap. The shared `workspace/skills/clawdefuckifier.md` skill is also available for other agents to load with `skill.read`.
 
 ### `agent.switch`
 - Required: `agent_id`

@@ -20,6 +20,7 @@ const CATEGORY_LOOKUP = CATEGORY_DEFS.reduce((acc, category) => {
 
 const MODEL_PROVIDERS = ["openai", "openrouter", "requesty", "hatz", "zai", "generic"];
 const EMBEDDING_PROVIDERS = ["openai", "openrouter", "requesty", "zai", "generic"];
+const PROVIDERS_WITH_MODEL_DISCOVERY = new Set(["hatz"]);
 const THINKING_MODES = ["never", "on_error", "always"];
 const DISCORD_SECRET_KEY = "discord/bot_token";
 
@@ -80,6 +81,52 @@ function asString(value) {
 
 function asTrimmedString(value) {
   return asString(value).trim();
+}
+
+function providerSupportsModelDiscovery(provider) {
+  return PROVIDERS_WITH_MODEL_DISCOVERY.has(asTrimmedString(provider).toLowerCase());
+}
+
+function normalizeDiscoveredModels(models) {
+  if (!Array.isArray(models)) {
+    return [];
+  }
+  const seen = new Set();
+  const out = [];
+  models.forEach((item) => {
+    const modelName = asTrimmedString(item);
+    if (!modelName) {
+      return;
+    }
+    const key = modelName.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    out.push(modelName);
+  });
+  return out;
+}
+
+function discoveredModelsForProvider(provider) {
+  return normalizeDiscoveredModels(settingsState.providerModelsResults?.[provider]?.models);
+}
+
+function maybeLoadDiscoveredProviderModels(provider, options = {}) {
+  const normalized = asTrimmedString(provider).toLowerCase();
+  if (!providerSupportsModelDiscovery(normalized)) {
+    return;
+  }
+  const current = settingsState.providerModelsResults?.[normalized];
+  if (!options.force) {
+    if (current?.loading) {
+      return;
+    }
+    if (Array.isArray(current?.models) && current.models.length) {
+      return;
+    }
+  }
+  void loadProviderModels(normalized);
 }
 
 function toLineList(value) {
@@ -672,6 +719,9 @@ function updateDraft(path, value, options = {}) {
   setByPath(settingsState.draftConfig, path, value, options);
   settingsState.draftConfig = normalizeConfigShape(settingsState.draftConfig);
   settingsState.advancedRaw = `${JSON.stringify(settingsState.draftConfig, null, 2)}\n`;
+  if (path === "model.provider") {
+    maybeLoadDiscoveredProviderModels(value);
+  }
   rerender({ preserveFocus: true });
 }
 
@@ -814,7 +864,7 @@ function appendNumberField({
   parent.append(field);
 }
 
-function appendSelectField({ parent, query, title, path, options, helpText = "", fieldErrors }) {
+function appendSelectField({ parent, query, title, path, options, helpText = "", fieldErrors, normalizeValue, disabled = false }) {
   const optionLabels = options.map((option) => option.label || option.value);
   if (!fieldVisible(query, title, path, helpText, optionLabels.join(" "))) {
     return;
@@ -824,18 +874,24 @@ function appendSelectField({ parent, query, title, path, options, helpText = "",
   const select = document.createElement("select");
   select.className = "settings-select";
   select.setAttribute("data-focus-id", `settings:${path}`);
-  const current = asTrimmedString(getByPath(settingsState.draftConfig, path)).toLowerCase();
+  const current = asTrimmedString(getByPath(settingsState.draftConfig, path));
+  const currentLower = current.toLowerCase();
   options.forEach((option) => {
     const entry = document.createElement("option");
-    entry.value = option.value;
-    entry.textContent = option.label || option.value;
-    if (option.value === current) {
+    const optionValue = asString(option.value);
+    entry.value = optionValue;
+    entry.textContent = option.label || optionValue;
+    if (optionValue === current || optionValue.toLowerCase() === currentLower) {
       entry.selected = true;
     }
     select.append(entry);
   });
+  select.disabled = Boolean(disabled);
   select.addEventListener("change", () => {
-    updateDraft(path, asTrimmedString(select.value).toLowerCase(), { deleteIfUndefined: false });
+    const nextValue = typeof normalizeValue === "function"
+      ? normalizeValue(select.value)
+      : asTrimmedString(select.value);
+    updateDraft(path, nextValue, { deleteIfUndefined: false });
   });
   field.append(select);
   parent.append(field);
@@ -860,6 +916,56 @@ function appendCheckboxField({ parent, query, title, path, helpText = "", fieldE
   row.append(input, text);
   field.append(row);
   parent.append(field);
+}
+
+function appendModelNameField({ parent, query, fieldErrors }) {
+  const provider = asTrimmedString(settingsState.draftConfig?.model?.provider).toLowerCase();
+  const modelsResult = settingsState.providerModelsResults?.[provider];
+  const discoveredModels = discoveredModelsForProvider(provider);
+  const currentModel = asTrimmedString(settingsState.draftConfig?.model?.name);
+  if (providerSupportsModelDiscovery(provider) && discoveredModels.length) {
+    const options = currentModel
+      ? []
+      : [{ value: "", label: "(select model)" }];
+    options.push(...discoveredModels.map((modelName) => ({ value: modelName, label: modelName })));
+    if (currentModel && !discoveredModels.some((item) => item.toLowerCase() === currentModel.toLowerCase())) {
+      options.unshift({ value: currentModel, label: `${currentModel} (current)` });
+    }
+    appendSelectField({
+      parent,
+      query,
+      title: "Model name",
+      path: "model.name",
+      helpText: "Provider model identifier discovered from the selected provider. Use Query models to refresh the list.",
+      options,
+      fieldErrors,
+      normalizeValue: (value) => asTrimmedString(value),
+    });
+    return;
+  }
+
+  let helpText = "Provider model identifier.";
+  let placeholder = "GLM-4.7";
+  if (providerSupportsModelDiscovery(provider)) {
+    placeholder = "Select or type a model";
+    if (modelsResult?.loading) {
+      helpText = "Loading available models for the selected provider. This field becomes a dropdown when discovery completes.";
+    } else if (modelsResult?.error) {
+      helpText = "Provider model identifier. Automatic model discovery failed; you can still type a value or retry Query models.";
+    } else {
+      helpText = "Provider model identifier. Available models load automatically for the selected provider.";
+    }
+  }
+
+  appendTextField({
+    parent,
+    query,
+    title: "Model name",
+    path: "model.name",
+    helpText,
+    placeholder,
+    fieldErrors,
+  });
 }
 
 function appendListField({ parent, query, title, path, helpText = "", placeholder = "", fieldErrors }) {
@@ -950,16 +1056,9 @@ function buildModelCategory(panel, fieldErrors) {
     helpText: "Primary provider used by runtime model calls.",
     options: MODEL_PROVIDERS.map((provider) => ({ value: provider, label: provider })),
     fieldErrors,
+    normalizeValue: (value) => asTrimmedString(value).toLowerCase(),
   });
-  appendTextField({
-    parent: panel,
-    query,
-    title: "Model name",
-    path: "model.name",
-    helpText: "Provider model identifier.",
-    placeholder: "GLM-4.7",
-    fieldErrors,
-  });
+  appendModelNameField({ parent: panel, query, fieldErrors });
   appendNumberField({
     parent: panel,
     query,
@@ -2228,6 +2327,7 @@ async function loadConfig() {
     settingsState.touchedFields = new Set();
     settingsState.saveAttempted = false;
     settingsState.discordTokenDraft = "";
+    maybeLoadDiscoveredProviderModels(settingsState.draftConfig?.model?.provider);
     await loadDiscordSecretStatus({ rerenderPage: false });
   } catch (error) {
     settingsState.loadError = error instanceof Error ? error.message : String(error);
@@ -2307,7 +2407,7 @@ async function loadProviderModels(provider) {
       loading: false,
       error: false,
       models,
-      message: models.length ? `Loaded ${models.length} model${models.length === 1 ? "" : "s"}. Click one to use it.` : "No models returned.",
+      message: models.length ? `Loaded ${models.length} model${models.length === 1 ? "" : "s"}.` : "No models returned.",
     };
   } catch (error) {
     settingsState.providerModelsResults[provider] = {
