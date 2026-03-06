@@ -270,7 +270,14 @@ func (s *SQLiteStore) Search(ctx context.Context, params memory.SearchParams) ([
 	}
 	defer rows.Close()
 
-	return scanItems(rows)
+	items, err := scanItems(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) > 0 {
+		return items, nil
+	}
+	return s.searchBySubstring(ctx, params, status)
 }
 
 func (s *SQLiteStore) Health(ctx context.Context) (memory.Health, error) {
@@ -336,6 +343,44 @@ func (s *SQLiteStore) searchWithoutQuery(ctx context.Context, params memory.Sear
 		ORDER BY importance DESC, updated_at DESC
 		LIMIT ?
 	`, s.agentID, status, params.MinImportance, params.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanItems(rows)
+}
+
+func (s *SQLiteStore) searchBySubstring(ctx context.Context, params memory.SearchParams, status string) ([]memory.MemoryItem, error) {
+	tokens := strings.Fields(strings.ToLower(strings.TrimSpace(params.Query)))
+	if len(tokens) == 0 {
+		return nil, nil
+	}
+	clauses := make([]string, 0, len(tokens))
+	args := make([]any, 0, 3+(len(tokens)*2))
+	args = append(args, s.agentID, status, params.MinImportance)
+	for _, token := range tokens {
+		if token == "" {
+			continue
+		}
+		clauses = append(clauses, `(lower(m.title) LIKE ? OR lower(m.content) LIKE ?)`)
+		pattern := "%" + token + "%"
+		args = append(args, pattern, pattern)
+	}
+	if len(clauses) == 0 {
+		return nil, nil
+	}
+	args = append(args, params.Limit)
+	query := fmt.Sprintf(`
+		SELECT m.id, m.agent_id, m.kind, m.title, m.content, m.importance, m.confidence, m.status, m.created_at, m.updated_at
+		FROM memory_items m
+		WHERE m.agent_id = ?
+		  AND m.status = ?
+		  AND m.importance >= ?
+		  AND %s
+		ORDER BY m.importance DESC, m.updated_at DESC
+		LIMIT ?
+	`, strings.Join(clauses, " AND "))
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

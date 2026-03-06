@@ -155,3 +155,42 @@ func TestSQLiteStoreSearchByEmbedding(t *testing.T) {
 		t.Fatalf("expected item A to rank first, got %q", results[0].ID)
 	}
 }
+
+func TestSQLiteStoreSearchFallsBackToSubstringMatch(t *testing.T) {
+	ctx := context.Background()
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "memory.db"), "default")
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	item, err := store.Upsert(ctx, memory.MemoryItem{
+		Kind:       "note",
+		Title:      "Ussyverse research",
+		Content:    "OpenClawssy becomes a node inside the ussyverse knowledge graph.",
+		Importance: 4,
+		Confidence: 0.9,
+	})
+	if err != nil {
+		t.Fatalf("upsert item: %v", err)
+	}
+
+	results, err := store.Search(ctx, memory.SearchParams{Query: "ussy", Limit: 5})
+	if err != nil {
+		t.Fatalf("search substring: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 search result for substring query, got %d", len(results))
+	}
+	if results[0].ID != item.ID {
+		t.Fatalf("expected item id %q, got %q", item.ID, results[0].ID)
+	}
+
+	results, err = store.Search(ctx, memory.SearchParams{Query: "openclaw", Limit: 5})
+	if err != nil {
+		t.Fatalf("search substring openclaw: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected substring search to match OpenClawssy, got %d results", len(results))
+	}
+}

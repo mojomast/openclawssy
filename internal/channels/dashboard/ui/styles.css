@@ -58,7 +58,9 @@
   --backdrop: rgba(0, 10, 20, 0.65);
 }
 
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
@@ -69,12 +71,22 @@ body {
   color: var(--foreground);
 }
 
+html,
+body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 .shell {
   min-height: 100vh;
   display: grid;
   grid-template-rows: auto 1fr auto;
   gap: 1rem;
   padding: 1rem;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .shell-header {
@@ -86,10 +98,18 @@ body {
   justify-content: space-between;
   gap: 1rem;
   align-items: flex-start;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.shell-header-title {
+  flex: 1 1 18rem;
+  min-width: 0;
 }
 
 .shell-header h1 {
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .shell-header p {
@@ -101,6 +121,9 @@ body {
   display: flex;
   align-items: center;
   gap: 0.55rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 .layout-toggle {
@@ -131,6 +154,8 @@ body {
   grid-template-columns: var(--pane-left) var(--resizer-size) minmax(0, 1fr) var(--resizer-size) var(--pane-right);
   gap: 0;
   min-height: 0;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .pane {
@@ -150,6 +175,12 @@ body {
 
 .content-pane {
   border-radius: 0;
+}
+
+.content-pane > *,
+.pane > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .inspector-pane {
@@ -230,6 +261,8 @@ body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 10px minmax(16rem, var(--chat-activity-width, 368px));
   gap: 0.9rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .chat-transcript-pane,
@@ -821,6 +854,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 0.45rem;
   overflow: hidden;
+  table-layout: fixed;
 }
 
 .runs-table th,
@@ -829,6 +863,8 @@ body {
   padding: 0.5rem 0.6rem;
   text-align: left;
   vertical-align: top;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .runs-table th {
@@ -906,6 +942,11 @@ pre {
   color: var(--foreground);
 }
 
+code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .button-link {
   border: 0;
   background: transparent;
@@ -973,6 +1014,8 @@ pre {
   display: grid;
   grid-template-columns: minmax(13rem, 15rem) minmax(0, 1fr);
   gap: 0.9rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .settings-categories {
@@ -1114,6 +1157,7 @@ pre {
 .settings-diff-table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
 }
 
 .settings-diff-table th,
@@ -1123,6 +1167,8 @@ pre {
   padding: 0.4rem 0.45rem;
   vertical-align: top;
   font-size: 0.9rem;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .settings-diff-table th {
@@ -1415,6 +1461,8 @@ pre {
   grid-template-columns: repeat(2, minmax(0, 15rem)) minmax(0, 1fr);
   gap: 0.7rem;
   align-items: end;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .docs-field {
@@ -1522,7 +1570,17 @@ pre {
   }
 
   .shell-header {
+    flex-direction: column;
     align-items: stretch;
+  }
+
+  .shell-header-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .shell-header-actions > * {
+    flex: 1 1 9rem;
   }
 
   .nav-toggle {
@@ -1800,6 +1858,7 @@ pre {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.9rem;
+  table-layout: fixed;
 }
 
 .sandbox-status-table tr {
@@ -1861,6 +1920,7 @@ pre {
   border-collapse: collapse;
   font-size: 0.88rem;
   overflow-x: auto;
+  table-layout: fixed;
 }
 
 .sandbox-table thead tr {
@@ -1880,6 +1940,8 @@ pre {
   text-align: left;
   padding: 0.4rem 0.5rem;
   vertical-align: middle;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .sandbox-table th {
@@ -1963,6 +2025,8 @@ details[open] .sandbox-advanced-summary::before {
   display: grid;
   grid-template-columns: 19rem minmax(0, 1fr);
   gap: 1rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .dashboards-sidebar,
@@ -2115,7 +2179,8 @@ details[open] .sandbox-advanced-summary::before {
   top: 0;
   right: 0;
   bottom: 0;
-  width: var(--help-drawer-width, 360px);
+  width: min(100%, var(--help-drawer-width, 360px));
+  max-width: 100%;
   background: var(--card);
   border-left: 1px solid var(--border);
   box-shadow: -12px 0 24px var(--shadow);
@@ -2149,7 +2214,7 @@ details[open] .sandbox-advanced-summary::before {
 .help-drawer-resizer {
   position: fixed;
   top: 0;
-  right: var(--help-drawer-width, 360px);
+  right: min(var(--help-drawer-width, 360px), 100%);
   bottom: 0;
   width: 6px;
   cursor: col-resize;
@@ -2224,6 +2289,8 @@ details[open] .sandbox-advanced-summary::before {
   display: grid;
   grid-template-columns: 18rem minmax(0, 1fr);
   gap: 1rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .help-center-sidebar,
@@ -2260,6 +2327,7 @@ details[open] .sandbox-advanced-summary::before {
 
 .help-topic-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin-bottom: 1rem;
 }
@@ -2324,6 +2392,7 @@ details[open] .sandbox-advanced-summary::before {
 
 .help-markdown pre {
   overflow: auto;
+  max-width: 100%;
   background: var(--muted);
   border: 1px solid var(--border);
   border-radius: 0.6rem;
@@ -2379,7 +2448,8 @@ details[open] .sandbox-advanced-summary::before {
 
 @media (max-width: 900px) {
   .help-drawer {
-    width: 100vw;
+    width: 100%;
+    border-left: 0;
   }
 
   .help-drawer-resizer {
