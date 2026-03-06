@@ -172,6 +172,13 @@ Chat interruption recovery:
 - The resume action sends a structured continuation prompt for the current session, so operators do not need to type `continue` manually.
 - If provider timeouts happen repeatedly, raise global `model.timeout_ms` or the selected agent profile's `model.timeout_ms` in `Settings` -> `Model Provider` / `Agents`.
 
+Chat tool timeline:
+
+- Chat now supports a `Tool timeline: on/off` toggle in the transcript header.
+- When enabled, live tool calls stay inline in the transcript as their own bubbles instead of only appearing as `Latest tool` hints.
+- Inline tool bubbles remain after the run completes, and each bubble can be expanded to inspect full arguments, output, and error text.
+- The final assistant response still lands in its own message bubble after the tool work, which makes long workflows easier to scan.
+
 Agent and subagent controls live under `Settings` -> `Agents`:
 
 - per-agent profile overrides with inheritance-friendly blanks

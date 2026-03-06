@@ -15,6 +15,7 @@ const CHAT_LAYOUT_STORAGE_KEY = "dashboard.chat_layout.p1";
 const CHAT_ACTIVITY_WIDTH_MIN = 260;
 const CHAT_ACTIVITY_WIDTH_MAX = 720;
 const CHAT_ACTIVITY_WIDTH_DEFAULT = 368;
+const CHAT_TOOL_TIMELINE_DEFAULT = true;
 const RESUME_INTERRUPTED_RUN_MESSAGE = "Resume your previous response from the exact interruption point. Continue from the cutoff without repeating already-completed text unless needed for coherence.";
 
 const chatViewState = {
@@ -78,6 +79,7 @@ const chatViewState = {
   activeAgentID: CHAT_DEFAULTS.agentID,
   switchAgentPending: false,
   switchAgentError: "",
+  showToolActivityInTranscript: CHAT_TOOL_TIMELINE_DEFAULT,
   agentProfileContext: null,
   agentGlobalConfig: null,
   activityPaneWidth: CHAT_ACTIVITY_WIDTH_DEFAULT,
@@ -91,14 +93,15 @@ function readChatLayoutPrefs() {
 	try {
 		const raw = window.localStorage.getItem(CHAT_LAYOUT_STORAGE_KEY);
 		if (!raw) {
-			return { activityPaneWidth: CHAT_ACTIVITY_WIDTH_DEFAULT };
+			return { activityPaneWidth: CHAT_ACTIVITY_WIDTH_DEFAULT, showToolActivityInTranscript: CHAT_TOOL_TIMELINE_DEFAULT };
 		}
 		const parsed = JSON.parse(raw);
 		return {
 			activityPaneWidth: clamp(Number(parsed.activityPaneWidth) || CHAT_ACTIVITY_WIDTH_DEFAULT, CHAT_ACTIVITY_WIDTH_MIN, CHAT_ACTIVITY_WIDTH_MAX),
+			showToolActivityInTranscript: typeof parsed.showToolActivityInTranscript === "boolean" ? parsed.showToolActivityInTranscript : CHAT_TOOL_TIMELINE_DEFAULT,
 		};
 	} catch (_error) {
-		return { activityPaneWidth: CHAT_ACTIVITY_WIDTH_DEFAULT };
+		return { activityPaneWidth: CHAT_ACTIVITY_WIDTH_DEFAULT, showToolActivityInTranscript: CHAT_TOOL_TIMELINE_DEFAULT };
 	}
 }
 
@@ -106,10 +109,15 @@ function persistChatLayoutPrefs() {
 	try {
 		window.localStorage.setItem(CHAT_LAYOUT_STORAGE_KEY, JSON.stringify({
 			activityPaneWidth: chatViewState.activityPaneWidth,
+			showToolActivityInTranscript: Boolean(chatViewState.showToolActivityInTranscript),
 		}));
 	} catch (_error) {
 		// ignore localStorage failures
 	}
+}
+
+function toolTimelineEnabled() {
+	return Boolean(chatViewState.showToolActivityInTranscript);
 }
 
 function safeText(value) {
@@ -732,11 +740,26 @@ function normalizeSessionTranscript(messages) {
     return [];
   }
   return messages
-    .map((item) => {
+    .map((item, index) => {
       if (!item || typeof item !== "object") {
         return null;
       }
       const role = safeText(item.role).toLowerCase();
+      if (role === "tool") {
+        if (!toolTimelineEnabled()) {
+          return null;
+        }
+        const event = toToolEvent(item, index);
+        return {
+          role: "tool",
+          content: firstNonEmpty(event.summary, event.errorText, event.outputText, event.argsText, event.tool),
+          pending: false,
+          ts: String(item.ts || new Date().toISOString()),
+          toolEvent: event,
+          toolKey: toolEventKey(event),
+          source: "session",
+        };
+      }
       if (role !== "user" && role !== "assistant") {
         return null;
       }
@@ -749,6 +772,7 @@ function normalizeSessionTranscript(messages) {
         content,
         pending: false,
         ts: String(item.ts || new Date().toISOString()),
+        source: "session",
       };
     })
     .filter((item) => item !== null);
@@ -761,10 +785,45 @@ function syncTranscriptFromSession(messages) {
   }
 
   const pending = chatViewState.transcript.find((item) => item?.role === "assistant" && item?.pending) || null;
+  const sessionToolKeys = new Set(
+    sessionTranscript
+      .filter((item) => item?.role === "tool" && safeText(item.toolKey))
+      .map((item) => item.toolKey)
+  );
+  const liveToolItems = toolTimelineEnabled()
+    ? chatViewState.transcript.filter(
+        (item) =>
+          item?.role === "tool" &&
+          item?.source === "stream" &&
+          safeText(item.toolKey) &&
+          !sessionToolKeys.has(item.toolKey)
+      )
+    : [];
   chatViewState.transcript = sessionTranscript;
-  if (pending && (chatViewState.sendPending || chatViewState.polling || chatViewState.streamActive)) {
-    chatViewState.transcript.push(pending);
-  }
+  liveToolItems.forEach((item) => chatViewState.transcript.push(item));
+	if (pending && (chatViewState.sendPending || chatViewState.polling || chatViewState.streamActive)) {
+		chatViewState.transcript.push(pending);
+	}
+}
+
+async function refreshTranscriptFromCurrentSession() {
+	const sessionID = await ensureCurrentSessionID();
+	if (!sessionID) {
+		return;
+	}
+	const sessionPayload = await chatViewState.apiClient.get(pollSessionMessagesPath(sessionID));
+	applySessionMessagesPayload(sessionPayload);
+}
+
+async function toggleToolTimelineMode() {
+	chatViewState.showToolActivityInTranscript = !chatViewState.showToolActivityInTranscript;
+	persistChatLayoutPrefs();
+	try {
+		await refreshTranscriptFromCurrentSession();
+	} catch (_error) {
+		// keep current transcript if refresh fails; rerender still reflects toggle state for future events
+	}
+	rerenderIfActive();
 }
 
 function toToolEvent(message, index) {
@@ -797,6 +856,58 @@ function toolEventKey(event) {
 		return "";
 	}
 	return [safeText(event.runID), safeText(event.tool), safeText(event.toolCallID), String(event.index || 0), safeText(event.ts)].join("|");
+}
+
+function buildTranscriptToolItem(event, source = "stream") {
+	return {
+		role: "tool",
+		content: firstNonEmpty(event?.summary, event?.errorText, event?.outputText, event?.argsText, event?.tool),
+		pending: false,
+		ts: String(event?.ts || new Date().toISOString()),
+		toolEvent: event,
+		toolKey: toolEventKey(event),
+		source,
+	};
+}
+
+function appendTranscriptToolItem(event, source = "stream") {
+	if (!toolTimelineEnabled() || !event) {
+		return;
+	}
+	chatViewState.transcript.push(buildTranscriptToolItem(event, source));
+}
+
+function pushUserMessage(message) {
+	chatViewState.transcript.push({ role: "user", content: message, pending: false, ts: new Date().toISOString(), source: "local" });
+}
+
+function findPendingAssistantIndex() {
+	for (let index = chatViewState.transcript.length - 1; index >= 0; index -= 1) {
+		const item = chatViewState.transcript[index];
+		if (item?.role === "assistant" && item?.pending) {
+			return index;
+		}
+	}
+	return -1;
+}
+
+function updateOrAppendPendingAssistant(message) {
+	const text = typeof message === "string" ? message : String(message || "");
+	if (!safeText(text)) {
+		return;
+	}
+	const pendingIndex = findPendingAssistantIndex();
+	if (pendingIndex >= 0) {
+		chatViewState.transcript[pendingIndex] = {
+			role: "assistant",
+			content: text,
+			pending: true,
+			ts: chatViewState.transcript[pendingIndex].ts || new Date().toISOString(),
+			source: chatViewState.transcript[pendingIndex].source || "local",
+		};
+		return;
+	}
+	chatViewState.transcript.push({ role: "assistant", content: text, pending: true, ts: new Date().toISOString(), source: "local" });
 }
 
 function toggleToolEntryExpanded(eventKey, kind = "tool") {
@@ -937,76 +1048,76 @@ function createToolEntry(event, kind = "tool") {
 	row.append(summary);
 
 	if (expanded) {
-		const details = document.createElement("div");
-		details.className = "chat-tool-entry-details";
-		const sections = [
-			{ label: "Arguments", value: event.argsText },
-			{ label: "Output", value: event.outputText },
-			{ label: "Error", value: event.errorText, error: true },
-		].filter((item) => safeText(item.value));
-		if (!sections.length) {
-			const empty = document.createElement("p");
-			empty.className = "muted";
-			empty.textContent = "No additional details.";
-			details.append(empty);
-		} else {
-			sections.forEach((section) => {
-				const block = document.createElement("section");
-				block.className = `chat-tool-detail-block${section.error ? " failed" : ""}`;
-				const label = document.createElement("h5");
-				label.textContent = section.label;
-				const body = document.createElement("pre");
-				body.className = "chat-tool-detail-body";
-				body.textContent = section.value;
-				block.append(label, body);
-				details.append(block);
-			});
-		}
+		const details = createToolDetailSections(event);
 		row.append(details);
 	}
 
 	return row;
 }
 
+function formatToolDetailValue(value) {
+	const text = typeof value === "string" ? value : asDisplayText(value);
+	const formattedJSON = tryFormatJSONText(text);
+	return formattedJSON || text;
+}
+
+function createToolDetailSections(event) {
+	const details = document.createElement("div");
+	details.className = "chat-tool-entry-details";
+	const sections = [
+		{ label: "Arguments", value: event.argsText },
+		{ label: "Output", value: event.outputText },
+		{ label: "Error", value: event.errorText, error: true },
+	].filter((item) => safeText(item.value));
+	if (!sections.length) {
+		const empty = document.createElement("p");
+		empty.className = "muted";
+		empty.textContent = "No additional details.";
+		details.append(empty);
+		return details;
+	}
+	sections.forEach((section) => {
+		const block = document.createElement("section");
+		block.className = `chat-tool-detail-block${section.error ? " failed" : ""}`;
+		const label = document.createElement("h5");
+		label.textContent = section.label;
+		const body = document.createElement("pre");
+		body.className = "chat-tool-detail-body";
+		body.textContent = formatToolDetailValue(section.value);
+		block.append(label, body);
+		details.append(block);
+	});
+	return details;
+}
+
 function replacePendingAssistant(message) {
-  for (let index = chatViewState.transcript.length - 1; index >= 0; index -= 1) {
-    const item = chatViewState.transcript[index];
-    if (item?.role === "assistant" && item?.pending) {
-      chatViewState.transcript[index] = {
-        role: "assistant",
-        content: message,
-        pending: false,
-        ts: new Date().toISOString(),
-      };
-      return;
-    }
-  }
-  chatViewState.transcript.push({ role: "assistant", content: message, pending: false, ts: new Date().toISOString() });
+	const pendingIndex = findPendingAssistantIndex();
+	if (pendingIndex >= 0) {
+		chatViewState.transcript[pendingIndex] = {
+			role: "assistant",
+			content: message,
+			pending: false,
+			ts: new Date().toISOString(),
+			source: chatViewState.transcript[pendingIndex].source || "local",
+		};
+		return;
+	}
+	chatViewState.transcript.push({ role: "assistant", content: message, pending: false, ts: new Date().toISOString(), source: "local" });
 }
 
 function updatePendingAssistant(message) {
-  const text = typeof message === "string" ? message : String(message || "");
-  if (!safeText(text)) {
-    return;
-  }
-  for (let index = chatViewState.transcript.length - 1; index >= 0; index -= 1) {
-    const item = chatViewState.transcript[index];
-    if (item?.role === "assistant" && item?.pending) {
-      chatViewState.transcript[index] = {
-        role: "assistant",
-        content: text,
-        pending: true,
-        ts: item.ts || new Date().toISOString(),
-      };
-      return;
-    }
-  }
+	const text = typeof message === "string" ? message : String(message || "");
+	if (!safeText(text)) {
+		return;
+	}
+	updateOrAppendPendingAssistant(text);
 }
 
 function pushUserAndPendingAssistant(message) {
-  const now = new Date().toISOString();
-  chatViewState.transcript.push({ role: "user", content: message, pending: false, ts: now });
-  chatViewState.transcript.push({ role: "assistant", content: "Thinking...", pending: true, ts: now });
+	pushUserMessage(message);
+	if (!toolTimelineEnabled()) {
+		chatViewState.transcript.push({ role: "assistant", content: "Thinking...", pending: true, ts: new Date().toISOString(), source: "local" });
+	}
 }
 
 function clearStreamingRenderTimer() {
@@ -1311,18 +1422,22 @@ function handleRunStreamToolEnd(eventEnvelope) {
   if (chatViewState.streamToolEvents.length > 32) {
     chatViewState.streamToolEvents = chatViewState.streamToolEvents.slice(-32);
   }
-  chatViewState.latestToolActivity = event;
-  chatViewState.loopRisk = buildLoopRisk(chatViewState.streamToolEvents);
+	chatViewState.latestToolActivity = event;
+	chatViewState.loopRisk = buildLoopRisk(chatViewState.streamToolEvents);
 
-  if (safeText(chatViewState.currentStreamingText)) {
-    chatViewState.currentStreamingText = "";
-  }
-  const detail = compactText(firstNonEmpty(event.summary, event.errorText, event.outputText, event.argsText), 180);
-  if (detail) {
-    updatePendingAssistant(`Working... ${event.tool}: ${detail}`);
-  } else {
-    updatePendingAssistant(`Working... ${event.tool}`);
-  }
+	if (safeText(chatViewState.currentStreamingText)) {
+		chatViewState.currentStreamingText = "";
+	}
+	if (toolTimelineEnabled()) {
+		appendTranscriptToolItem(event, "stream");
+	} else {
+		const detail = compactText(firstNonEmpty(event.summary, event.errorText, event.outputText, event.argsText), 180);
+		if (detail) {
+			updatePendingAssistant(`Working... ${event.tool}: ${detail}`);
+		} else {
+			updatePendingAssistant(`Working... ${event.tool}`);
+		}
+	}
 
   if (event.status === "failed" && safeText(event.errorText)) {
     chatViewState.lastErrorSummary = compactText(event.errorText, 280);
@@ -1356,15 +1471,19 @@ function handleRunStreamModelText(eventEnvelope) {
     return false;
   }
 
-  if (payload.partial === false) {
-    chatViewState.currentStreamingText = text;
-  } else {
-    chatViewState.currentStreamingText += text;
-  }
+	if (payload.partial === false) {
+		chatViewState.currentStreamingText = text;
+	} else {
+		chatViewState.currentStreamingText += text;
+	}
 
-  if (chatViewState.currentStreamingText) {
-    updatePendingAssistant(chatViewState.currentStreamingText);
-  }
+	if (chatViewState.currentStreamingText) {
+		if (toolTimelineEnabled()) {
+			updateOrAppendPendingAssistant(chatViewState.currentStreamingText);
+		} else {
+			updatePendingAssistant(chatViewState.currentStreamingText);
+		}
+	}
   scheduleStreamingRender();
   return false;
 }
@@ -1372,18 +1491,22 @@ function handleRunStreamModelText(eventEnvelope) {
 function handleRunStreamCompleted(eventEnvelope) {
   const payload = eventEnvelope?.data || {};
   chatViewState.currentRunStatus = "completed";
-  chatViewState.currentRunLastUpdatedAt = safeText(eventEnvelope?.ts) || new Date().toISOString();
-  chatViewState.currentRunLastOutput = String(payload.output || chatViewState.currentStreamingText || "");
-  const message =
-    chatViewState.currentRunLastOutput ||
-    "Run completed without assistant output. Open trace or tool activity for details.";
+	chatViewState.currentRunLastUpdatedAt = safeText(eventEnvelope?.ts) || new Date().toISOString();
+	chatViewState.currentRunLastOutput = String(payload.output || chatViewState.currentStreamingText || "");
+	const message =
+		chatViewState.currentRunLastOutput ||
+		"Run completed without assistant output. Open trace or tool activity for details.";
   syncResumableInterruptionFromMessage(message, {
     runID: chatViewState.currentRunID,
     sessionID: chatViewState.currentSessionID,
     updatedAt: chatViewState.currentRunLastUpdatedAt,
     source: "stream.completed",
   });
-  replacePendingAssistant(message);
+	if (toolTimelineEnabled()) {
+		replacePendingAssistant(message);
+	} else {
+		replacePendingAssistant(message);
+	}
   chatViewState.currentStreamingText = "";
   stopPolling();
   resetStreamingState();
@@ -1747,21 +1870,23 @@ async function pollRunOnce(token) {
       chatViewState.currentRunStartedAtMs > 0
         ? Math.max(1, Math.floor((Date.now() - chatViewState.currentRunStartedAtMs) / 1000))
         : 0;
-    let progress = `Still working on run ${runID} (status: ${status}`;
-    if (elapsedSeconds > 0) {
-      progress += `, ${elapsedSeconds}s elapsed`;
-    }
+	let progress = `Still working on run ${runID} (status: ${status}`;
+	if (elapsedSeconds > 0) {
+		progress += `, ${elapsedSeconds}s elapsed`;
+	}
     progress += ").";
     const latest = chatViewState.latestToolActivity;
     if (latest) {
       const detail = compactText(firstNonEmpty(latest.summary, latest.errorText, latest.outputText, latest.argsText), 180);
       if (detail) {
         progress += ` Latest tool activity: ${latest.tool} - ${detail}`;
-      } else if (latest.tool) {
-        progress += ` Latest tool activity: ${latest.tool}.`;
-      }
-    }
-    updatePendingAssistant(progress);
+		} else if (latest.tool) {
+			progress += ` Latest tool activity: ${latest.tool}.`;
+		}
+	}
+	if (!toolTimelineEnabled()) {
+		updatePendingAssistant(progress);
+	}
   } catch (err) {
     chatViewState.lastErrorSummary = compactText(err?.message || String(err), 280);
     updateLastError(chatViewState.store, toErrorPayload("chat.run_poll", err, { run_id: chatViewState.currentRunID }));
@@ -1912,18 +2037,20 @@ async function sendMessage(explicitMessage = "", options = {}) {
       const normalizedStatus = safeText(payload?.status).toLowerCase() || "queued";
       chatViewState.currentRunID = runID;
       chatViewState.currentRunStatus = normalizedStatus;
-      chatViewState.currentRunLastUpdatedAt = "";
-      chatViewState.currentRunLastOutput = "";
-      chatViewState.currentRunStartedAtMs = Date.now();
-      chatViewState.streamLastEventID = 0;
-      chatViewState.currentStreamingText = "";
-      chatViewState.streamToolEvents = [];
-      updatePendingAssistant(
-        safeText(payload?.response) ||
-          `Working on it now. Run ${runID} is ${normalizedStatus || "queued"}. I will follow up when it completes or fails.`
-      );
-      startPolling({ runID, sessionID });
-      void connectRunEventStream(runID);
+		chatViewState.currentRunLastUpdatedAt = "";
+		chatViewState.currentRunLastOutput = "";
+		chatViewState.currentRunStartedAtMs = Date.now();
+		chatViewState.streamLastEventID = 0;
+		chatViewState.currentStreamingText = "";
+		chatViewState.streamToolEvents = [];
+		if (!toolTimelineEnabled()) {
+			updatePendingAssistant(
+				safeText(payload?.response) ||
+					`Working on it now. Run ${runID} is ${normalizedStatus || "queued"}. I will follow up when it completes or fails.`
+			);
+		}
+		startPolling({ runID, sessionID });
+		void connectRunEventStream(runID);
     } else {
       const directResponse = safeText(payload?.response);
       replacePendingAssistant(directResponse || "Request accepted.");
@@ -1969,20 +2096,30 @@ function renderChatPage() {
   const heading = document.createElement("h2");
   heading.textContent = "Chat";
 
-  const note = document.createElement("p");
-  note.className = "muted";
-  note.textContent = "Send prompts from dashboard defaults and watch live run/tool activity while the agent is in-flight.";
+	const note = document.createElement("p");
+	note.className = "muted";
+	note.textContent = "Send prompts from dashboard defaults, watch live run/tool activity, and toggle an in-chat tool timeline when you want the work log to stay inline.";
 
   const page = document.createElement("section");
   page.className = "chat-page";
   page.style.setProperty("--chat-activity-width", `${chatViewState.activityPaneWidth}px`);
 
-  const transcriptPane = document.createElement("section");
-  transcriptPane.className = "chat-transcript-pane";
-  const transcriptTitle = document.createElement("h3");
-  transcriptTitle.textContent = "Transcript";
-  const transcript = document.createElement("div");
-  transcript.className = "chat-transcript";
+	const transcriptPane = document.createElement("section");
+	transcriptPane.className = "chat-transcript-pane";
+	const transcriptHeader = document.createElement("div");
+	transcriptHeader.className = "chat-transcript-header";
+	const transcriptTitle = document.createElement("h3");
+	transcriptTitle.textContent = "Transcript";
+	const transcriptToggle = document.createElement("button");
+	transcriptToggle.type = "button";
+	transcriptToggle.className = "layout-toggle";
+	transcriptToggle.textContent = toolTimelineEnabled() ? "Tool timeline: on" : "Tool timeline: off";
+	transcriptToggle.addEventListener("click", () => {
+		void toggleToolTimelineMode();
+	});
+	transcriptHeader.append(transcriptTitle, transcriptToggle);
+	const transcript = document.createElement("div");
+	transcript.className = "chat-transcript";
   transcript.addEventListener("scroll", () => {
     chatViewState.transcriptPinned = isTranscriptNearBottom(transcript);
     chatViewState.transcriptScrollTop = transcript.scrollTop;
@@ -1993,37 +2130,70 @@ function renderChatPage() {
     empty.className = "muted";
     empty.textContent = "No messages yet. Send a prompt to start.";
     transcript.append(empty);
-  } else {
-    chatViewState.transcript.forEach((item) => {
-      if (!item || (item.role !== "user" && item.role !== "assistant")) {
-        return;
-      }
-      const message = document.createElement("article");
-      message.className = `chat-message chat-${item.role}`;
-      if (item.pending) {
-        message.classList.add("pending");
-      }
-      if (item.pending && item.role === "assistant" && chatViewState.streamActive) {
-        message.classList.add("streaming");
-      }
+	} else {
+		chatViewState.transcript.forEach((item) => {
+			if (!item || (item.role !== "user" && item.role !== "assistant" && item.role !== "tool")) {
+				return;
+			}
+			const message = document.createElement("article");
+			const toolFailed = item.role === "tool" && item.toolEvent?.status === "failed";
+			message.className = `chat-message ${item.role === "tool" ? "chat-tool-message" : `chat-${item.role}`}`;
+			if (toolFailed) {
+				message.classList.add("failed");
+			}
+			if (item.pending) {
+				message.classList.add("pending");
+			}
+			if (item.pending && item.role === "assistant" && chatViewState.streamActive) {
+				message.classList.add("streaming");
+			}
 
-      const meta = document.createElement("p");
-      meta.className = "chat-message-meta";
-      meta.textContent = `${item.role} · ${formatDateTime(item.ts)}`;
+			const meta = document.createElement("p");
+			meta.className = "chat-message-meta";
+			if (item.role === "tool" && item.toolEvent) {
+				const eventKey = item.toolKey || toolEventKey(item.toolEvent);
+				const expanded = isToolEntryExpanded(eventKey, "tool");
+				const toolHeader = document.createElement("div");
+				toolHeader.className = "chat-tool-transcript-header";
+				const toggle = document.createElement("button");
+				toggle.type = "button";
+				toggle.className = "chat-tool-toggle";
+				toggle.setAttribute("aria-expanded", String(expanded));
+				toggle.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${item.toolEvent.tool}`);
+				toggle.textContent = expanded ? "-" : "+";
+				toggle.addEventListener("click", () => toggleToolEntryExpanded(eventKey, "tool"));
+				const metaWrap = document.createElement("div");
+				metaWrap.className = "chat-tool-transcript-meta";
+				meta.textContent = `${item.toolEvent.tool}${item.toolEvent.toolCallID ? ` [${item.toolEvent.toolCallID}]` : ""} · ${item.toolEvent.status}${item.ts ? ` · ${formatDateTime(item.ts)}` : ""}`;
+				metaWrap.append(meta);
+				toolHeader.append(toggle, metaWrap);
+				const summary = document.createElement("p");
+				summary.className = "chat-tool-transcript-summary";
+				summary.textContent = compactText(
+					firstNonEmpty(item.toolEvent.summary, item.toolEvent.errorText, item.toolEvent.outputText, item.toolEvent.argsText),
+					expanded ? 520 : 260
+				) || "(no tool summary)";
+				message.append(toolHeader, summary);
+				if (expanded) {
+					message.append(createToolDetailSections(item.toolEvent));
+				}
+			} else {
+				meta.textContent = `${item.role} · ${formatDateTime(item.ts)}`;
 
-      const body = document.createElement("pre");
-      body.className = "chat-message-content";
-      body.textContent =
-        item.role === "assistant"
-          ? formatAssistantContentForDisplay(item.content)
-          : String(item.content || "");
+				const body = document.createElement("pre");
+				body.className = "chat-message-content";
+				body.textContent =
+					item.role === "assistant"
+						? formatAssistantContentForDisplay(item.content)
+						: String(item.content || "");
 
-      message.append(meta, body);
-      if (item.pending && item.role === "assistant" && chatViewState.latestToolActivity) {
-        const toolHint = document.createElement("p");
-        const latest = chatViewState.latestToolActivity;
-        const detail = compactText(
-          firstNonEmpty(latest.summary, latest.errorText, latest.outputText, latest.argsText),
+				message.append(meta, body);
+			}
+			if (!toolTimelineEnabled() && item.pending && item.role === "assistant" && chatViewState.latestToolActivity) {
+				const toolHint = document.createElement("p");
+				const latest = chatViewState.latestToolActivity;
+				const detail = compactText(
+					firstNonEmpty(latest.summary, latest.errorText, latest.outputText, latest.argsText),
           150
         );
         toolHint.className = `chat-tool-indicator ${latest.status === "failed" ? "failed" : "ok"}`;
@@ -2031,10 +2201,10 @@ function renderChatPage() {
           ? `Latest tool: ${latest.tool} · ${detail}`
           : `Latest tool: ${latest.tool}`;
         message.append(toolHint);
-      }
-      transcript.append(message);
-    });
-  }
+			}
+			transcript.append(message);
+		});
+	}
 
   const composer = document.createElement("form");
   composer.className = "chat-composer";
@@ -2147,7 +2317,7 @@ function renderChatPage() {
     composer.append(debugStatus);
   }
 
-  transcriptPane.append(transcriptTitle, transcript, composer);
+	transcriptPane.append(transcriptHeader, transcript, composer);
 
   const paneResizer = document.createElement("div");
   paneResizer.className = "chat-pane-resizer";
@@ -2483,9 +2653,10 @@ export const chatPage = {
   key: "chat",
   title: "Chat",
   async render({ container, apiClient, store }) {
-    if (!chatViewState.container) {
+	if (!chatViewState.container) {
 		const prefs = readChatLayoutPrefs();
 		chatViewState.activityPaneWidth = prefs.activityPaneWidth;
+		chatViewState.showToolActivityInTranscript = prefs.showToolActivityInTranscript;
 	}
     chatViewState.container = container;
     chatViewState.apiClient = apiClient;

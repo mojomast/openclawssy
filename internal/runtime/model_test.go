@@ -1693,6 +1693,66 @@ func TestHatzGenerateSendsBearerAndXAPIKeyHeaders(t *testing.T) {
 	}
 }
 
+func TestHatzGenerateRemapsToolHistoryRolesToAssistant(t *testing.T) {
+	var captured requestCapture
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{
+				map[string]any{"message": map[string]string{"content": "ok"}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.Model.Provider = "hatz"
+	cfg.Model.Name = "gpt-5.4"
+	cfg.Providers.Hatz.BaseURL = server.URL
+	cfg.Providers.Hatz.APIKey = ""
+	cfg.Providers.Hatz.APIKeyEnv = ""
+
+	model, err := NewProviderModel(cfg, func(name string) (string, bool, error) {
+		return "hatz-secret", true, nil
+	})
+	if err != nil {
+		t.Fatalf("NewProviderModel failed: %v", err)
+	}
+
+	_, err = model.Generate(context.Background(), agent.ModelRequest{
+		Prompt: "system",
+		Messages: []agent.ChatMessage{
+			{Role: "user", Content: "list files in ."},
+			{Role: "tool", Content: "tool fs.list result (tool-json-1)\nsummary: found README\noutput: README.md"},
+			{Role: "assistant", Content: "Found one file."},
+			{Role: "user", Content: "create foo.txt"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	if len(captured.Messages) != 5 {
+		t.Fatalf("expected system + four history messages, got %#v", captured.Messages)
+	}
+	if captured.Messages[2].Role != "assistant" {
+		t.Fatalf("expected Hatz tool history to be remapped to assistant, got %+v", captured.Messages[2])
+	}
+	if !strings.Contains(captured.Messages[2].Content, "tool fs.list result") {
+		t.Fatalf("expected remapped tool content to be preserved, got %+v", captured.Messages[2])
+	}
+	if captured.Messages[4].Role != "user" || captured.Messages[4].Content != "create foo.txt" {
+		t.Fatalf("expected last user turn preserved, got %+v", captured.Messages[4])
+	}
+	for _, msg := range captured.Messages {
+		if msg.Role != "system" && msg.Role != "user" && msg.Role != "assistant" {
+			t.Fatalf("unexpected Hatz request role: %+v", msg)
+		}
+	}
+}
+
 func TestHatzGenerateSupportsResponsesStyleNonStreamingBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {

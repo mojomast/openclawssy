@@ -292,6 +292,18 @@ body {
   margin: 0 0 0.55rem;
 }
 
+.chat-transcript-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.55rem;
+}
+
+.chat-transcript-header h3 {
+  margin: 0;
+}
+
 .chat-transcript {
   display: grid;
   gap: 0.6rem;
@@ -338,6 +350,28 @@ body {
   background: color-mix(in srgb, var(--accent) 6%, var(--background));
 }
 
+.chat-tool-message {
+  border-left: 3px solid color-mix(in srgb, var(--accent) 60%, var(--border));
+  background: color-mix(in srgb, var(--secondary) 70%, var(--background));
+}
+
+.chat-tool-message.failed {
+  border-left-color: color-mix(in srgb, var(--destructive) 60%, var(--border));
+  background: color-mix(in srgb, var(--destructive) 8%, var(--background));
+}
+
+.chat-tool-transcript-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: start;
+  margin-bottom: 0.35rem;
+}
+
+.chat-tool-transcript-meta {
+  min-width: 0;
+}
+
 .chat-message-meta {
   margin: 0 0 0.4rem;
   color: var(--muted-foreground);
@@ -347,6 +381,17 @@ body {
 
 .chat-message-content {
   margin: 0;
+}
+
+.chat-tool-transcript-summary {
+  margin: 0;
+  color: var(--muted-foreground);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-tool-message .chat-tool-entry-details {
+  margin-top: 0.55rem;
 }
 
 .chat-composer {

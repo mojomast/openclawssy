@@ -314,6 +314,15 @@ func contextWindowForModel(providerName, modelName string) int {
 	return defaultContextWindow
 }
 
+func normalizeProviderMessageRole(providerName, role string) string {
+	provider := strings.ToLower(strings.TrimSpace(providerName))
+	cleanRole := strings.ToLower(strings.TrimSpace(role))
+	if provider == "hatz" && cleanRole == "tool" {
+		return "assistant"
+	}
+	return cleanRole
+}
+
 func (m *ProviderModel) ProviderName() string { return m.providerName }
 func (m *ProviderModel) ModelName() string    { return m.modelName }
 
@@ -345,6 +354,7 @@ func (m *ProviderModel) Generate(ctx context.Context, req agent.ModelRequest) (a
 		if role != "system" && role != "user" && role != "assistant" && role != "tool" {
 			continue
 		}
+		role = normalizeProviderMessageRole(m.providerName, role)
 		content := strings.TrimSpace(item.Content)
 		if content == "" {
 			continue
