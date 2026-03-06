@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -468,14 +469,14 @@ func TestRunnerToolIterationCap(t *testing.T) {
 func TestRunnerCachesRepeatedToolCallResult(t *testing.T) {
 	model := &mockModel{
 		responses: []ModelResponse{
-			{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.list", Arguments: []byte(`{"path":"."}`)}}},
-			{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.list", Arguments: []byte(`{"path":"."}`)}}},
-			{ToolCalls: []ToolCallRequest{{ID: "3", Name: "fs.list", Arguments: []byte(`{"path":"."}`)}}},
-			{ToolCalls: []ToolCallRequest{{ID: "4", Name: "fs.list", Arguments: []byte(`{"path":"."}`)}}},
+			{ToolCalls: []ToolCallRequest{{ID: "1", Name: "time.now", Arguments: []byte(`{}`)}}},
+			{ToolCalls: []ToolCallRequest{{ID: "2", Name: "time.now", Arguments: []byte(`{}`)}}},
+			{ToolCalls: []ToolCallRequest{{ID: "3", Name: "time.now", Arguments: []byte(`{}`)}}},
+			{ToolCalls: []ToolCallRequest{{ID: "4", Name: "time.now", Arguments: []byte(`{}`)}}},
 			{FinalText: "done"},
 		},
 	}
-	tools := &mockTools{results: map[string]ToolCallResult{"1": {ID: "1", Output: `{"entries":["a.txt"]}`}}}
+	tools := &mockTools{results: map[string]ToolCallResult{"1": {ID: "1", Output: `{"rfc3339":"2026-01-01T00:00:00Z"}`}}}
 	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 8}
 
 	out, err := runner.Run(context.Background(), RunInput{Message: "loop"})
@@ -495,9 +496,48 @@ func TestRunnerCachesRepeatedToolCallResult(t *testing.T) {
 		if rec.Result.Error != "" {
 			t.Fatalf("expected no repeated-call guard errors, got record %d: %+v", i, rec)
 		}
-		if rec.Result.Output != `{"entries":["a.txt"]}` {
+		if rec.Result.Output != `{"rfc3339":"2026-01-01T00:00:00Z"}` {
 			t.Fatalf("expected cached output for record %d, got %q", i, rec.Result.Output)
 		}
+	}
+}
+
+func TestRunnerDoesNotCacheFsListOrFsRead(t *testing.T) {
+	model := &mockModel{
+		responses: []ModelResponse{
+			{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.list", Arguments: []byte(`{"path":"."}`)}}},
+			{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.list", Arguments: []byte(`{"path":"."}`)}}},
+			{ToolCalls: []ToolCallRequest{{ID: "3", Name: "fs.read", Arguments: []byte(`{"path":"a.txt"}`)}}},
+			{ToolCalls: []ToolCallRequest{{ID: "4", Name: "fs.read", Arguments: []byte(`{"path":"a.txt"}`)}}},
+			{FinalText: "done"},
+		},
+	}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Output: `{"entries":["a.txt"]}`},
+		"2": {ID: "2", Output: `{"entries":["a.txt","b.txt"]}`},
+		"3": {ID: "3", Output: `{"content":"v1"}`},
+		"4": {ID: "4", Output: `{"content":"v2"}`},
+	}}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 8}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "read"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	// All four calls should hit the executor — no caching.
+	if len(tools.calls) != 4 {
+		t.Fatalf("expected 4 executor calls (no caching), got %d", len(tools.calls))
+	}
+	// Second fs.list should get updated entries.
+	if out.ToolCalls[1].Result.Output != `{"entries":["a.txt","b.txt"]}` {
+		t.Fatalf("expected fresh fs.list result, got %q", out.ToolCalls[1].Result.Output)
+	}
+	// Second fs.read should get updated content.
+	if out.ToolCalls[3].Result.Output != `{"content":"v2"}` {
+		t.Fatalf("expected fresh fs.read result, got %q", out.ToolCalls[3].Result.Output)
 	}
 }
 
@@ -533,8 +573,8 @@ func TestRunnerCachesHTTPRequestsWithImplicitGETAndRootSlashVariants(t *testing.
 
 func TestRunnerAllowsRepeatedCallAndLetsModelRecover(t *testing.T) {
 	model := &mockModel{responses: []ModelResponse{
-		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.list", Arguments: []byte(`{"path":"."}`)}}},
-		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.list", Arguments: []byte(`{"path":"."}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "time.now", Arguments: []byte(`{}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "time.now", Arguments: []byte(`{}`)}}},
 		{FinalText: "done"},
 	}}
 
@@ -560,8 +600,8 @@ func TestRunnerAllowsRepeatedCallAndLetsModelRecover(t *testing.T) {
 
 func TestRunnerAllowsRepeatedCallAfterPreviousToolError(t *testing.T) {
 	model := &mockModel{responses: []ModelResponse{
-		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.list", Arguments: []byte(`{"path":"."}`)}}},
-		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.list", Arguments: []byte(`{"path":"."}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "time.now", Arguments: []byte(`{}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "time.now", Arguments: []byte(`{}`)}}},
 		{FinalText: "done"},
 	}}
 	tools := &mockTools{results: map[string]ToolCallResult{
@@ -615,19 +655,22 @@ func TestRunnerCachesRepeatedFailureAfterSecondIdenticalError(t *testing.T) {
 }
 
 func TestRunnerBlocksRepeatedFileWriteLoopsOnSamePath(t *testing.T) {
-	model := &mockModel{responses: []ModelResponse{
-		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.write", Arguments: []byte(`{"path":"notes.md","content":"v1"}`)}}},
-		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.write", Arguments: []byte(`{"path":"notes.md","content":"v2"}`)}}},
-		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "fs.write", Arguments: []byte(`{"path":"notes.md","content":"v3"}`)}}},
-		{ToolCalls: []ToolCallRequest{{ID: "4", Name: "fs.write", Arguments: []byte(`{"path":"notes.md","content":"v4"}`)}}},
-		{ToolCalls: []ToolCallRequest{{ID: "5", Name: "fs.write", Arguments: []byte(`{"path":"notes.md","content":"v5"}`)}}},
-		{ToolCalls: []ToolCallRequest{{ID: "6", Name: "fs.write", Arguments: []byte(`{"path":"notes.md","content":"v6"}`)}}},
-		{ToolCalls: []ToolCallRequest{{ID: "7", Name: "fs.write", Arguments: []byte(`{"path":"notes.md","content":"v7"}`)}}},
-		{FinalText: "done"},
-	}}
+	// Build 14 write calls to the same file — should stop after cap (12).
+	var responses []ModelResponse
+	for i := 1; i <= 14; i++ {
+		responses = append(responses, ModelResponse{
+			ToolCalls: []ToolCallRequest{{
+				ID:        fmt.Sprintf("%d", i),
+				Name:      "fs.write",
+				Arguments: []byte(fmt.Sprintf(`{"path":"notes.md","content":"v%d"}`, i)),
+			}},
+		})
+	}
+	responses = append(responses, ModelResponse{FinalText: "done"})
+	model := &mockModel{responses: responses}
 
 	tools := &mockTools{}
-	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 30}
 
 	out, err := runner.Run(context.Background(), RunInput{Message: "journal"})
 	if err != nil {
@@ -636,17 +679,17 @@ func TestRunnerBlocksRepeatedFileWriteLoopsOnSamePath(t *testing.T) {
 	if out.FinalText != "done" {
 		t.Fatalf("unexpected final text: %q", out.FinalText)
 	}
-	if len(tools.calls) != 5 {
-		t.Fatalf("expected only first 5 writes to execute, got %d", len(tools.calls))
+	if len(tools.calls) != 12 {
+		t.Fatalf("expected only first 12 writes to execute, got %d", len(tools.calls))
 	}
-	if len(out.ToolCalls) != 7 {
-		t.Fatalf("expected seven tool call records, got %d", len(out.ToolCalls))
+	if len(out.ToolCalls) != 14 {
+		t.Fatalf("expected fourteen tool call records, got %d", len(out.ToolCalls))
 	}
-	if !strings.Contains(out.ToolCalls[5].Result.Error, "repetition detected") {
-		t.Fatalf("expected repetition guard on 6th call, got %q", out.ToolCalls[5].Result.Error)
+	if !strings.Contains(out.ToolCalls[12].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on 13th call, got %q", out.ToolCalls[12].Result.Error)
 	}
-	if !strings.Contains(out.ToolCalls[6].Result.Error, "repetition detected") {
-		t.Fatalf("expected repetition guard on 7th call, got %q", out.ToolCalls[6].Result.Error)
+	if !strings.Contains(out.ToolCalls[13].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on 14th call, got %q", out.ToolCalls[13].Result.Error)
 	}
 }
 
@@ -684,17 +727,26 @@ func TestRunnerAllowsManyJournalAppendsInSameRun(t *testing.T) {
 	}
 }
 
-func TestRunnerBlocksThirdJournalReadInSameRun(t *testing.T) {
-	model := &mockModel{responses: []ModelResponse{
-		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.read", Arguments: []byte(`{"path":"exploration_journal.md"}`)}}},
-		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.read", Arguments: []byte(`{"path":"exploration_journal.md"}`)}}},
-		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "fs.read", Arguments: []byte(`{"path":"exploration_journal.md"}`)}}},
-		{FinalText: "done"},
-	}}
+func TestRunnerBlocksJournalReadAfterCap(t *testing.T) {
+	// Journal read cap is 4 — the 5th read should be blocked.
+	var responses []ModelResponse
+	for i := 1; i <= 5; i++ {
+		responses = append(responses, ModelResponse{
+			ToolCalls: []ToolCallRequest{{
+				ID:        fmt.Sprintf("%d", i),
+				Name:      "fs.read",
+				Arguments: []byte(`{"path":"exploration_journal.md"}`),
+			}},
+		})
+	}
+	responses = append(responses, ModelResponse{FinalText: "done"})
+	model := &mockModel{responses: responses}
 
 	tools := &mockTools{results: map[string]ToolCallResult{
 		"1": {ID: "1", Error: "tool.input_invalid (fs.read): path denied: exploration_journal.md (read path does not exist or is invalid)"},
 		"2": {ID: "2", Error: "tool.input_invalid (fs.read): path denied: exploration_journal.md (read path does not exist or is invalid)"},
+		"3": {ID: "3", Error: "tool.input_invalid (fs.read): path denied: exploration_journal.md (read path does not exist or is invalid)"},
+		"4": {ID: "4", Error: "tool.input_invalid (fs.read): path denied: exploration_journal.md (read path does not exist or is invalid)"},
 	}}
 	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
 
@@ -705,24 +757,28 @@ func TestRunnerBlocksThirdJournalReadInSameRun(t *testing.T) {
 	if out.FinalText != "done" {
 		t.Fatalf("unexpected final text: %q", out.FinalText)
 	}
-	if len(tools.calls) != 2 {
-		t.Fatalf("expected only first two journal reads to execute, got %d", len(tools.calls))
+	if len(tools.calls) != 4 {
+		t.Fatalf("expected first four journal reads to execute, got %d", len(tools.calls))
 	}
-	if len(out.ToolCalls) != 3 {
-		t.Fatalf("expected three tool call records, got %d", len(out.ToolCalls))
-	}
-	if !strings.Contains(out.ToolCalls[2].Result.Error, "repetition detected") {
-		t.Fatalf("expected repetition guard on third journal read, got %q", out.ToolCalls[2].Result.Error)
+	if !strings.Contains(out.ToolCalls[4].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on fifth journal read, got %q", out.ToolCalls[4].Result.Error)
 	}
 }
 
-func TestRunnerBlocksThirdBuildLogReadInSameRun(t *testing.T) {
-	model := &mockModel{responses: []ModelResponse{
-		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.read", Arguments: []byte(`{"path":"ussyflow_build_log.md"}`)}}},
-		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.read", Arguments: []byte(`{"path":"ussyflow_build_log.md"}`)}}},
-		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "fs.read", Arguments: []byte(`{"path":"ussyflow_build_log.md"}`)}}},
-		{FinalText: "done"},
-	}}
+func TestRunnerBlocksBuildLogReadAfterCap(t *testing.T) {
+	// Build-log read cap is 6 — the 7th read should be blocked.
+	var responses []ModelResponse
+	for i := 1; i <= 7; i++ {
+		responses = append(responses, ModelResponse{
+			ToolCalls: []ToolCallRequest{{
+				ID:        fmt.Sprintf("%d", i),
+				Name:      "fs.read",
+				Arguments: []byte(`{"path":"ussyflow_build_log.md"}`),
+			}},
+		})
+	}
+	responses = append(responses, ModelResponse{FinalText: "done"})
+	model := &mockModel{responses: responses}
 
 	tools := &mockTools{}
 	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
@@ -734,25 +790,28 @@ func TestRunnerBlocksThirdBuildLogReadInSameRun(t *testing.T) {
 	if out.FinalText != "done" {
 		t.Fatalf("unexpected final text: %q", out.FinalText)
 	}
-	if len(tools.calls) != 1 {
-		t.Fatalf("expected cache to execute first build-log read only, got %d", len(tools.calls))
+	if len(tools.calls) != 6 {
+		t.Fatalf("expected first 6 build-log reads to execute, got %d", len(tools.calls))
 	}
-	if len(out.ToolCalls) != 3 {
-		t.Fatalf("expected three tool call records, got %d", len(out.ToolCalls))
-	}
-	if !strings.Contains(out.ToolCalls[2].Result.Error, "repetition detected") {
-		t.Fatalf("expected repetition guard on third build-log read, got %q", out.ToolCalls[2].Result.Error)
+	if !strings.Contains(out.ToolCalls[6].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on seventh build-log read, got %q", out.ToolCalls[6].Result.Error)
 	}
 }
 
-func TestRunnerBlocksFourthSpecReadInSameRun(t *testing.T) {
-	model := &mockModel{responses: []ModelResponse{
-		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.read", Arguments: []byte(`{"path":"ussyflow_spec.md"}`)}}},
-		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.read", Arguments: []byte(`{"path":"ussyflow_spec.md"}`)}}},
-		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "fs.read", Arguments: []byte(`{"path":"ussyflow_spec.md"}`)}}},
-		{ToolCalls: []ToolCallRequest{{ID: "4", Name: "fs.read", Arguments: []byte(`{"path":"ussyflow_spec.md"}`)}}},
-		{FinalText: "done"},
-	}}
+func TestRunnerBlocksSpecReadAfterCap(t *testing.T) {
+	// Spec read cap is 6 — the 7th read should be blocked.
+	var responses []ModelResponse
+	for i := 1; i <= 7; i++ {
+		responses = append(responses, ModelResponse{
+			ToolCalls: []ToolCallRequest{{
+				ID:        fmt.Sprintf("%d", i),
+				Name:      "fs.read",
+				Arguments: []byte(`{"path":"ussyflow_spec.md"}`),
+			}},
+		})
+	}
+	responses = append(responses, ModelResponse{FinalText: "done"})
+	model := &mockModel{responses: responses}
 
 	tools := &mockTools{}
 	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
@@ -764,25 +823,28 @@ func TestRunnerBlocksFourthSpecReadInSameRun(t *testing.T) {
 	if out.FinalText != "done" {
 		t.Fatalf("unexpected final text: %q", out.FinalText)
 	}
-	if len(tools.calls) != 1 {
-		t.Fatalf("expected first read only due to result cache + guard, got %d executions", len(tools.calls))
+	if len(tools.calls) != 6 {
+		t.Fatalf("expected first 6 spec reads to execute, got %d", len(tools.calls))
 	}
-	if len(out.ToolCalls) != 4 {
-		t.Fatalf("expected four tool call records, got %d", len(out.ToolCalls))
-	}
-	if !strings.Contains(out.ToolCalls[3].Result.Error, "repetition detected") {
-		t.Fatalf("expected repetition guard on fourth spec read, got %q", out.ToolCalls[3].Result.Error)
+	if !strings.Contains(out.ToolCalls[6].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on seventh spec read, got %q", out.ToolCalls[6].Result.Error)
 	}
 }
 
-func TestRunnerBlocksFourthSpecReadWithFileAliasInSameRun(t *testing.T) {
-	model := &mockModel{responses: []ModelResponse{
-		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.read", Arguments: []byte(`{"file":"ussyflow_spec.md"}`)}}},
-		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.read", Arguments: []byte(`{"file":"ussyflow_spec.md"}`)}}},
-		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "fs.read", Arguments: []byte(`{"file":"ussyflow_spec.md"}`)}}},
-		{ToolCalls: []ToolCallRequest{{ID: "4", Name: "fs.read", Arguments: []byte(`{"file":"ussyflow_spec.md"}`)}}},
-		{FinalText: "done"},
-	}}
+func TestRunnerBlocksSpecReadWithFileAliasAfterCap(t *testing.T) {
+	// Same as above but uses "file" arg alias.
+	var responses []ModelResponse
+	for i := 1; i <= 7; i++ {
+		responses = append(responses, ModelResponse{
+			ToolCalls: []ToolCallRequest{{
+				ID:        fmt.Sprintf("%d", i),
+				Name:      "fs.read",
+				Arguments: []byte(`{"file":"ussyflow_spec.md"}`),
+			}},
+		})
+	}
+	responses = append(responses, ModelResponse{FinalText: "done"})
+	model := &mockModel{responses: responses}
 
 	tools := &mockTools{}
 	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
@@ -794,14 +856,11 @@ func TestRunnerBlocksFourthSpecReadWithFileAliasInSameRun(t *testing.T) {
 	if out.FinalText != "done" {
 		t.Fatalf("unexpected final text: %q", out.FinalText)
 	}
-	if len(tools.calls) != 1 {
-		t.Fatalf("expected first read only due to result cache + guard, got %d executions", len(tools.calls))
+	if len(tools.calls) != 6 {
+		t.Fatalf("expected first 6 spec reads to execute, got %d", len(tools.calls))
 	}
-	if len(out.ToolCalls) != 4 {
-		t.Fatalf("expected four tool call records, got %d", len(out.ToolCalls))
-	}
-	if !strings.Contains(out.ToolCalls[3].Result.Error, "repetition detected") {
-		t.Fatalf("expected repetition guard on fourth spec read, got %q", out.ToolCalls[3].Result.Error)
+	if !strings.Contains(out.ToolCalls[6].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on seventh spec read, got %q", out.ToolCalls[6].Result.Error)
 	}
 }
 

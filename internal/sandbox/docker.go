@@ -40,7 +40,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -495,36 +494,81 @@ func (p *DockerProvider) ListDir(ctx context.Context, path string) ([]FileInfo, 
 	}
 	p.mu.RLock()
 	started := p.started
+	containerName := p.containerName
 	p.mu.RUnlock()
 	if !started {
 		return nil, ErrNotStarted
 	}
 
-	cmd := fmt.Sprintf("find %s -maxdepth 1 -mindepth 1 -printf '%%y\t%%s\t%%f\n' 2>/dev/null || true", shellescape(path))
-	stdout, stderr, _, err := p.execAsRoot(ctx, "sh", "-c", cmd)
+	cli, err := p.dockerClient()
 	if err != nil {
-		return nil, fmt.Errorf("sandbox: docker ListDir %s: %s: %w", path, strings.TrimSpace(stderr), err)
+		return nil, err
 	}
 
+	// Verify the path exists and is a directory using the Docker API.
+	stat, err := cli.ContainerStatPath(ctx, containerName, path)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil, fmt.Errorf("sandbox: directory does not exist: %s", path)
+		}
+		return nil, fmt.Errorf("sandbox: docker stat %s: %w", path, err)
+	}
+	if !os.FileMode(stat.Mode).IsDir() {
+		return nil, fmt.Errorf("sandbox: path is not a directory: %s", path)
+	}
+
+	// Use CopyFromContainer to read the directory listing via the Docker
+	// daemon, matching the I/O path used by ReadFile and WriteFile.  This
+	// avoids consistency issues between Docker Copy API writes and exec-
+	// based reads that could return stale results.
+	r, _, err := cli.CopyFromContainer(ctx, containerName, path)
+	if err != nil {
+		return nil, fmt.Errorf("sandbox: docker cp from %s: %w", path, err)
+	}
+	defer r.Close()
+
+	// The Docker Copy API returns a tar archive of the directory.
+	// Top-level entries in the archive whose parent matches the requested
+	// directory name are immediate children.
+	dirBase := filepath.Base(path) + "/"
 	var entries []FileInfo
-	for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	tr := tar.NewReader(r)
+	for {
+		hdr, nextErr := tr.Next()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			return nil, fmt.Errorf("sandbox: read docker archive for %s: %w", path, nextErr)
+		}
+		if hdr == nil {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 3)
-		if len(parts) != 3 {
+		// The archive contains the directory itself as the first entry
+		// (e.g. "ussydub/"), then immediate children as "ussydub/file.txt",
+		// and nested entries as "ussydub/sub/deep.txt".  We only want
+		// depth-1 children.
+		name := filepath.ToSlash(hdr.Name)
+		if name == dirBase || name == "." || name == "./" {
 			continue
 		}
-		typeChar := parts[0]
-		sizeStr := parts[1]
-		name := parts[2]
-		if name == "" {
+		// Strip the directory prefix.
+		if len(name) > len(dirBase) && name[:len(dirBase)] == dirBase {
+			name = name[len(dirBase):]
+		}
+		// Skip nested entries (depth > 1).
+		trimmed := strings.TrimSuffix(name, "/")
+		if strings.Contains(trimmed, "/") {
 			continue
 		}
-		isDir := typeChar == "d"
-		size, _ := strconv.ParseInt(sizeStr, 10, 64)
-		entries = append(entries, FileInfo{Name: name, IsDir: isDir, Size: size})
+		if trimmed == "" {
+			continue
+		}
+		entries = append(entries, FileInfo{
+			Name:  trimmed,
+			IsDir: hdr.Typeflag == tar.TypeDir,
+			Size:  hdr.Size,
+		})
 	}
 	return entries, nil
 }

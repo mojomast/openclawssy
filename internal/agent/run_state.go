@@ -13,15 +13,15 @@ import (
 )
 
 const (
-	defaultRepeatedFileWriteCap  = 5
-	defaultRepeatedFileAppendCap = 8
+	defaultRepeatedFileWriteCap  = 12
+	defaultRepeatedFileAppendCap = 16
 	journalFileWriteCap          = 4
 	journalFileAppendCap         = 24
-	journalFileReadCap           = 2
-	buildLogFileWriteCap         = 2
-	buildLogFileAppendCap        = 12
-	buildLogFileReadCap          = 2
-	specFileReadCap              = 3
+	journalFileReadCap           = 4
+	buildLogFileWriteCap         = 6
+	buildLogFileAppendCap        = 16
+	buildLogFileReadCap          = 6
+	specFileReadCap              = 6
 	agentMessageSendCap          = 1
 	agentMessageInboxCap         = 2
 	agentRunCap                  = 1
@@ -1039,6 +1039,12 @@ func parseToolArgs(args []byte) (map[string]any, bool) {
 
 func toolCallCacheKey(call ToolCallRequest) string {
 	name := strings.TrimSpace(call.Name)
+	// fs.list and fs.read must never be cached — directory contents and file
+	// contents change after writes.  Returning stale cached results causes the
+	// agent to believe files are missing or have old content.
+	if name == "fs.list" || name == "fs.read" {
+		return "|"
+	}
 	if name == "http.request" || name == "net.fetch" {
 		if key, ok := normalizedHTTPRequestCacheKey(call.Arguments); ok {
 			return "http.request|" + key

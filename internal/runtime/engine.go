@@ -382,7 +382,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 
 	runner := agent.Runner{
 		Model:             model,
-		ToolExecutor:      &RegistryExecutor{Registry: registry, AgentID: agentID, Workspace: e.workspaceDir},
+		ToolExecutor:      &RegistryExecutor{Registry: registry, AgentID: agentID, Workspace: toolWorkspaceRoot},
 		MaxToolIterations: agent.DefaultToolIterationCap,
 		SubAgentRunner:    adapter,
 	}
