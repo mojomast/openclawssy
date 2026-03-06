@@ -12,6 +12,7 @@ type Policy interface {
 	CheckTool(agentID, tool string) error
 	ResolveReadPath(workspace, target string) (string, error)
 	ResolveWritePath(workspace, target string) (string, error)
+	ResolveMkdirPath(workspace, target string) (string, error)
 }
 
 type Auditor interface {

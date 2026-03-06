@@ -28,10 +28,10 @@ const (
 	agentCreateGlobalCap         = 8
 	shellExecRepetitionCap       = 3
 	memoryWriteRepetitionCap     = 2
-	noChoicesRetryCap            = 2
-	noChoicesRetryDelay          = 200 * time.Millisecond
-	transientModelRetryCap       = 2
-	transientModelRetryDelay     = 250 * time.Millisecond
+	noChoicesRetryCap            = 3
+	noChoicesRetryDelay          = 300 * time.Millisecond
+	transientModelRetryCap       = 3
+	transientModelRetryBaseDelay = 500 * time.Millisecond
 	toolParseRetryCap            = 4
 	maxToolRewriteBudget         = 3 // Maximum rewrites to prevent infinite loops
 )
@@ -66,6 +66,12 @@ type runState struct {
 	toolCap                 int
 	// repetitionPrevention tracks tool calls to detect and prevent loops
 	repetitionPrevention map[string]int // key: "tool_name|agent_id" -> count
+
+	// structuralBlockerCounts tracks infrastructure-level error categories
+	// that cannot be fixed by the agent retrying (e.g. missing parent
+	// directory, capability denied).  When any category reaches the cap
+	// the run is hard-stopped with an escalation message to the owner.
+	structuralBlockerCounts map[string]int
 
 	// Context tracking from model responses
 	lastPromptTokens int
@@ -123,6 +129,7 @@ func newRunState(input RunInput, r Runner) *runState {
 		toolTimeout:             toolTimeout,
 		toolCap:                 toolCap,
 		repetitionPrevention:    make(map[string]int),
+		structuralBlockerCounts: make(map[string]int),
 		lastPromptTokens:        0,
 		contextWindow:           120000, // default context window
 		delegationMode:          "",
@@ -155,6 +162,10 @@ func (s *runState) registerToolOutcome(errText string) {
 		}
 		return
 	}
+	// Track structural blocker categories separately.
+	if cat := structuralBlockerCategory(trimmed); cat != "" {
+		s.structuralBlockerCounts[cat]++
+	}
 	s.successesSinceRecovery = 0
 	s.consecutiveToolFailures++
 	if !s.failureRecoveryActive && s.consecutiveToolFailures >= failureRecoveryTrigger {
@@ -165,6 +176,40 @@ func (s *runState) registerToolOutcome(errText string) {
 	if s.failureRecoveryActive {
 		s.failuresSinceRecovery++
 	}
+}
+
+// structuralBlockerCategory returns a non-empty category string when the
+// error indicates an infrastructure-level problem that the agent cannot
+// fix by retrying with different arguments.  These are problems that
+// require owner intervention (missing directories, permission denials,
+// workspace boundary issues).
+func structuralBlockerCategory(errText string) string {
+	lower := strings.ToLower(errText)
+	switch {
+	case strings.Contains(lower, "write parent does not exist"):
+		return "missing_parent_directory"
+	case strings.Contains(lower, "no existing ancestor"):
+		return "missing_parent_directory"
+	case strings.Contains(lower, "capability denied"):
+		return "capability_denied"
+	case strings.Contains(lower, "outside workspace"):
+		return "outside_workspace"
+	case strings.Contains(lower, "protected control-plane path"):
+		return "protected_path"
+	default:
+		return ""
+	}
+}
+
+// structuralBlockerTriggered returns the category and count if any
+// structural blocker has reached the hard-stop cap.
+func (s *runState) structuralBlockerTriggered() (string, int) {
+	for cat, count := range s.structuralBlockerCounts {
+		if count >= structuralBlockerCap {
+			return cat, count
+		}
+	}
+	return "", 0
 }
 
 func (s *runState) notifyToolCall(record *ToolCallRecord, onToolCall func(ToolCallRecord) error) {
@@ -463,7 +508,11 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 				if attempt >= transientModelRetryCap {
 					break
 				}
-				time.Sleep(transientModelRetryDelay)
+				backoff := transientModelRetryBaseDelay * time.Duration(1<<uint(attempt))
+				if backoff > 4*time.Second {
+					backoff = 4 * time.Second
+				}
+				time.Sleep(backoff)
 				continue
 			}
 			break
@@ -675,6 +724,18 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 		s.toolParseReprompts = 0
 		s.updateLastIterationOutcome(len(resp.ToolCalls))
 
+		// Hard-stop on structural blockers.  These are infrastructure
+		// problems (missing directories, permission denials) that cannot
+		// be resolved by retrying.  Escalate to the owner immediately.
+		if blockerCat, blockerCount := s.structuralBlockerTriggered(); blockerCat != "" {
+			s.out.FinalText = formatStructuralBlockerEscalation(blockerCat, blockerCount, s.toolResults)
+			s.out.Thinking = s.latestThinking
+			s.out.ThinkingPresent = s.thinkingPresent
+			s.out.ToolParseFailure = s.toolParseFailure
+			s.out.CompletedAt = time.Now().UTC()
+			return s.out, nil
+		}
+
 		if hadFreshExecution {
 			s.noProgressIterations = 0
 			s.allBlockedIterations = 0
@@ -812,7 +873,10 @@ func isTransientProviderModelError(err error) bool {
 		strings.Contains(text, "context deadline exceeded") ||
 		strings.Contains(text, "client.timeout") ||
 		strings.Contains(text, "timeout while reading body") ||
-		strings.Contains(text, "i/o timeout")
+		strings.Contains(text, "i/o timeout") ||
+		strings.Contains(text, "connection reset") ||
+		strings.Contains(text, "unexpected eof") ||
+		strings.Contains(text, "provider returned no choices")
 }
 
 // extractAgentIDFromArgs extracts the agent_id field from JSON tool arguments

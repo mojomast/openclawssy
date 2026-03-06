@@ -19,6 +19,7 @@ var toolAliases = map[string]string{
 	"fs.move":              "fs.move",
 	"fs.rename":            "fs.move",
 	"fs.edit":              "fs.edit",
+	"fs.mkdir":             "fs.mkdir",
 	"code.search":          "code.search",
 	"config.get":           "config.get",
 	"config.set":           "config.set",

@@ -24,6 +24,7 @@ const (
 	failureRecoveryTrigger           = 2
 	failureGuidanceEscalation        = 3
 	followThroughRepromptCap         = 5
+	structuralBlockerCap             = 3 // hard-stop after this many hits of the same structural error category
 )
 
 // Runner executes the model/tool loop for a single run.
@@ -216,6 +217,35 @@ func recoverFromInterruptedStream(err error) string {
 		msg = "provider stream interrupted"
 	}
 	return "The response stream was interrupted before I could finish. Send `continue` and I will resume from the cutoff point.\n\nLast error: " + msg
+}
+
+// formatStructuralBlockerEscalation produces an owner-facing message when the
+// agent hits a hard infrastructure blocker that cannot be resolved by retrying.
+func formatStructuralBlockerEscalation(category string, count int, results []ToolCallResult) string {
+	desc := category
+	switch category {
+	case "missing_parent_directory":
+		desc = "The target directory does not exist and the runtime cannot create it automatically"
+	case "capability_denied":
+		desc = "The agent lacks required tool capabilities (policy/permission issue)"
+	case "outside_workspace":
+		desc = "Attempted file operations target paths outside the allowed workspace"
+	case "protected_path":
+		desc = "Attempted to write to a protected control-plane path"
+	}
+
+	var b strings.Builder
+	b.WriteString("## Structural blocker — owner action required\n\n")
+	b.WriteString(fmt.Sprintf("**Category:** %s\n", category))
+	b.WriteString(fmt.Sprintf("**Occurrences:** %d (hard-stop threshold reached)\n", count))
+	b.WriteString(fmt.Sprintf("**Description:** %s\n\n", desc))
+	b.WriteString("I have stopped retrying because this is an infrastructure problem that I cannot resolve on my own. ")
+	b.WriteString("Please fix the underlying issue and re-run the task.\n")
+	if len(results) > 0 {
+		b.WriteString("\n**Recent tool results:**\n")
+		b.WriteString(formatLatestToolResults(results))
+	}
+	return b.String()
 }
 
 func latestToolResultsAreEmptySearches(results []ToolCallResult) bool {

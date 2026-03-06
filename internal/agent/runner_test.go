@@ -1321,8 +1321,8 @@ func TestRunnerStopsAfterNoChoicesRetryCap(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected run to fail after retry cap")
 	}
-	if model.attempts != 3 {
-		t.Fatalf("expected 3 model attempts at retry cap, got %d", model.attempts)
+	if model.attempts != 4 {
+		t.Fatalf("expected 4 model attempts at retry cap, got %d", model.attempts)
 	}
 }
 
@@ -1343,8 +1343,8 @@ func TestRunnerNoChoicesAfterToolsUsesFriendlyRecovery(t *testing.T) {
 	if !strings.Contains(out.FinalText, "found no matching entries") {
 		t.Fatalf("expected empty-search summary, got %q", out.FinalText)
 	}
-	if model.attempts != 4 {
-		t.Fatalf("expected 1 initial + 3 no-choices attempts, got %d", model.attempts)
+	if model.attempts != 6 {
+		t.Fatalf("expected 1 initial + 4 no-choices attempts + 1 recovery finalization, got %d", model.attempts)
 	}
 }
 
@@ -1381,8 +1381,8 @@ func TestRunnerFinalizesFromToolResultsAfterTransientProviderError(t *testing.T)
 	if strings.Contains(out.FinalText, "model/API error") {
 		t.Fatalf("expected no raw model/API error fallback, got %q", out.FinalText)
 	}
-	if model.attempts != 5 {
-		t.Fatalf("expected 5 model attempts including recovery finalization, got %d", model.attempts)
+	if model.attempts != 6 {
+		t.Fatalf("expected 6 model attempts including recovery finalization, got %d", model.attempts)
 	}
 }
 
@@ -1406,8 +1406,8 @@ func TestRunnerTransientProviderErrorAfterToolsReturnsContinuationHint(t *testin
 	if !strings.Contains(out.FinalText, "SPECPLAN.md") {
 		t.Fatalf("expected latest tool results in fallback, got %q", out.FinalText)
 	}
-	if model.attempts != 5 {
-		t.Fatalf("expected 5 model attempts including failed recovery finalization, got %d", model.attempts)
+	if model.attempts != 6 {
+		t.Fatalf("expected 6 model attempts including failed recovery finalization, got %d", model.attempts)
 	}
 }
 
@@ -1419,8 +1419,8 @@ func TestRunnerStopsAfterTransientProviderRetryCap(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected run to fail after retry cap")
 	}
-	if model.attempts != 3 {
-		t.Fatalf("expected 3 model attempts at retry cap, got %d", model.attempts)
+	if model.attempts != 4 {
+		t.Fatalf("expected 4 model attempts at retry cap, got %d", model.attempts)
 	}
 }
 
@@ -1445,8 +1445,45 @@ func TestRunnerReturnsContinuationHintAfterStreamingInterruption(t *testing.T) {
 	if !strings.Contains(out.FinalText, "Send `continue`") {
 		t.Fatalf("expected continuation hint, got %q", out.FinalText)
 	}
-	if model.attempts != 3 {
-		t.Fatalf("expected 3 model attempts at retry cap, got %d", model.attempts)
+	if model.attempts != 4 {
+		t.Fatalf("expected 4 model attempts at retry cap, got %d", model.attempts)
+	}
+}
+
+func TestRunnerHardStopsOnStructuralBlocker(t *testing.T) {
+	// Simulate the agent trying to write 3 different files into a directory
+	// that does not exist.  Each write fails with a path-denied error.
+	// The runner should hard-stop after structuralBlockerCap (3) hits.
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.write", Arguments: []byte(`{"path":"sub/spec.md","content":"a"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.write", Arguments: []byte(`{"path":"sub/devplan.md","content":"b"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "fs.write", Arguments: []byte(`{"path":"sub/index.html","content":"c"}`)}}},
+		// These should never be reached:
+		{FinalText: "should not get here"},
+	}}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Error: "tool.input_invalid (fs.write): path denied: sub/spec.md (write parent does not exist or is invalid)"},
+		"2": {ID: "2", Error: "tool.input_invalid (fs.write): path denied: sub/devplan.md (write parent does not exist or is invalid)"},
+		"3": {ID: "3", Error: "tool.input_invalid (fs.write): path denied: sub/index.html (write parent does not exist or is invalid)"},
+	}}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 120}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "scaffold the project"})
+	if err != nil {
+		t.Fatalf("expected graceful hard-stop, got error: %v", err)
+	}
+	if !strings.Contains(out.FinalText, "Structural blocker") {
+		t.Fatalf("expected structural blocker escalation, got %q", out.FinalText)
+	}
+	if !strings.Contains(out.FinalText, "missing_parent_directory") {
+		t.Fatalf("expected missing_parent_directory category, got %q", out.FinalText)
+	}
+	if !strings.Contains(out.FinalText, "owner action required") {
+		t.Fatalf("expected owner escalation message, got %q", out.FinalText)
+	}
+	// Should have stopped after exactly 3 tool calls, not continued to the 4th model response
+	if len(model.reqs) > 3 {
+		t.Fatalf("expected at most 3 model requests (hard stop), got %d", len(model.reqs))
 	}
 }
 

@@ -131,7 +131,7 @@ type providerStreamingEnvelope struct {
 }
 
 const (
-	defaultProviderTimeout = 90 * time.Second
+	defaultProviderTimeout = 120 * time.Second
 	providerMaxAttempts    = 3
 	providerRetryBackoff   = 700 * time.Millisecond
 	toolNamePattern        = `[A-Za-z][A-Za-z0-9_]*\.[A-Za-z][A-Za-z0-9_]*`
@@ -139,7 +139,7 @@ const (
 	maxPromptToolResults   = 12
 	maxPromptToolOutput    = 6000
 	maxPromptToolError     = 1200
-	maxResponseTokens      = 20000
+	maxResponseTokens      = 32000
 	defaultContextWindow   = 120000
 	zaiGLM47ContextWindow  = 200000
 	contextCompactionRatio = 0.80
@@ -155,6 +155,7 @@ var toolNameAliases = map[string]string{
 	"fs.move":              "fs.move",
 	"fs.rename":            "fs.move",
 	"fs.edit":              "fs.edit",
+	"fs.mkdir":             "fs.mkdir",
 	"code.search":          "code.search",
 	"config.get":           "config.get",
 	"config.set":           "config.set",
@@ -315,10 +316,15 @@ func contextWindowForModel(providerName, modelName string) int {
 }
 
 func normalizeProviderMessageRole(providerName, role string) string {
-	provider := strings.ToLower(strings.TrimSpace(providerName))
 	cleanRole := strings.ToLower(strings.TrimSpace(role))
-	if provider == "hatz" && cleanRole == "tool" {
-		return "assistant"
+	// The provider payload uses map[string]string with only "role" and "content";
+	// it never includes a "tool_call_id" field.  Providers that validate the
+	// OpenAI schema strictly will reject messages with role "tool" when no
+	// tool_call_id is present (HTTP 422).  Remap "tool" to "user" for every
+	// provider so tool-result context is preserved without triggering validation
+	// errors.
+	if cleanRole == "tool" {
+		return "user"
 	}
 	return cleanRole
 }

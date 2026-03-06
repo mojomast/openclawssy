@@ -48,6 +48,13 @@ func (p fakePolicy) ResolveWritePath(workspace, target string) (string, error) {
 	return filepath.Join(workspace, target), nil
 }
 
+func (p fakePolicy) ResolveMkdirPath(workspace, target string) (string, error) {
+	if filepath.IsAbs(target) {
+		return target, nil
+	}
+	return filepath.Join(workspace, target), nil
+}
+
 type memAudit struct {
 	events []string
 	recs   []auditRecord
@@ -708,6 +715,141 @@ func TestFsEditRejectsWorkspaceControlPlaneFilename(t *testing.T) {
 		if !strings.Contains(msg, needle) {
 			t.Fatalf("expected error to contain %q, got %q", needle, msg)
 		}
+	}
+}
+
+func TestFsWriteAllowsControlPlaneFilenameInDeepSubdirectory(t *testing.T) {
+	ws := t.TempDir()
+	// Create the deep directory structure so the write can succeed.
+	deepDir := filepath.Join(ws, "ussyflow", "ussydub")
+	if err := os.MkdirAll(deepDir, 0o755); err != nil {
+		t.Fatalf("mkdir deep: %v", err)
+	}
+	reg := NewRegistry(fakePolicy{}, nil)
+	if err := RegisterCore(reg); err != nil {
+		t.Fatalf("register core: %v", err)
+	}
+
+	// Writing devplan.md at depth 3 (ussyflow/ussydub/devplan.md) must succeed.
+	res, err := reg.Execute(context.Background(), "agent-123", "fs.write", ws, map[string]any{
+		"path":    filepath.Join("ussyflow", "ussydub", "devplan.md"),
+		"content": "# Dev Plan\nscaffold browser app",
+	})
+	if err != nil {
+		t.Fatalf("expected deep-path control-plane filename to be allowed, got error: %v", err)
+	}
+	if summary, _ := res["summary"].(string); !strings.Contains(summary, "wrote") {
+		t.Fatalf("unexpected summary: %q", summary)
+	}
+	data, readErr := os.ReadFile(filepath.Join(deepDir, "devplan.md"))
+	if readErr != nil {
+		t.Fatalf("expected file to exist: %v", readErr)
+	}
+	if !strings.Contains(string(data), "scaffold browser app") {
+		t.Fatalf("unexpected content: %q", string(data))
+	}
+}
+
+func TestFsWriteStillBlocksControlPlaneFilenameAtRoot(t *testing.T) {
+	ws := t.TempDir()
+	reg := NewRegistry(fakePolicy{}, nil)
+	if err := RegisterCore(reg); err != nil {
+		t.Fatalf("register core: %v", err)
+	}
+
+	// depth=1 (workspace root): DEVPLAN.md should still be blocked.
+	_, err := reg.Execute(context.Background(), "agent-123", "fs.write", ws, map[string]any{
+		"path":    "DEVPLAN.md",
+		"content": "new content",
+	})
+	if err == nil {
+		t.Fatalf("expected control-plane filename guard error for root-level file")
+	}
+	if !strings.Contains(err.Error(), "does not control agent behavior") {
+		t.Fatalf("expected guard message, got %q", err.Error())
+	}
+
+	// depth=2 (one subdirectory): notes/SOUL.md should still be blocked.
+	_, err = reg.Execute(context.Background(), "agent-123", "fs.write", ws, map[string]any{
+		"path":    filepath.Join("notes", "SOUL.md"),
+		"content": "new content",
+	})
+	if err == nil {
+		t.Fatalf("expected control-plane filename guard error for depth-2 file")
+	}
+	if !strings.Contains(err.Error(), "does not control agent behavior") {
+		t.Fatalf("expected guard message, got %q", err.Error())
+	}
+}
+
+func TestFsMkdirCreatesNestedDirectories(t *testing.T) {
+	ws := t.TempDir()
+	enf := policy.NewEnforcer(ws, map[string][]string{"agent": {"fs.mkdir"}})
+	reg := NewRegistry(enf, nil)
+	if err := RegisterCore(reg); err != nil {
+		t.Fatalf("register core: %v", err)
+	}
+
+	res, err := reg.Execute(context.Background(), "agent", "fs.mkdir", ws, map[string]any{
+		"path": "deep/nested/subdir",
+	})
+	if err != nil {
+		t.Fatalf("fs.mkdir: %v", err)
+	}
+	summary, _ := res["summary"].(string)
+	if !strings.Contains(summary, "created directory") {
+		t.Fatalf("unexpected summary: %q", summary)
+	}
+	info, statErr := os.Stat(filepath.Join(ws, "deep", "nested", "subdir"))
+	if statErr != nil {
+		t.Fatalf("expected directory to exist: %v", statErr)
+	}
+	if !info.IsDir() {
+		t.Fatalf("expected a directory, got file")
+	}
+}
+
+func TestFsMkdirRejectsTraversal(t *testing.T) {
+	ws := t.TempDir()
+	enf := policy.NewEnforcer(ws, map[string][]string{"agent": {"fs.mkdir"}})
+	reg := NewRegistry(enf, nil)
+	if err := RegisterCore(reg); err != nil {
+		t.Fatalf("register core: %v", err)
+	}
+
+	_, err := reg.Execute(context.Background(), "agent", "fs.mkdir", ws, map[string]any{
+		"path": "../escape",
+	})
+	if err == nil {
+		t.Fatal("expected traversal denial for fs.mkdir")
+	}
+}
+
+func TestFsWriteAutoCreatesParentDirectories(t *testing.T) {
+	ws := t.TempDir()
+	enf := policy.NewEnforcer(ws, map[string][]string{"agent": {"fs.write"}})
+	reg := NewRegistry(enf, nil)
+	if err := RegisterCore(reg); err != nil {
+		t.Fatalf("register core: %v", err)
+	}
+
+	res, err := reg.Execute(context.Background(), "agent", "fs.write", ws, map[string]any{
+		"path":    "newdir/subdir/file.txt",
+		"content": "hello world",
+	})
+	if err != nil {
+		t.Fatalf("fs.write with auto-mkdir: %v", err)
+	}
+	summary, _ := res["summary"].(string)
+	if !strings.Contains(summary, "wrote") {
+		t.Fatalf("unexpected summary: %q", summary)
+	}
+	data, readErr := os.ReadFile(filepath.Join(ws, "newdir", "subdir", "file.txt"))
+	if readErr != nil {
+		t.Fatalf("expected file to exist: %v", readErr)
+	}
+	if string(data) != "hello world" {
+		t.Fatalf("unexpected content: %q", string(data))
 	}
 }
 

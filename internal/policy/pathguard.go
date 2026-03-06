@@ -101,6 +101,79 @@ func (e *Enforcer) ResolveWritePath(workspace, target string) (string, error) {
 	return resolvePath(workspace, target, true)
 }
 
+// ResolveMkdirPath validates a directory creation target.  Unlike
+// ResolveWritePath, this does not require the parent directory to already
+// exist—it walks up the path to find the nearest existing ancestor and
+// verifies that ancestor is within the workspace.
+func (e *Enforcer) ResolveMkdirPath(workspace, target string) (string, error) {
+	if workspace == "" {
+		return "", fmt.Errorf("workspace is required")
+	}
+	if target == "" {
+		return "", &PathError{Path: target, Reason: "empty path"}
+	}
+	if isWindowsDriveRelative(target) {
+		return "", &PathError{Path: target, Reason: "invalid path"}
+	}
+	if HasTraversal(target) {
+		return "", &PathError{Path: target, Reason: "path traversal"}
+	}
+
+	wsAbs, err := filepath.Abs(workspace)
+	if err != nil {
+		return "", err
+	}
+	wsReal, err := filepath.EvalSymlinks(wsAbs)
+	if err != nil {
+		return "", err
+	}
+
+	targetAbs := target
+	if !isAbsoluteTarget(targetAbs) {
+		targetAbs = filepath.Join(wsReal, targetAbs)
+	} else {
+		targetAbs = strings.ReplaceAll(targetAbs, "\\", string(filepath.Separator))
+	}
+	targetAbs = filepath.Clean(targetAbs)
+
+	// Walk up from the target to find the nearest existing ancestor so
+	// we can resolve symlinks and do a real workspace-boundary check.
+	ancestor := targetAbs
+	for {
+		if _, err := os.Stat(ancestor); err == nil {
+			break
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return "", &PathError{Path: target, Reason: "no existing ancestor directory"}
+		}
+		ancestor = parent
+	}
+	ancestorReal, err := filepath.EvalSymlinks(ancestor)
+	if err != nil {
+		return "", &PathError{Path: target, Reason: "cannot resolve ancestor"}
+	}
+	if !isWithinWorkspace(wsReal, ancestorReal) {
+		return "", &PathError{Path: target, Reason: "outside workspace"}
+	}
+
+	// Re-derive the target under the real ancestor so symlinks cannot
+	// redirect the final path outside the workspace.
+	relFromAncestor, err := filepath.Rel(ancestor, targetAbs)
+	if err != nil {
+		return "", &PathError{Path: target, Reason: "cannot compute relative path"}
+	}
+	candidate := filepath.Join(ancestorReal, relFromAncestor)
+	if !isWithinWorkspace(wsReal, candidate) {
+		return "", &PathError{Path: target, Reason: "outside workspace"}
+	}
+	if isProtectedControlPath(candidate) {
+		return "", &PathError{Path: target, Reason: "protected control-plane path"}
+	}
+
+	return candidate, nil
+}
+
 func resolvePath(workspace, target string, write bool) (string, error) {
 	if workspace == "" {
 		return "", fmt.Errorf("workspace is required")

@@ -179,6 +179,13 @@ Chat tool timeline:
 - Inline tool bubbles remain after the run completes, and each bubble can be expanded to inspect full arguments, output, and error text.
 - The final assistant response still lands in its own message bubble after the tool work, which makes long workflows easier to scan.
 
+Workspace browser:
+
+- `Workspace` opens a browser-native view of the configured workspace root.
+- You can navigate folders, preview text files, and watch generated artifacts appear without leaving the dashboard.
+- File previews are read-only and constrained to the workspace root; traversal outside the workspace is rejected.
+- Auto-refresh can be enabled from the workspace toolbar when you want the browser to keep checking for new files while an agent is working.
+
 Agent and subagent controls live under `Settings` -> `Agents`:
 
 - per-agent profile overrides with inheritance-friendly blanks

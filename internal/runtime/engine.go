@@ -81,6 +81,11 @@ type ExecuteInput struct {
 	MaxToolIterations int      // If >0, overrides the default tool iteration cap.
 	TimeoutMS         int      // If >0, applies as a context deadline for this run.
 	OnProgress        func(eventType string, data map[string]any)
+	// SandboxAgentID, when non-empty, makes the run share the sandbox
+	// container/volume of the specified agent instead of creating its own.
+	// This is used so sub-agents can see (and write to) the parent agent's
+	// workspace rather than starting with an empty volume.
+	SandboxAgentID string
 }
 
 const (
@@ -328,8 +333,15 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 
 	var provider sandbox.Provider
 	if cfg.Sandbox.Active {
+		// When SandboxAgentID is set, the run shares the sandbox container/volume
+		// of another agent (typically the parent orchestrator).  This lets
+		// sub-agents read and write the same /workspace as their parent.
+		sandboxID := agentID
+		if strings.TrimSpace(in.SandboxAgentID) != "" {
+			sandboxID = strings.TrimSpace(in.SandboxAgentID)
+		}
 		provider, err = sandbox.NewProviderForAgent(
-			cfg.Sandbox.Provider, e.workspaceDir, agentID, cfg.Sandbox.Docker)
+			cfg.Sandbox.Provider, e.workspaceDir, sandboxID, cfg.Sandbox.Docker)
 		if err != nil {
 			return RunResult{}, fmt.Errorf("runtime: create sandbox provider: %w", err)
 		}
@@ -363,6 +375,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	subAgentRunner := &subAgentRunner{engine: e}
 	adapter := &agentSubAgentRunnerAdapter{
 		runner:            subAgentRunner,
+		parentAgentID:     agentID,
 		subAgentDefaults:  cfg.Agents.SubAgentDefaults,
 		subAgentOverrides: cfg.Agents.SubAgentOverrides,
 	}
@@ -1597,7 +1610,7 @@ func sanitizePathArg(path string) string {
 }
 
 func (e *Engine) allowedTools(cfg config.Config) []string {
-	toolsList := []string{"fs.read", "fs.list", "fs.write", "fs.append", "fs.delete", "fs.move", "fs.edit", "code.search", "config.get", "config.set", "secrets.set", "secrets.list", "skill.list", "skill.read", "scheduler.list", "scheduler.add", "scheduler.remove", "scheduler.pause", "scheduler.resume", "session.list", "session.close", "agent.list", "agent.create", "agent.switch", "agent.profile.get", "agent.profile.set", "agent.message.send", "agent.message.inbox", "agent.run", "agent.prompt.read", "agent.prompt.update", "agent.prompt.suggest", "agent.identity.set", "policy.list", "policy.grant", "policy.revoke", "run.list", "run.get", "run.cancel", "metrics.get", "memory.search", "memory.write", "memory.update", "memory.forget", "memory.health", "memory.checkpoint", "memory.maintenance", "decision.log", "time.now"}
+	toolsList := []string{"fs.read", "fs.list", "fs.write", "fs.append", "fs.delete", "fs.move", "fs.edit", "fs.mkdir", "code.search", "config.get", "config.set", "secrets.set", "secrets.list", "skill.list", "skill.read", "scheduler.list", "scheduler.add", "scheduler.remove", "scheduler.pause", "scheduler.resume", "session.list", "session.close", "agent.list", "agent.create", "agent.switch", "agent.profile.get", "agent.profile.set", "agent.message.send", "agent.message.inbox", "agent.run", "agent.prompt.read", "agent.prompt.update", "agent.prompt.suggest", "agent.identity.set", "policy.list", "policy.grant", "policy.revoke", "run.list", "run.get", "run.cancel", "metrics.get", "memory.search", "memory.write", "memory.update", "memory.forget", "memory.health", "memory.checkpoint", "memory.maintenance", "decision.log", "time.now"}
 	if cfg.Network.Enabled {
 		toolsList = append(toolsList, "http.request")
 	}
@@ -1782,6 +1795,10 @@ func (d *dockerPolicyEnforcer) ResolveWritePath(_, target string) (string, error
 	return dockerResolvePath("", target)
 }
 
+func (d *dockerPolicyEnforcer) ResolveMkdirPath(_, target string) (string, error) {
+	return dockerResolvePath("", target)
+}
+
 // dockerResolvePath resolves a path relative to the container workspace root
 // (/workspace).  Absolute paths must reside within /workspace.
 //
@@ -1837,6 +1854,9 @@ func (s *subAgentRunner) ExecuteSubAgent(ctx context.Context, input tools.AgentR
 	if s == nil || s.engine == nil {
 		return tools.AgentRunOutput{}, errors.New("runtime: engine is not configured")
 	}
+	// When a caller agent ID is known, sub-agents share the caller's sandbox
+	// container/volume so file writes are visible to both parent and child.
+	sandboxAgentID := strings.TrimSpace(input.CallerAgentID)
 	result, err := s.engine.ExecuteWithInput(ctx, ExecuteInput{
 		AgentID:           strings.TrimSpace(input.TargetAgentID),
 		Message:           input.Message,
@@ -1846,6 +1866,7 @@ func (s *subAgentRunner) ExecuteSubAgent(ctx context.Context, input tools.AgentR
 		AllowedTools:      input.AllowedTools,
 		MaxToolIterations: input.MaxToolIterations,
 		TimeoutMS:         input.TimeoutMS,
+		SandboxAgentID:    sandboxAgentID,
 	})
 	if err != nil {
 		return tools.AgentRunOutput{}, err
@@ -1865,6 +1886,7 @@ func (s *subAgentRunner) ExecuteSubAgent(ctx context.Context, input tools.AgentR
 // It resolves per-agent restrictions from SubAgentDefaults/SubAgentOverrides before delegating.
 type agentSubAgentRunnerAdapter struct {
 	runner            tools.AgentRunner
+	parentAgentID     string // The agent that owns this adapter — used for sandbox sharing.
 	subAgentDefaults  config.SubAgentRestrictions
 	subAgentOverrides map[string]config.SubAgentRestrictions
 }
@@ -1915,7 +1937,7 @@ func (a *agentSubAgentRunnerAdapter) ExecuteSubAgent(ctx context.Context, task a
 	}
 
 	result, err := a.runner.ExecuteSubAgent(execCtx, tools.AgentRunInput{
-		CallerAgentID:     "",
+		CallerAgentID:     a.parentAgentID,
 		TargetAgentID:     task.AgentID,
 		Message:           task.Message,
 		TaskID:            task.TaskID,

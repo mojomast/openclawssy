@@ -75,6 +75,9 @@ func RegisterCoreWithOptions(reg *Registry, opts CoreOptions) error {
 	if err := reg.Register(ToolSpec{Name: "code.search", Description: "Search code with regex", Required: []string{"pattern"}, ArgTypes: map[string]ArgType{"pattern": ArgTypeString, "path": ArgTypeString, "max_files": ArgTypeNumber, "max_file_bytes": ArgTypeNumber}}, codeSearch); err != nil {
 		return err
 	}
+	if err := reg.Register(ToolSpec{Name: "fs.mkdir", Description: "Create directory (with parents)", Required: []string{"path"}, ArgTypes: map[string]ArgType{"path": ArgTypeString}}, fsMkdir); err != nil {
+		return err
+	}
 	if err := reg.Register(ToolSpec{Name: "time.now", Description: "Get current time"}, timeNow); err != nil {
 		return err
 	}
@@ -206,7 +209,27 @@ func fsWrite(ctx context.Context, req Request) (map[string]any, error) {
 	}
 	resolved, err := req.Policy.ResolveWritePath(req.Workspace, path)
 	if err != nil {
-		return nil, err
+		// If the parent directory does not exist, attempt to create it
+		// automatically.  This allows agents to write files into new
+		// subdirectories without a separate fs.mkdir call.
+		if isParentMissingError(err) {
+			resolved, err = req.Policy.ResolveMkdirPath(req.Workspace, path)
+			if err != nil {
+				return nil, err
+			}
+			parentDir := filepath.Dir(resolved)
+			if req.SandboxProvider != nil {
+				if mkErr := req.SandboxProvider.MkdirAll(ctx, parentDir, 0o755); mkErr != nil {
+					return nil, mkErr
+				}
+			} else {
+				if mkErr := os.MkdirAll(parentDir, 0o755); mkErr != nil {
+					return nil, mkErr
+				}
+			}
+		} else {
+			return nil, err
+		}
 	}
 	if err := guardWorkspaceControlPlaneFilename(req.Workspace, resolved, req.AgentID); err != nil {
 		return nil, err
@@ -229,6 +252,42 @@ func fsWrite(ctx context.Context, req Request) (map[string]any, error) {
 		"bytes":   len(content),
 		"lines":   lines,
 		"summary": fmt.Sprintf("wrote %d line(s) to %s", lines, path),
+	}, nil
+}
+
+// isParentMissingError returns true when a path-policy error indicates
+// the parent directory does not exist.
+func isParentMissingError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "write parent does not exist")
+}
+
+func fsMkdir(ctx context.Context, req Request) (map[string]any, error) {
+	path, err := getString(req.Args, "path")
+	if err != nil {
+		return nil, err
+	}
+	if req.Policy == nil {
+		return nil, errors.New("policy is required")
+	}
+	resolved, err := req.Policy.ResolveMkdirPath(req.Workspace, path)
+	if err != nil {
+		return nil, err
+	}
+	if req.SandboxProvider != nil {
+		if err := req.SandboxProvider.MkdirAll(ctx, resolved, 0o755); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := os.MkdirAll(resolved, 0o755); err != nil {
+			return nil, err
+		}
+	}
+	return map[string]any{
+		"path":    path,
+		"summary": fmt.Sprintf("created directory %s", path),
 	}, nil
 }
 
@@ -1084,6 +1143,17 @@ func guardWorkspaceControlPlaneFilename(workspace, targetAbs, agentID string) er
 	within, err := isWithinWorkspace(workspace, targetAbs)
 	if err != nil || !within {
 		return err
+	}
+	// Only guard files at or near the workspace root (depth <= 2).
+	// Files deep inside project subdirectories (e.g.
+	// /workspace/myproj/subdir/devplan.md) are fine.
+	rel, relErr := filepath.Rel(workspace, targetAbs)
+	if relErr != nil {
+		return nil // can't determine depth, allow
+	}
+	depth := len(strings.Split(filepath.ToSlash(rel), "/"))
+	if depth > 2 {
+		return nil // deep inside a project subdir, allow
 	}
 	if agentID == "" {
 		agentID = "<agent_id>"

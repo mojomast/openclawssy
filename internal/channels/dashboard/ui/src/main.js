@@ -7,6 +7,7 @@ import { runsPage } from "./pages/runs.js";
 import { agentMonitorPage } from "./pages/agent_monitor.js";
 import { schedulerPage } from "./pages/scheduler.js";
 import { settingsPage } from "./pages/settings.js";
+import { workspacePage } from "./pages/workspace.js";
 import { secretsPage } from "./pages/secrets.js";
 import { docsPage } from "./pages/docs.js";
 import { skillsPage } from "./pages/skills.js";
@@ -27,6 +28,7 @@ const ROUTES = [
   { path: "/agent-monitor", label: "Agent Monitor", page: agentMonitorPage },
   { path: "/scheduler", label: "Scheduler", page: schedulerPage },
   { path: "/settings", label: "Settings", page: settingsPage },
+  { path: "/workspace", label: "Workspace", page: workspacePage },
   { path: "/docs", label: "Docs", page: docsPage },
   { path: "/skills", label: "Skills", page: skillsPage },
   { path: "/secrets", label: "Secrets", page: secretsPage },

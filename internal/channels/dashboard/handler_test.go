@@ -130,6 +130,117 @@ func TestDashboardStaticAssetRouteServesHelpMarkdown(t *testing.T) {
 	}
 }
 
+func TestAdminWorkspaceEntriesListsDirectoriesAndFiles(t *testing.T) {
+	root := t.TempDir()
+	workspaceRoot := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(filepath.Join(workspaceRoot, "project", "nested"), 0o755); err != nil {
+		t.Fatalf("mkdir workspace tree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspaceRoot, "project", "notes.txt"), []byte("hello workspace\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/workspace/entries?path=project", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusOK, rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Path       string                  `json:"path"`
+		ParentPath string                  `json:"parent_path"`
+		Entries    []workspaceEntryPayload `json:"entries"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Path != "project" {
+		t.Fatalf("expected path project, got %#v", payload.Path)
+	}
+	if payload.ParentPath != "" {
+		t.Fatalf("expected empty parent path for top-level child, got %#v", payload.ParentPath)
+	}
+	if len(payload.Entries) != 2 {
+		t.Fatalf("expected two entries, got %#v", payload.Entries)
+	}
+	if payload.Entries[0].Kind != "dir" || payload.Entries[0].Name != "nested" {
+		t.Fatalf("expected nested dir first, got %#v", payload.Entries[0])
+	}
+	if payload.Entries[1].Kind != "file" || payload.Entries[1].Path != "project/notes.txt" {
+		t.Fatalf("unexpected file entry %#v", payload.Entries[1])
+	}
+	if payload.Entries[1].SizeBytes == 0 {
+		t.Fatalf("expected non-zero file size, got %#v", payload.Entries[1])
+	}
+}
+
+func TestAdminWorkspaceFileReadsTextAndRejectsTraversal(t *testing.T) {
+	root := t.TempDir()
+	workspaceRoot := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(filepath.Join(workspaceRoot, "project"), 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspaceRoot, "project", "notes.txt"), []byte("line one\nline two\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	readReq := httptest.NewRequest(http.MethodGet, "/api/admin/workspace/file?path=project/notes.txt", nil)
+	readResp := httptest.NewRecorder()
+	mux.ServeHTTP(readResp, readReq)
+	if readResp.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusOK, readResp.Code, readResp.Body.String())
+	}
+	var payload struct {
+		Path      string `json:"path"`
+		IsText    bool   `json:"is_text"`
+		Content   string `json:"content"`
+		Truncated bool   `json:"truncated"`
+	}
+	if err := json.Unmarshal(readResp.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode file payload: %v", err)
+	}
+	if payload.Path != "project/notes.txt" || !payload.IsText {
+		t.Fatalf("unexpected file payload %#v", payload)
+	}
+	if !strings.Contains(payload.Content, "line two") || payload.Truncated {
+		t.Fatalf("expected full text preview, got %#v", payload)
+	}
+
+	denyReq := httptest.NewRequest(http.MethodGet, "/api/admin/workspace/file?path=../outside.txt", nil)
+	denyResp := httptest.NewRecorder()
+	mux.ServeHTTP(denyResp, denyReq)
+	if denyResp.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d", http.StatusBadRequest, denyResp.Code)
+	}
+}
+
+func TestDashboardWorkspaceRootFallsBackToContainerWorkspaceWhenConfiguredAbsolutePathMissing(t *testing.T) {
+	root := t.TempDir()
+	defaultWorkspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(defaultWorkspace, 0o755); err != nil {
+		t.Fatalf("mkdir default workspace: %v", err)
+	}
+	cfg := config.Default()
+	cfg.Workspace.Root = "/definitely/missing/host/workspace"
+	if err := config.Save(filepath.Join(root, ".openclawssy", "config.json"), cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	if got := h.dashboardWorkspaceRoot(); got != defaultWorkspace {
+		t.Fatalf("expected fallback workspace %q, got %q", defaultWorkspace, got)
+	}
+}
+
 func TestDashboardStaticAssetRouteMissingToolSchemasFileNotFound(t *testing.T) {
 	h := New(t.TempDir(), httpchannel.NewInMemoryRunStore())
 	mux := http.NewServeMux()

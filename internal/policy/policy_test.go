@@ -238,3 +238,82 @@ func TestSymlinkFileEscapeDeniedOnWrite(t *testing.T) {
 		t.Fatalf("expected outside workspace denial, got %v", err)
 	}
 }
+
+func TestResolveMkdirPathAllowsNestedCreation(t *testing.T) {
+	root := t.TempDir()
+	ws := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	enf := NewEnforcer(ws, map[string][]string{"agent": {"fs.mkdir"}})
+
+	// Creating a deeply nested directory that doesn't exist yet should
+	// succeed as long as the workspace itself exists.
+	resolved, err := enf.ResolveMkdirPath(ws, "deep/nested/subdir")
+	if err != nil {
+		t.Fatalf("expected nested mkdir to be allowed, got %v", err)
+	}
+	if !strings.HasSuffix(resolved, filepath.Join("workspace", "deep", "nested", "subdir")) {
+		t.Fatalf("unexpected resolved path: %s", resolved)
+	}
+}
+
+func TestResolveMkdirPathDeniesTraversal(t *testing.T) {
+	root := t.TempDir()
+	ws := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	enf := NewEnforcer(ws, map[string][]string{"agent": {"fs.mkdir"}})
+
+	_, err := enf.ResolveMkdirPath(ws, "../outside")
+	if err == nil {
+		t.Fatal("expected traversal denial")
+	}
+}
+
+func TestResolveMkdirPathDeniesOutsideWorkspace(t *testing.T) {
+	root := t.TempDir()
+	ws := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	enf := NewEnforcer(ws, map[string][]string{"agent": {"fs.mkdir"}})
+
+	_, err := enf.ResolveMkdirPath(ws, "/tmp/malicious")
+	if err == nil {
+		t.Fatal("expected outside-workspace denial")
+	}
+}
+
+func TestResolveMkdirPathDeniesSymlinkEscape(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior requires elevated privileges on many windows setups")
+	}
+
+	root := t.TempDir()
+	ws := filepath.Join(root, "workspace")
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatalf("mkdir outside: %v", err)
+	}
+
+	// Create a symlink inside workspace that points outside
+	linkDir := filepath.Join(ws, "escape")
+	if err := os.Symlink(outside, linkDir); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	enf := NewEnforcer(ws, map[string][]string{"agent": {"fs.mkdir"}})
+
+	_, err := enf.ResolveMkdirPath(ws, "escape/nested")
+	if err == nil {
+		t.Fatal("expected symlink escape denial for mkdir")
+	}
+}

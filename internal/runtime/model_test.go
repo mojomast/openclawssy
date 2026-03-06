@@ -995,8 +995,8 @@ func TestProviderModelRequestsMaxTokensCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate failed: %v", err)
 	}
-	if captured.MaxTokens != 20000 {
-		t.Fatalf("expected max_tokens=20000, got %d", captured.MaxTokens)
+	if captured.MaxTokens != 32000 {
+		t.Fatalf("expected max_tokens=32000, got %d", captured.MaxTokens)
 	}
 }
 
@@ -1693,7 +1693,7 @@ func TestHatzGenerateSendsBearerAndXAPIKeyHeaders(t *testing.T) {
 	}
 }
 
-func TestHatzGenerateRemapsToolHistoryRolesToAssistant(t *testing.T) {
+func TestGenerateRemapsToolHistoryRolesToUser(t *testing.T) {
 	var captured requestCapture
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
@@ -1708,6 +1708,7 @@ func TestHatzGenerateRemapsToolHistoryRolesToAssistant(t *testing.T) {
 	}))
 	defer server.Close()
 
+	// Test with hatz provider (previously the only one with tool remapping).
 	cfg := config.Default()
 	cfg.Model.Provider = "hatz"
 	cfg.Model.Name = "gpt-5.4"
@@ -1737,8 +1738,11 @@ func TestHatzGenerateRemapsToolHistoryRolesToAssistant(t *testing.T) {
 	if len(captured.Messages) != 5 {
 		t.Fatalf("expected system + four history messages, got %#v", captured.Messages)
 	}
-	if captured.Messages[2].Role != "assistant" {
-		t.Fatalf("expected Hatz tool history to be remapped to assistant, got %+v", captured.Messages[2])
+	// Tool role is now remapped to "user" for all providers to avoid 422
+	// errors from providers that do not support standalone "tool" role
+	// messages without a tool_call_id.
+	if captured.Messages[2].Role != "user" {
+		t.Fatalf("expected tool history to be remapped to user, got %+v", captured.Messages[2])
 	}
 	if !strings.Contains(captured.Messages[2].Content, "tool fs.list result") {
 		t.Fatalf("expected remapped tool content to be preserved, got %+v", captured.Messages[2])
@@ -1748,7 +1752,7 @@ func TestHatzGenerateRemapsToolHistoryRolesToAssistant(t *testing.T) {
 	}
 	for _, msg := range captured.Messages {
 		if msg.Role != "system" && msg.Role != "user" && msg.Role != "assistant" {
-			t.Fatalf("unexpected Hatz request role: %+v", msg)
+			t.Fatalf("unexpected provider request role: %+v", msg)
 		}
 	}
 }

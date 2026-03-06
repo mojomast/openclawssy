@@ -296,8 +296,8 @@ func Default() Config {
 			Provider:    "zai",
 			Name:        "GLM-4.7",
 			Temperature: 0.2,
-			MaxTokens:   20000,
-			TimeoutMS:   90 * 1000,
+			MaxTokens:   32000,
+			TimeoutMS:   120 * 1000,
 		},
 		Providers: ProvidersConfig{
 			OpenAI: ProviderEndpointConfig{
@@ -336,7 +336,7 @@ func Default() Config {
 			DelegationAgentID:        "default",
 			DelegationCooldownIter:   15,
 			SubAgentDefaults: SubAgentRestrictions{
-				AllowedTools:      []string{"fs.read", "fs.list", "fs.write", "fs.edit", "code.search", "memory.search"},
+				AllowedTools:      []string{"fs.read", "fs.list", "fs.write", "fs.append", "fs.mkdir", "fs.edit", "code.search", "memory.search"},
 				MaxToolIterations: 30,
 				TimeoutMS:         120000,
 				ThinkingMode:      "never",
@@ -740,8 +740,8 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.Model.Name) == "" {
 		return errors.New("model.name is required")
 	}
-	if c.Model.MaxTokens < 1 || c.Model.MaxTokens > 20000 {
-		return errors.New("model.max_tokens must be between 1 and 20000")
+	if c.Model.MaxTokens < 1 || c.Model.MaxTokens > 32000 {
+		return errors.New("model.max_tokens must be between 1 and 32000")
 	}
 	if c.Model.TimeoutMS < 1000 || c.Model.TimeoutMS > 600000 {
 		return errors.New("model.timeout_ms must be between 1000 and 600000")

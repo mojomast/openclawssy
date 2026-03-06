@@ -202,9 +202,10 @@ Good first dashboard flow:
 2. Run a tool-backed prompt (`/tool time.now {}`)
 3. Toggle `Tool timeline` in Chat when you want inline tool bubbles with expandable args/output/error
 4. If a long response is interrupted, use `Resume interrupted run` in Chat instead of retyping `continue`
-5. Open run details to inspect tool summary + artifacts
-6. Open Agent Monitor to watch main/subagent execution and cancellation state
-7. Check Settings/Secrets/Scheduler pages for operator controls, including `model.timeout_ms`
+5. Open `Workspace` to browse files the agent is creating and preview text output live from the browser
+6. Open run details to inspect tool summary + artifacts
+7. Open Agent Monitor to watch main/subagent execution and cancellation state
+8. Check Settings/Secrets/Scheduler pages for operator controls, including `model.timeout_ms`
 
 For a full frontend guide, see [`docs/DASHBOARD.md`](docs/DASHBOARD.md).
 

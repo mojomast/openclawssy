@@ -949,8 +949,8 @@ func TestExecuteWithInputIncludesHistoricalToolMessagesInModelContext(t *testing
 	if captured.Messages[1].Role != "user" || captured.Messages[1].Content != "list files in ." {
 		t.Fatalf("unexpected first history message: %+v", captured.Messages[1])
 	}
-	if captured.Messages[2].Role != "tool" {
-		t.Fatalf("expected tool history message in context, got %+v", captured.Messages[2])
+	if captured.Messages[2].Role != "user" {
+		t.Fatalf("expected tool history message remapped to user in provider payload, got %+v", captured.Messages[2])
 	}
 	if !strings.Contains(captured.Messages[2].Content, "tool fs.list result") || !strings.Contains(captured.Messages[2].Content, "README.md") {
 		t.Fatalf("unexpected tool history message content: %q", captured.Messages[2].Content)

@@ -58,11 +58,11 @@ func TestConfigRoundtripAndBackup(t *testing.T) {
 
 func TestDefaultConfigSetsMaxTokens(t *testing.T) {
 	cfg := Default()
-	if cfg.Model.MaxTokens != 20000 {
-		t.Fatalf("expected default model.max_tokens=20000, got %d", cfg.Model.MaxTokens)
+	if cfg.Model.MaxTokens != 32000 {
+		t.Fatalf("expected default model.max_tokens=32000, got %d", cfg.Model.MaxTokens)
 	}
-	if cfg.Model.TimeoutMS != 90*1000 {
-		t.Fatalf("expected default model.timeout_ms=90000, got %d", cfg.Model.TimeoutMS)
+	if cfg.Model.TimeoutMS != 120*1000 {
+		t.Fatalf("expected default model.timeout_ms=120000, got %d", cfg.Model.TimeoutMS)
 	}
 }
 
@@ -75,9 +75,9 @@ func TestDefaultConfigBindsServerToLoopback(t *testing.T) {
 
 func TestValidateRejectsOutOfRangeMaxTokens(t *testing.T) {
 	cfg := Default()
-	cfg.Model.MaxTokens = 25000
+	cfg.Model.MaxTokens = 35000
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("expected validation error for max_tokens > 20000")
+		t.Fatal("expected validation error for max_tokens > 32000")
 	}
 }
 
@@ -111,8 +111,8 @@ func TestApplyDefaultsSetsThinkingModeNever(t *testing.T) {
 	if cfg.Output.MaxThinkingChars != 4000 {
 		t.Fatalf("expected max_thinking_chars default 4000, got %d", cfg.Output.MaxThinkingChars)
 	}
-	if cfg.Model.TimeoutMS != 90*1000 {
-		t.Fatalf("expected model.timeout_ms default 90000, got %d", cfg.Model.TimeoutMS)
+	if cfg.Model.TimeoutMS != 120*1000 {
+		t.Fatalf("expected model.timeout_ms default 120000, got %d", cfg.Model.TimeoutMS)
 	}
 }
 
