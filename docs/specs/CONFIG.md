@@ -13,6 +13,7 @@ Default shipping profile:
 - `model.provider`: `zai`
 - `model.name`: `GLM-4.7`
 - `model.max_tokens`: `20000`
+- `model.timeout_ms`: `90000`
 
 ## Provider Support
 - `openai` (OpenAI endpoint)
@@ -81,7 +82,8 @@ Provider API key env defaults:
     "provider": "openai",
     "name": "gpt-4o-mini",
     "temperature": 0.2,
-    "max_tokens": 20000
+    "max_tokens": 20000,
+    "timeout_ms": 90000
   },
   "providers": {
     "openai": {
@@ -216,6 +218,7 @@ Provider API key env defaults:
 
 ## Model Runtime Notes
 - `model.max_tokens` is validated in the range `1..20000`.
+- `model.timeout_ms` is validated in the range `1000..600000` and controls the per-request provider HTTP timeout.
 - Runtime enforces this cap on provider requests.
 - Long chat history is compacted by runtime before context exhaustion.
 
@@ -223,6 +226,7 @@ Provider API key env defaults:
 - `agents.enabled_agent_ids` is an optional allowlist; when set, only listed agents can run.
 - `agents.profiles.<agent_id>.enabled=false` disables that specific agent.
 - `agents.allow_agent_model_overrides=true` allows `agents.profiles.<agent_id>.model` to override provider/model settings per agent.
+- `agents.profiles.<agent_id>.model.timeout_ms` can override the global provider timeout for one agent; `0` inherits the global value.
 - `agents.allow_inter_agent_messaging` toggles `agent.message.send` and `agent.message.inbox` workflows.
 - `agents.self_improvement_enabled` gates prompt file mutation tools (`agent.prompt.update`).
 - `agents.profiles.<agent_id>.self_improvement=true` must also be set for that agent before prompt mutation is allowed.

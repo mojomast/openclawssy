@@ -414,8 +414,14 @@ func TestLoadPromptDocsIncludesRuntimeContext(t *testing.T) {
 		if !strings.Contains(doc.Content, "http.request") {
 			t.Fatalf("runtime context missing network tool guidance: %q", doc.Content)
 		}
-		if !strings.Contains(doc.Content, "do not mention HANDOFF") {
+		if !strings.Contains(doc.Content, "Do not mention HANDOFF") {
 			t.Fatalf("runtime context missing prompt hygiene guidance: %q", doc.Content)
+		}
+		if !strings.Contains(doc.Content, "agent.prompt.read") || !strings.Contains(doc.Content, "agent.prompt.update") {
+			t.Fatalf("runtime context missing prompt tool guidance: %q", doc.Content)
+		}
+		if !strings.Contains(strings.ToLower(doc.Content), "do not use fs.read/fs.write") {
+			t.Fatalf("runtime context missing HANDOFF path guidance: %q", doc.Content)
 		}
 	}
 	if !found {
@@ -472,6 +478,12 @@ func TestLoadPromptDocsIncludesRuntimeContext(t *testing.T) {
 		}
 		if !strings.Contains(doc.Content, "Do not invent tool names") {
 			t.Fatalf("tool best practices missing invalid tool warning: %q", doc.Content)
+		}
+		if !strings.Contains(doc.Content, "Use agent.prompt.read for SOUL.md") {
+			t.Fatalf("tool best practices missing prompt doc guidance: %q", doc.Content)
+		}
+		if !strings.Contains(strings.ToLower(doc.Content), "do not use fs.read/fs.write") {
+			t.Fatalf("tool best practices missing HANDOFF path warning: %q", doc.Content)
 		}
 		if !strings.Contains(doc.Content, "chain tool calls until the task is complete") {
 			t.Fatalf("tool best practices missing multi-step chaining guidance: %q", doc.Content)
@@ -2312,6 +2324,26 @@ func TestToolCallingBestPracticesDocIncludesRunTools(t *testing.T) {
 	}
 	if !strings.Contains(doc, "run.list") && !strings.Contains(doc, "run.get") {
 		t.Fatalf("expected best practices to mention run tools, got: %s", doc)
+	}
+}
+
+func TestResolveAgentModelConfigAppliesTimeoutOverride(t *testing.T) {
+	cfg := config.Default()
+	cfg.Model.TimeoutMS = 90000
+	cfg.Agents.AllowAgentModelOverrides = true
+	cfg.Agents.Profiles = map[string]config.AgentProfile{
+		"alpha": {Model: config.ModelConfig{TimeoutMS: 180000}},
+		"beta":  {Model: config.ModelConfig{MaxTokens: 4096}},
+	}
+
+	alpha := resolveAgentModelConfig(cfg, "alpha")
+	if alpha.TimeoutMS != 180000 {
+		t.Fatalf("expected alpha timeout override 180000, got %d", alpha.TimeoutMS)
+	}
+
+	beta := resolveAgentModelConfig(cfg, "beta")
+	if beta.TimeoutMS != 90000 {
+		t.Fatalf("expected beta to inherit global timeout 90000, got %d", beta.TimeoutMS)
 	}
 }
 

@@ -159,12 +159,18 @@ Use `Settings` -> `Model Provider` for global model/provider changes:
 
 1. Set global `model.provider`
 2. Set global `model.name`
-3. Adjust `temperature` and `max_tokens`
+3. Adjust `temperature`, `max_tokens`, and `timeout_ms`
 4. Edit provider endpoint `base_url` and `api_key_env` per provider
 5. Use `Test provider` to probe endpoint reachability before saving
 6. Use `Query models` when a provider supports model discovery (for example Hatz)
 7. When Hatz models are loaded, `model.name` switches from free text to a dropdown of discovered model IDs
 8. If Hatz discovery reports a missing API key, use the inline prompt in Settings to store `provider/hatz/api_key` without leaving the page
+
+Chat interruption recovery:
+
+- When a run ends with the runtime's interrupted-stream recovery message, Chat surfaces `Resume interrupted run` automatically.
+- The resume action sends a structured continuation prompt for the current session, so operators do not need to type `continue` manually.
+- If provider timeouts happen repeatedly, raise global `model.timeout_ms` or the selected agent profile's `model.timeout_ms` in `Settings` -> `Model Provider` / `Agents`.
 
 Agent and subagent controls live under `Settings` -> `Agents`:
 

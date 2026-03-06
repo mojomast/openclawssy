@@ -38,7 +38,7 @@ const RULES = [
     id: "provider.timeout",
     test: (message) =>
       message.includes("context deadline exceeded") || message.includes("timeout") || message.includes("timed out"),
-    suggestion: "Provider request timed out. Retry, then consider backoff and model/provider settings.",
+    suggestion: "Provider request timed out. Retry first, then consider increasing model timeout_ms in Settings > Model Provider.",
     actions: [{ label: "Open Settings", kind: "route", value: "/settings" }],
   },
 ];

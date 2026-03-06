@@ -64,6 +64,33 @@ func (m *toolThenNoChoicesModel) Generate(_ context.Context, _ ModelRequest) (Mo
 	return ModelResponse{}, errors.New("provider returned no choices")
 }
 
+type toolThenTransientWithRecoveryModel struct {
+	attempts int
+}
+
+func (m *toolThenTransientWithRecoveryModel) Generate(_ context.Context, req ModelRequest) (ModelResponse, error) {
+	m.attempts++
+	if len(req.ToolResults) == 0 {
+		return ModelResponse{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.list", Arguments: []byte(`{"path":"."}`)}}}, nil
+	}
+	if len(req.AllowedTools) == 0 {
+		return ModelResponse{FinalText: "Recovered summary from tool results."}, nil
+	}
+	return ModelResponse{}, errors.New("provider stream interrupted after partial output: context deadline exceeded")
+}
+
+type toolThenAlwaysTransientErrorModel struct {
+	attempts int
+}
+
+func (m *toolThenAlwaysTransientErrorModel) Generate(_ context.Context, req ModelRequest) (ModelResponse, error) {
+	m.attempts++
+	if len(req.ToolResults) == 0 {
+		return ModelResponse{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.list", Arguments: []byte(`{"path":"."}`)}}}, nil
+	}
+	return ModelResponse{}, errors.New("provider stream interrupted after partial output: context deadline exceeded")
+}
+
 type transientErrorThenSuccessModel struct {
 	attempts int
 }
@@ -1334,6 +1361,53 @@ func TestRunnerRetriesTransientProviderTimeoutAndRecovers(t *testing.T) {
 	}
 	if model.attempts != 3 {
 		t.Fatalf("expected 3 model attempts (2 retries then success), got %d", model.attempts)
+	}
+}
+
+func TestRunnerFinalizesFromToolResultsAfterTransientProviderError(t *testing.T) {
+	model := &toolThenTransientWithRecoveryModel{}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Output: `{"entries":["SPECPLAN.md","DEVPLAN.md"]}`},
+	}}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 120}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "summarize the workspace", AllowedTools: []string{"fs.list"}})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "Recovered summary from tool results." {
+		t.Fatalf("expected recovery finalization, got %q", out.FinalText)
+	}
+	if strings.Contains(out.FinalText, "model/API error") {
+		t.Fatalf("expected no raw model/API error fallback, got %q", out.FinalText)
+	}
+	if model.attempts != 5 {
+		t.Fatalf("expected 5 model attempts including recovery finalization, got %d", model.attempts)
+	}
+}
+
+func TestRunnerTransientProviderErrorAfterToolsReturnsContinuationHint(t *testing.T) {
+	model := &toolThenAlwaysTransientErrorModel{}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Output: `{"entries":["SPECPLAN.md","DEVPLAN.md"]}`},
+	}}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 120}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "summarize the workspace", AllowedTools: []string{"fs.list"}})
+	if err != nil {
+		t.Fatalf("expected graceful recovery, got %v", err)
+	}
+	if strings.Contains(out.FinalText, "model/API error") {
+		t.Fatalf("expected no raw model/API error fallback, got %q", out.FinalText)
+	}
+	if !strings.Contains(out.FinalText, "Send `continue`") {
+		t.Fatalf("expected continuation hint, got %q", out.FinalText)
+	}
+	if !strings.Contains(out.FinalText, "SPECPLAN.md") {
+		t.Fatalf("expected latest tool results in fallback, got %q", out.FinalText)
+	}
+	if model.attempts != 5 {
+		t.Fatalf("expected 5 model attempts including failed recovery finalization, got %d", model.attempts)
 	}
 }
 

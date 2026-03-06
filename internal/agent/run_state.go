@@ -486,6 +486,13 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 			s.out.ThinkingPresent = s.thinkingPresent
 			s.out.ToolParseFailure = s.toolParseFailure
 			if len(s.toolResults) > 0 {
+				if isTransientProviderModelError(err) {
+					if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, "# TRANSIENT_MODEL_ERROR_RECOVERY\n- Your previous model turn ended with a transient provider interruption after tool work.\n- Do not call tools in this recovery turn.\n- Use the latest tool results to answer the user directly.\n- If the tool results are incomplete, say what remains and mention that the stream was interrupted."); finalized != "" {
+						s.out.FinalText = strings.TrimSpace(finalized)
+						s.out.CompletedAt = time.Now().UTC()
+						return s.out, nil
+					}
+				}
 				s.out.FinalText = recoverFromModelError(err, s.toolResults, s.toolCap)
 				s.out.CompletedAt = time.Now().UTC()
 				return s.out, nil

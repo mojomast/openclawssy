@@ -1009,6 +1009,7 @@ func TestAdminAgentsEndpointListAndSetActive(t *testing.T) {
 				Provider:  "openai",
 				Name:      "gpt-4.1-mini",
 				MaxTokens: 1024,
+				TimeoutMS: 180000,
 			},
 		},
 		"reviewer": {},
@@ -1113,6 +1114,9 @@ func TestAdminAgentsEndpointListAndSetActive(t *testing.T) {
 	}
 	if profileContext["model_provider"] != "openai" || profileContext["model_name"] != "gpt-4.1-mini" {
 		t.Fatalf("expected profile model override fields, got %#v", profileContext)
+	}
+	if profileContext["model_timeout_ms"] != float64(180000) {
+		t.Fatalf("expected profile timeout override field, got %#v", profileContext)
 	}
 	agentsConfig, ok := payload["agents_config"].(map[string]any)
 	if !ok {

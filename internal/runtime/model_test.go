@@ -1551,6 +1551,29 @@ func TestProviderRetryAndTimeoutHelpers(t *testing.T) {
 	}
 }
 
+func TestNewProviderModelUsesConfiguredTimeout(t *testing.T) {
+	cfg := config.Default()
+	cfg.Model.Provider = "openai"
+	cfg.Model.Name = "gpt-4.1-mini"
+	cfg.Model.TimeoutMS = 180000
+	cfg.Providers.OpenAI.APIKey = "test-key"
+	cfg.Providers.OpenAI.APIKeyEnv = ""
+
+	model, err := NewProviderModel(cfg, nil)
+	if err != nil {
+		t.Fatalf("NewProviderModel failed: %v", err)
+	}
+	if model.providerTimeout != 180*time.Second {
+		t.Fatalf("expected provider timeout 180s, got %v", model.providerTimeout)
+	}
+	if model.httpClient == nil {
+		t.Fatal("expected http client")
+	}
+	if model.httpClient.Timeout != 180*time.Second {
+		t.Fatalf("expected http client timeout 180s, got %v", model.httpClient.Timeout)
+	}
+}
+
 func TestProviderEndpointAndMessageHelpers(t *testing.T) {
 	cfg := config.Default()
 	providers := []string{"openai", "openrouter", "requesty", "hatz", "zai", "generic"}
@@ -1595,6 +1618,9 @@ func TestListProviderModelsUsesHatzChatModelsEndpoint(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer hatz-secret" {
 			t.Fatalf("unexpected auth header: %q", got)
 		}
+		if got := r.Header.Get("X-API-Key"); got != "hatz-secret" {
+			t.Fatalf("unexpected x-api-key header: %q", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": []map[string]any{{"id": "hatz-coder"}, {"name": "hatz-reasoner"}},
@@ -1618,6 +1644,220 @@ func TestListProviderModelsUsesHatzChatModelsEndpoint(t *testing.T) {
 	}
 	if len(models) != 2 || models[0] != "hatz-coder" || models[1] != "hatz-reasoner" {
 		t.Fatalf("unexpected models: %#v", models)
+	}
+}
+
+func TestHatzGenerateSendsBearerAndXAPIKeyHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer hatz-secret" {
+			t.Fatalf("unexpected auth header: %q", got)
+		}
+		if got := r.Header.Get("X-API-Key"); got != "hatz-secret" {
+			t.Fatalf("unexpected x-api-key header: %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{
+				map[string]any{"message": map[string]string{"content": "ok"}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.Model.Provider = "hatz"
+	cfg.Model.Name = "hatz-coder"
+	cfg.Providers.Hatz.BaseURL = server.URL
+	cfg.Providers.Hatz.APIKey = ""
+	cfg.Providers.Hatz.APIKeyEnv = ""
+
+	model, err := NewProviderModel(cfg, func(name string) (string, bool, error) {
+		if name != "provider/hatz/api_key" {
+			t.Fatalf("unexpected secret lookup key: %q", name)
+		}
+		return "hatz-secret", true, nil
+	})
+	if err != nil {
+		t.Fatalf("NewProviderModel failed: %v", err)
+	}
+
+	resp, err := model.Generate(context.Background(), agent.ModelRequest{Prompt: "system", Message: "hi"})
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	if resp.FinalText != "ok" {
+		t.Fatalf("unexpected final text: %q", resp.FinalText)
+	}
+}
+
+func TestHatzGenerateSupportsResponsesStyleNonStreamingBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"output_text": "hello from responses",
+			"usage": map[string]any{
+				"input_tokens":  10,
+				"output_tokens": 3,
+				"total_tokens":  13,
+			},
+		})
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.Model.Provider = "hatz"
+	cfg.Model.Name = "gpt-5.4"
+	cfg.Providers.Hatz.BaseURL = server.URL
+	cfg.Providers.Hatz.APIKey = ""
+	cfg.Providers.Hatz.APIKeyEnv = ""
+
+	model, err := NewProviderModel(cfg, func(name string) (string, bool, error) {
+		return "hatz-secret", true, nil
+	})
+	if err != nil {
+		t.Fatalf("NewProviderModel failed: %v", err)
+	}
+
+	resp, err := model.Generate(context.Background(), agent.ModelRequest{Prompt: "system", Message: "hi"})
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	if resp.FinalText != "hello from responses" {
+		t.Fatalf("unexpected final text: %q", resp.FinalText)
+	}
+}
+
+func TestHatzGenerateSupportsResponsesStyleStreamingEvents(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hel\"}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"lo\"}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"hello\"}]}],\"usage\":{\"input_tokens\":10,\"output_tokens\":2,\"total_tokens\":12}}}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.Model.Provider = "hatz"
+	cfg.Model.Name = "gpt-5.4"
+	cfg.Providers.Hatz.BaseURL = server.URL
+	cfg.Providers.Hatz.APIKey = ""
+	cfg.Providers.Hatz.APIKeyEnv = ""
+
+	model, err := NewProviderModel(cfg, func(name string) (string, bool, error) {
+		return "hatz-secret", true, nil
+	})
+	if err != nil {
+		t.Fatalf("NewProviderModel failed: %v", err)
+	}
+
+	var deltas []string
+	resp, err := model.Generate(context.Background(), agent.ModelRequest{
+		Prompt:      "system",
+		Message:     "hi",
+		OnTextDelta: func(delta string) error { deltas = append(deltas, delta); return nil },
+	})
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	if strings.Join(deltas, "") != "hello" {
+		t.Fatalf("unexpected streamed deltas: %#v", deltas)
+	}
+	if resp.FinalText != "hello" {
+		t.Fatalf("unexpected final text: %q", resp.FinalText)
+	}
+}
+
+func TestHatzGenerateSupportsNativeContentStreamingEvents(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "{\"type\":\"content\",\"message\":\"Hi \"}\n")
+		_, _ = io.WriteString(w, "{\"type\":\"content\",\"message\":\"there\"}\n")
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.Model.Provider = "hatz"
+	cfg.Model.Name = "gpt-5.4"
+	cfg.Providers.Hatz.BaseURL = server.URL
+	cfg.Providers.Hatz.APIKey = ""
+	cfg.Providers.Hatz.APIKeyEnv = ""
+
+	model, err := NewProviderModel(cfg, func(name string) (string, bool, error) {
+		return "hatz-secret", true, nil
+	})
+	if err != nil {
+		t.Fatalf("NewProviderModel failed: %v", err)
+	}
+
+	var deltas []string
+	resp, err := model.Generate(context.Background(), agent.ModelRequest{
+		Prompt:      "system",
+		Message:     "hi",
+		OnTextDelta: func(delta string) error { deltas = append(deltas, delta); return nil },
+	})
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	if strings.Join(deltas, "") != "Hi there" {
+		t.Fatalf("unexpected streamed deltas: %#v", deltas)
+	}
+	if resp.FinalText != "Hi there" {
+		t.Fatalf("unexpected final text: %q", resp.FinalText)
+	}
+}
+
+func TestHatzGenerateSupportsResponsesStyleStreamingToolCalls(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"fs.list\",\"arguments\":\"{\\\"path\\\":\\\".\\\"}\"}]}}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.Model.Provider = "hatz"
+	cfg.Model.Name = "gpt-5.4"
+	cfg.Providers.Hatz.BaseURL = server.URL
+	cfg.Providers.Hatz.APIKey = ""
+	cfg.Providers.Hatz.APIKeyEnv = ""
+
+	model, err := NewProviderModel(cfg, func(name string) (string, bool, error) {
+		return "hatz-secret", true, nil
+	})
+	if err != nil {
+		t.Fatalf("NewProviderModel failed: %v", err)
+	}
+
+	resp, err := model.Generate(context.Background(), agent.ModelRequest{
+		Prompt:       "system",
+		Message:      "list files",
+		AllowedTools: []string{"fs.list"},
+		OnTextDelta:  func(delta string) error { return nil },
+	})
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("expected one tool call, got %#v", resp.ToolCalls)
+	}
+	if resp.ToolCalls[0].Name != "fs.list" {
+		t.Fatalf("unexpected tool call name: %#v", resp.ToolCalls[0])
 	}
 }
 

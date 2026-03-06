@@ -667,6 +667,9 @@ func isUnauthenticatedDashboardRoute(method, requestPath string) bool {
 	if requestPath == "/dashboard" || requestPath == "/dashboard-legacy" {
 		return true
 	}
+	if cleaned := path.Clean(requestPath); cleaned == "/favicon.ico" {
+		return true
+	}
 	cleaned := path.Clean(requestPath)
 	if strings.HasPrefix(cleaned, "/dashboard/static/") && strings.TrimPrefix(cleaned, "/dashboard/static/") != "" {
 		return true

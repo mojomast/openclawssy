@@ -582,6 +582,10 @@ function validateDraftConfig(draft) {
   if (draft?.model?.max_tokens !== undefined && (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > 20000)) {
     setFieldError("model.max_tokens", "Max tokens must be an integer between 1 and 20000.");
   }
+  const modelTimeout = Number(draft?.model?.timeout_ms);
+  if (draft?.model?.timeout_ms !== undefined && (!Number.isInteger(modelTimeout) || modelTimeout < 1000 || modelTimeout > 600000)) {
+    setFieldError("model.timeout_ms", "Model timeout must be an integer between 1000 and 600000 ms.");
+  }
 
   const sandboxProvider = asTrimmedString(draft?.sandbox?.provider).toLowerCase();
   const validProviders = ["none", "local", "docker"];
@@ -699,6 +703,14 @@ function validateDraftConfig(draft) {
     const profileTemp = profile?.model?.temperature;
     if (profileTemp !== undefined && profileTemp !== null && Number.isNaN(Number(profileTemp))) {
       setFieldError(`agents.profiles.${agentID}.model.temperature`, "Profile temperature must be numeric.");
+    }
+    const profileTimeout = profile?.model?.timeout_ms;
+    if (
+      profileTimeout !== undefined &&
+      profileTimeout !== null &&
+      (!Number.isInteger(Number(profileTimeout)) || Number(profileTimeout) < 0 || Number(profileTimeout) > 600000)
+    ) {
+      setFieldError(`agents.profiles.${agentID}.model.timeout_ms`, "Profile model timeout must be an integer between 0 and 600000 ms.");
     }
   });
 
@@ -1204,6 +1216,15 @@ function buildModelCategory(panel, fieldErrors) {
     path: "model.max_tokens",
     helpText: "Upper bound for output token generation.",
     placeholder: "20000",
+    fieldErrors,
+  });
+  appendNumberField({
+    parent: panel,
+    query,
+    title: "Provider timeout (ms)",
+    path: "model.timeout_ms",
+    helpText: "HTTP timeout for each provider request. Increase this for long tool-heavy or long-form generations.",
+    placeholder: "90000",
     fieldErrors,
   });
 
@@ -1813,7 +1834,7 @@ function buildAgentsCategory(panel, fieldErrors) {
   const profiles = settingsState.draftConfig?.agents?.profiles || {};
   const selectedProfile = profiles[selected] || {};
   const knownAgentIDs = collectKnownAgentIDs();
-  const inheritsGlobalModel = !asTrimmedString(selectedProfile?.model?.provider) && !asTrimmedString(selectedProfile?.model?.name) && !selectedProfile?.model?.max_tokens && !selectedProfile?.model?.temperature;
+  const inheritsGlobalModel = !asTrimmedString(selectedProfile?.model?.provider) && !asTrimmedString(selectedProfile?.model?.name) && !selectedProfile?.model?.max_tokens && !selectedProfile?.model?.temperature && !selectedProfile?.model?.timeout_ms;
 
   const tableWrap = document.createElement("section");
   tableWrap.className = "settings-section";
@@ -1824,14 +1845,14 @@ function buildAgentsCategory(panel, fieldErrors) {
   const table = document.createElement("table");
   table.className = "settings-diff-table";
   const head = document.createElement("thead");
-  head.innerHTML = "<tr><th>Agent</th><th>Enabled</th><th>Provider</th><th>Model</th><th>Temp</th><th>Max tokens</th><th>Mode</th></tr>";
+  head.innerHTML = "<tr><th>Agent</th><th>Enabled</th><th>Provider</th><th>Model</th><th>Temp</th><th>Max tokens</th><th>Timeout ms</th><th>Mode</th></tr>";
   const body = document.createElement("tbody");
   knownAgentIDs.forEach((agentID) => {
       const profile = profiles[agentID] || {};
       const hasSavedProfile = Object.prototype.hasOwnProperty.call(profiles, agentID);
       const row = document.createElement("tr");
-      const inherit = !asTrimmedString(profile?.model?.provider) && !asTrimmedString(profile?.model?.name) && !profile?.model?.max_tokens && !profile?.model?.temperature;
-      row.innerHTML = `<td>${agentID}</td><td>${profile?.enabled === false ? "off" : "on"}</td><td>${asTrimmedString(profile?.model?.provider) || "(global)"}</td><td>${asTrimmedString(profile?.model?.name) || "(global)"}</td><td>${profile?.model?.temperature ?? "(global)"}</td><td>${profile?.model?.max_tokens ?? "(global)"}</td><td>${hasSavedProfile ? (inherit ? "inherit" : "override") : "discovered"}</td>`;
+      const inherit = !asTrimmedString(profile?.model?.provider) && !asTrimmedString(profile?.model?.name) && !profile?.model?.max_tokens && !profile?.model?.temperature && !profile?.model?.timeout_ms;
+      row.innerHTML = `<td>${agentID}</td><td>${profile?.enabled === false ? "off" : "on"}</td><td>${asTrimmedString(profile?.model?.provider) || "(global)"}</td><td>${asTrimmedString(profile?.model?.name) || "(global)"}</td><td>${profile?.model?.temperature ?? "(global)"}</td><td>${profile?.model?.max_tokens ?? "(global)"}</td><td>${profile?.model?.timeout_ms ?? "(global)"}</td><td>${hasSavedProfile ? (inherit ? "inherit" : "override") : "discovered"}</td>`;
       row.addEventListener("click", () => {
         settingsState.selectedAgentProfile = agentID;
         rerender();
@@ -1920,7 +1941,7 @@ function buildAgentsCategory(panel, fieldErrors) {
   }
 
   appendCheckboxField({ parent: panel, query, title: "Profile self-improvement", path: `agents.profiles.${selected}.self_improvement`, helpText: "Allows this agent to modify its own prompt files when global switch is on.", fieldErrors });
-  appendCheckboxField({ parent: panel, query, title: "Inherit global model", path: `agents.profiles.${selected}.__inherit_model`, helpText: "When enabled, this profile uses the global provider/model/temp/max_tokens.", fieldErrors: {} });
+  appendCheckboxField({ parent: panel, query, title: "Inherit global model", path: `agents.profiles.${selected}.__inherit_model`, helpText: "When enabled, this profile uses the global provider/model/temp/max_tokens/timeout.", fieldErrors: {} });
   const inheritField = panel.lastElementChild?.querySelector?.("input[type='checkbox']");
   if (inheritField) {
     inheritField.checked = inheritsGlobalModel;
@@ -1973,6 +1994,15 @@ function buildAgentsCategory(panel, fieldErrors) {
     helpText: "Optional override temperature. Leave blank to inherit.",
     placeholder: "(inherit global)",
     step: "0.1",
+    fieldErrors,
+  });
+  appendNumberField({
+    parent: panel,
+    query,
+    title: "Profile provider timeout (ms)",
+    path: `agents.profiles.${selected}.model.timeout_ms`,
+    helpText: "Optional override provider timeout. Set 0/empty to inherit global.",
+    placeholder: "0",
     fieldErrors,
   });
 

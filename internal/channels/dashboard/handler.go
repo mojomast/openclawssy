@@ -125,6 +125,7 @@ func NewWithOptions(rootDir string, store httpchannel.RunStore, opts Options) *H
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
+	mux.HandleFunc("/favicon.ico", h.serveDashboardFavicon)
 	mux.HandleFunc("/dashboard", h.serveDashboard)
 	mux.HandleFunc("/dashboard-legacy", h.serveLegacyDashboard)
 	mux.HandleFunc("/dashboard/static/", h.serveDashboardStatic)
@@ -149,6 +150,14 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/skills", h.handleSkills)
 	mux.HandleFunc("/api/admin/debug/runs/", h.getRunTrace)
 	mux.HandleFunc("/api/admin/memory/", h.getAgentMemory)
+}
+
+func (h *Handler) serveDashboardFavicon(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 const (
@@ -991,6 +1000,9 @@ func collectConfigFieldErrors(cfg config.Config, err error) map[string]string {
 	if cfg.Model.MaxTokens < 1 || cfg.Model.MaxTokens > 20000 {
 		set("model.max_tokens", "Max tokens must be an integer between 1 and 20000.")
 	}
+	if cfg.Model.TimeoutMS < 1000 || cfg.Model.TimeoutMS > 600000 {
+		set("model.timeout_ms", "Model timeout must be an integer between 1000 and 600000 ms.")
+	}
 	if strings.TrimSpace(cfg.Server.BindAddress) == "" {
 		set("server.bind_address", "Server bind address is required.")
 	}
@@ -1025,6 +1037,9 @@ func collectConfigFieldErrors(cfg config.Config, err error) map[string]string {
 		}
 		if profile.Model.MaxTokens < 0 || profile.Model.MaxTokens > 20000 {
 			set("agents.profiles."+agentID+".model.max_tokens", "Profile max tokens must be an integer between 0 and 20000.")
+		}
+		if profile.Model.TimeoutMS < 0 || profile.Model.TimeoutMS > 600000 {
+			set("agents.profiles."+agentID+".model.timeout_ms", "Profile model timeout must be an integer between 0 and 600000 ms.")
 		}
 	}
 	if cfg.Agents.SubAgentDefaults.MaxToolIterations < 0 {
@@ -1361,6 +1376,7 @@ func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
 		"model_provider":   "",
 		"model_name":       "",
 		"model_max_tokens": 0,
+		"model_timeout_ms": 0,
 		"model_override":   false,
 	}
 	agentsConfig := map[string]any{}
@@ -1389,6 +1405,10 @@ func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
 			}
 			if profile.Model.MaxTokens > 0 {
 				profileContext["model_max_tokens"] = profile.Model.MaxTokens
+				profileContext["model_override"] = true
+			}
+			if profile.Model.TimeoutMS > 0 {
+				profileContext["model_timeout_ms"] = profile.Model.TimeoutMS
 				profileContext["model_override"] = true
 			}
 		}

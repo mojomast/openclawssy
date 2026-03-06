@@ -600,6 +600,7 @@ func TestServer_AuthAllowsOnlyDashboardGetHeadPathsWithoutToken(t *testing.T) {
 		BearerToken: "secret",
 		Store:       NewInMemoryRunStore(),
 		RegisterMux: func(mux *http.ServeMux) {
+			mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 			mux.HandleFunc("/dashboard", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 			mux.HandleFunc("/dashboard-legacy", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 			mux.HandleFunc("/dashboard/static/app.js", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -612,6 +613,8 @@ func TestServer_AuthAllowsOnlyDashboardGetHeadPathsWithoutToken(t *testing.T) {
 		path   string
 		want   int
 	}{
+		{name: "favicon get allowed", method: http.MethodGet, path: "/favicon.ico", want: http.StatusNoContent},
+		{name: "favicon head allowed", method: http.MethodHead, path: "/favicon.ico", want: http.StatusNoContent},
 		{name: "dashboard get allowed", method: http.MethodGet, path: "/dashboard", want: http.StatusOK},
 		{name: "dashboard head allowed", method: http.MethodHead, path: "/dashboard", want: http.StatusOK},
 		{name: "dashboard legacy get allowed", method: http.MethodGet, path: "/dashboard-legacy", want: http.StatusOK},

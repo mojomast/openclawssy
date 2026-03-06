@@ -15,6 +15,7 @@ const CHAT_LAYOUT_STORAGE_KEY = "dashboard.chat_layout.p1";
 const CHAT_ACTIVITY_WIDTH_MIN = 260;
 const CHAT_ACTIVITY_WIDTH_MAX = 720;
 const CHAT_ACTIVITY_WIDTH_DEFAULT = 368;
+const RESUME_INTERRUPTED_RUN_MESSAGE = "Resume your previous response from the exact interruption point. Continue from the cutoff without repeating already-completed text unless needed for coherence.";
 
 const chatViewState = {
   draft: "",
@@ -33,6 +34,7 @@ const chatViewState = {
 
   latestToolActivity: null,
   streamToolEvents: [],
+  resumableInterruption: null,
   lastErrorSummary: "",
   expandedToolEntries: {},
   expandedErrorEntries: {},
@@ -478,6 +480,76 @@ function retryLastPrompt() {
   chatViewState.debugCopyStatus = "";
   void sendMessage();
 }
+
+function messageSupportsContinue(value) {
+  const text = safeText(value).toLowerCase();
+  if (!text) {
+    return false;
+  }
+  return text.includes("send `continue`") || text.includes("resume from the cutoff point");
+}
+
+function buildResumableInterruption(message, meta = {}) {
+  const summary = safeText(message);
+  if (!messageSupportsContinue(summary)) {
+    return null;
+  }
+  return {
+    runID: safeText(meta.runID) || safeText(chatViewState.currentRunID),
+    sessionID: safeText(meta.sessionID) || safeText(chatViewState.currentSessionID),
+    updatedAt: safeText(meta.updatedAt) || safeText(chatViewState.currentRunLastUpdatedAt) || new Date().toISOString(),
+    source: safeText(meta.source) || "assistant_output",
+    message: summary,
+  };
+}
+
+function clearResumableInterruption(runID = "") {
+  const current = chatViewState.resumableInterruption;
+  if (!current) {
+    return;
+  }
+  const targetRunID = safeText(runID);
+  if (targetRunID && safeText(current.runID) && safeText(current.runID) !== targetRunID) {
+    return;
+  }
+  chatViewState.resumableInterruption = null;
+}
+
+function syncResumableInterruptionFromMessage(message, meta = {}) {
+  const resumable = buildResumableInterruption(message, meta);
+  if (resumable) {
+    chatViewState.resumableInterruption = resumable;
+    return true;
+  }
+  clearResumableInterruption(meta.runID);
+  return false;
+}
+
+function currentResumableInterruption() {
+  return chatViewState.resumableInterruption && typeof chatViewState.resumableInterruption === "object"
+    ? chatViewState.resumableInterruption
+    : null;
+}
+
+function shouldOfferContinueAction() {
+  if (!currentResumableInterruption()) {
+    return false;
+  }
+  const status = safeText(chatViewState.currentRunStatus).toLowerCase();
+  if (!status || status === "idle" || status === "paused") {
+    return true;
+  }
+  return isTerminalStatus(status);
+}
+
+function sendContinuationPrompt() {
+  if (chatViewState.sendPending || !shouldOfferContinueAction()) {
+    return;
+  }
+  chatViewState.debugCopyStatus = "";
+  void sendMessage(RESUME_INTERRUPTED_RUN_MESSAGE, { preserveDraft: true, resumeInterruptedRun: true });
+}
+
 function transcriptFingerprint() {
   return chatViewState.transcript
     .map((item) => `${item?.role}:${item?.pending ? "p" : "d"}:${(item?.content || "").length}`)
@@ -583,6 +655,7 @@ async function refreshAvailableAgents() {
 function resetViewForAgentSwitch() {
   stopPolling();
   clearIdleSessionTimer();
+  resetStreamingState({ resetLastEventID: true });
   chatViewState.currentRunID = "";
   chatViewState.currentRunStatus = "idle";
   chatViewState.currentRunStartedAtMs = 0;
@@ -590,6 +663,8 @@ function resetViewForAgentSwitch() {
   chatViewState.currentRunLastOutput = "";
   chatViewState.currentSessionID = "";
   chatViewState.latestToolActivity = null;
+  chatViewState.streamToolEvents = [];
+  chatViewState.resumableInterruption = null;
   chatViewState.lastErrorSummary = "";
   chatViewState.expandedToolEntries = {};
   chatViewState.expandedErrorEntries = {};
@@ -1302,6 +1377,12 @@ function handleRunStreamCompleted(eventEnvelope) {
   const message =
     chatViewState.currentRunLastOutput ||
     "Run completed without assistant output. Open trace or tool activity for details.";
+  syncResumableInterruptionFromMessage(message, {
+    runID: chatViewState.currentRunID,
+    sessionID: chatViewState.currentSessionID,
+    updatedAt: chatViewState.currentRunLastUpdatedAt,
+    source: "stream.completed",
+  });
   replacePendingAssistant(message);
   chatViewState.currentStreamingText = "";
   stopPolling();
@@ -1315,6 +1396,12 @@ function handleRunStreamCanceled(eventEnvelope) {
   const message = firstNonEmpty(payload.error, payload.message, "Run canceled.");
   chatViewState.currentRunStatus = "canceled";
   chatViewState.currentRunLastUpdatedAt = safeText(eventEnvelope?.ts) || new Date().toISOString();
+  syncResumableInterruptionFromMessage(message, {
+    runID: chatViewState.currentRunID,
+    sessionID: chatViewState.currentSessionID,
+    updatedAt: chatViewState.currentRunLastUpdatedAt,
+    source: "stream.canceled",
+  });
   replacePendingAssistant(message);
   chatViewState.currentStreamingText = "";
   stopPolling();
@@ -1328,6 +1415,12 @@ function handleRunStreamFailed(eventEnvelope) {
   const message = firstNonEmpty(payload.error, eventEnvelope?.error, "Run failed.");
   chatViewState.currentRunStatus = "failed";
   chatViewState.currentRunLastUpdatedAt = safeText(eventEnvelope?.ts) || new Date().toISOString();
+  syncResumableInterruptionFromMessage(message, {
+    runID: chatViewState.currentRunID,
+    sessionID: chatViewState.currentSessionID,
+    updatedAt: chatViewState.currentRunLastUpdatedAt,
+    source: "stream.failed",
+  });
   replacePendingAssistant(`Error: ${message}`);
   chatViewState.lastErrorSummary = compactText(message, 280);
   updateLastError(
@@ -1610,14 +1703,38 @@ async function pollRunOnce(token) {
 
     if (isTerminalStatus(status)) {
       if (status === "completed") {
-        replacePendingAssistant(
-          safeText(run?.output) || "Run completed without assistant output. Open trace or tool activity for details."
-        );
+        const message = safeText(run?.output) || "Run completed without assistant output. Open trace or tool activity for details.";
+        syncResumableInterruptionFromMessage(message, {
+          runID,
+          sessionID: discoveredSessionID || chatViewState.currentSessionID,
+          updatedAt: chatViewState.currentRunLastUpdatedAt,
+          source: "poll.completed",
+        });
+        replacePendingAssistant(message);
+        if (!safeText(run?.error)) {
+          chatViewState.lastErrorSummary = "";
+          const lastError = chatViewState.store?.getState?.().lastError;
+          if (!safeText(lastError?.run_id) || safeText(lastError?.run_id) === runID) {
+            updateLastError(chatViewState.store, null);
+          }
+        }
       } else if (status === "failed") {
         const message = safeText(run?.error) || "Run failed.";
+        syncResumableInterruptionFromMessage(message, {
+          runID,
+          sessionID: discoveredSessionID || chatViewState.currentSessionID,
+          updatedAt: chatViewState.currentRunLastUpdatedAt,
+          source: "poll.failed",
+        });
         replacePendingAssistant(`Error: ${message}`);
         chatViewState.lastErrorSummary = compactText(message, 280);
       } else if (status === "canceled") {
+        syncResumableInterruptionFromMessage("Run canceled.", {
+          runID,
+          sessionID: discoveredSessionID || chatViewState.currentSessionID,
+          updatedAt: chatViewState.currentRunLastUpdatedAt,
+          source: "poll.canceled",
+        });
         replacePendingAssistant("Run canceled.");
       }
       stopPolling();
@@ -1669,10 +1786,14 @@ function applySessionMessagesPayload(payload) {
   chatViewState.latestToolActivity = latest;
   chatViewState.loopRisk = buildLoopRisk(mergedToolEvents);
 
-  const latestFailed = mergedToolEvents
+  const failedEvents = mergedToolEvents
     .slice()
     .reverse()
-    .find((event) => event.status === "failed" && safeText(event.errorText));
+    .filter((event) => event.status === "failed" && safeText(event.errorText));
+  const currentRunID = safeText(chatViewState.currentRunID);
+  const latestFailed = currentRunID
+    ? failedEvents.find((event) => safeText(event.runID) === currentRunID) || null
+    : failedEvents[0] || null;
   if (latestFailed) {
     chatViewState.lastErrorSummary = compactText(latestFailed.errorText, 280);
     updateLastError(
@@ -1687,6 +1808,30 @@ function applySessionMessagesPayload(payload) {
         }
       )
     );
+  } else if (currentRunID && safeText(chatViewState.currentRunStatus) !== "failed") {
+    chatViewState.lastErrorSummary = "";
+    const lastError = chatViewState.store?.getState?.().lastError;
+    if (safeText(lastError?.run_id) && safeText(lastError?.run_id) !== currentRunID) {
+      updateLastError(chatViewState.store, null);
+    }
+  }
+
+  const status = safeText(chatViewState.currentRunStatus).toLowerCase();
+  if (!status || status === "idle" || status === "paused" || isTerminalStatus(status)) {
+    const latestAssistant = chatViewState.transcript
+      .slice()
+      .reverse()
+      .find((item) => item?.role === "assistant");
+    if (latestAssistant) {
+      syncResumableInterruptionFromMessage(latestAssistant.content, {
+        runID: currentRunID,
+        sessionID: safeText(payload?.session_id) || chatViewState.currentSessionID,
+        updatedAt: chatViewState.currentRunLastUpdatedAt,
+        source: "session.transcript",
+      });
+    } else {
+      clearResumableInterruption(currentRunID);
+    }
   }
 }
 
@@ -1725,13 +1870,18 @@ async function pollSessionMessagesOnce(token) {
   scheduleSessionPoll(token, false);
 }
 
-async function sendMessage() {
+async function sendMessage(explicitMessage = "", options = {}) {
   if (chatViewState.sendPending) {
     return;
   }
-  const message = safeText(chatViewState.draft);
+  const directMessage = safeText(explicitMessage);
+  const message = directMessage || safeText(chatViewState.draft);
   if (!message) {
     return;
+  }
+  const preserveDraft = Boolean(options?.preserveDraft && directMessage);
+  if (!options?.resumeInterruptedRun) {
+    clearResumableInterruption();
   }
 
   chatViewState.sendPending = true;
@@ -1739,7 +1889,9 @@ async function sendMessage() {
   chatViewState.sendError = null;
   chatViewState.debugCopyStatus = "";
   pushUserAndPendingAssistant(message);
-  chatViewState.draft = "";
+  if (!preserveDraft) {
+    chatViewState.draft = "";
+  }
   rerenderIfActive();
 
   try {
@@ -1902,6 +2054,8 @@ function renderChatPage() {
 
   const composerActions = document.createElement("div");
   composerActions.className = "chat-composer-actions";
+  const continueAvailable = shouldOfferContinueAction();
+  const resumable = currentResumableInterruption();
   const defaultsMeta = document.createElement("span");
   defaultsMeta.className = "muted";
   defaultsMeta.textContent = `Context: ${CHAT_DEFAULTS.userID} / ${CHAT_DEFAULTS.roomID} / ${safeText(chatViewState.selectedAgentID) || CHAT_DEFAULTS.agentID}`;
@@ -1954,12 +2108,21 @@ function renderChatPage() {
     retryLastPrompt();
   });
 
+  const continueButton = document.createElement("button");
+  continueButton.type = "button";
+  continueButton.className = "layout-toggle";
+  continueButton.textContent = "Resume interrupted run";
+  continueButton.disabled = chatViewState.sendPending || !continueAvailable;
+  continueButton.addEventListener("click", () => {
+    sendContinuationPrompt();
+  });
+
   const sendButton = document.createElement("button");
   sendButton.type = "submit";
   sendButton.className = "chat-send-button";
   sendButton.textContent = chatViewState.sendPending ? "Sending..." : "Send";
   sendButton.disabled = chatViewState.sendPending;
-  composerActions.append(defaultsMeta, agentPicker, refreshAgentsButton, stopPollingButton, retryButton, sendButton);
+  composerActions.append(defaultsMeta, agentPicker, refreshAgentsButton, stopPollingButton, retryButton, continueButton, sendButton);
 
   if (chatViewState.sendError) {
     const sendError = document.createElement("p");
@@ -2021,8 +2184,9 @@ function renderChatPage() {
   const provider = safeText(profileContext.model_provider);
   const name = safeText(profileContext.model_name);
   const maxTokens = Number(profileContext.model_max_tokens) || 0;
-  if (provider || name || maxTokens > 0) {
-    modelInfo.textContent = `Model override: ${provider || "(provider unset)"} / ${name || "(name unset)"}${maxTokens > 0 ? ` · max_tokens ${maxTokens}` : ""}`;
+  const timeoutMS = Number(profileContext.model_timeout_ms) || 0;
+  if (provider || name || maxTokens > 0 || timeoutMS > 0) {
+    modelInfo.textContent = `Model override: ${provider || "(provider unset)"} / ${name || "(name unset)"}${maxTokens > 0 ? ` · max_tokens ${maxTokens}` : ""}${timeoutMS > 0 ? ` · timeout ${timeoutMS}ms` : ""}`;
   } else {
     modelInfo.textContent = "Model override: none (uses global model).";
   }
@@ -2106,6 +2270,24 @@ function renderChatPage() {
   errorBody.className = chatViewState.lastErrorSummary ? "" : "muted";
   errorBody.textContent = chatViewState.lastErrorSummary || "No recent errors.";
   errorCard.append(errorTitle, errorBody);
+  if (continueAvailable) {
+    const continueHint = document.createElement("p");
+    continueHint.className = "muted";
+    const resumeMeta = resumable?.runID ? `Run ${resumable.runID}` : "The latest assistant output";
+    continueHint.textContent = `${resumeMeta} can resume from the cutoff point without retyping a prompt.`;
+    const continueActions = document.createElement("div");
+    continueActions.className = "chat-composer-actions";
+    const continueFromError = document.createElement("button");
+    continueFromError.type = "button";
+    continueFromError.className = "layout-toggle";
+    continueFromError.textContent = "Resume interrupted run";
+    continueFromError.disabled = chatViewState.sendPending;
+    continueFromError.addEventListener("click", () => {
+      sendContinuationPrompt();
+    });
+    continueActions.append(continueFromError);
+    errorCard.append(continueHint, continueActions);
+  }
 
   const subagentCard = document.createElement("section");
   subagentCard.className = "chat-activity-card";

@@ -1152,7 +1152,9 @@ func runtimeContextDoc(workspaceDir string) string {
 		"Common shell tools include python3, node, git, curl/wget, jq, dig/nslookup, ip/ss/netstat, and similar diagnostics. If a capability is missing, report the exact error and continue with the best available command.",
 		"Paths outside workspace (for example /home, ~, ..) are blocked by policy even when using shell.exec.",
 		"The home directory may exist in the runtime environment, but treat it as read-only context unless a workspace tool explicitly exposes a safe path there.",
-		"Prompt files like SOUL.md/RULES.md/TOOLS.md/SPECPLAN.md/DEVPLAN.md/HANDOFF.md are control-plane inputs; do not mention HANDOFF or internal prompt filenames unless the user explicitly asks about them.",
+		"Prompt files like SOUL.md/RULES.md/TOOLS.md/SPECPLAN.md/DEVPLAN.md/HANDOFF.md are control-plane inputs; read them with agent.prompt.read and update them with agent.prompt.update only when self-improvement allows it.",
+		"Do not use fs.read/fs.write against guessed workspace HANDOFF.md paths; when prompt updates are unavailable, keep checkpoints in workspace notes, memory, or decision.log instead.",
+		"Do not mention HANDOFF or internal prompt filenames unless the user explicitly asks about them.",
 	}
 	return formatPromptBulletDoc("RUNTIME_CONTEXT", bullets)
 }
@@ -1169,6 +1171,8 @@ func toolCallingBestPracticesDoc() string {
 		"Use fs.append for additive edits, fs.delete for intentional removals, and fs.move for renames or moves.",
 		"Use config.get/config.set for safe runtime knobs and secrets.set/secrets.list for secret storage and presence checks; never echo secret values.",
 		"Use scheduler.add/list/remove/pause/resume for job lifecycle and session.list/session.close for chat lifecycle.",
+		"Use agent.prompt.read for SOUL.md/RULES.md/TOOLS.md/SPECPLAN.md/DEVPLAN.md/HANDOFF.md, and use agent.prompt.update for them only when self-improvement is enabled.",
+		"Do not use fs.read/fs.write against guessed HANDOFF.md workspace paths; if prompt updates are unavailable, save checkpoints in workspace notes, memory.write, or decision.log instead.",
 		"Use run.list to enumerate runs with filtering (agent_id, status) and pagination; use run.get for details before proposing operational changes.",
 		"Do not invent tool names or arguments. If a capability is unavailable, say so plainly and continue with the best available path.",
 		"When the task requires tools, chain tool calls until the task is complete or you are truly blocked; do not stop after a single successful read if more execution is clearly needed.",
@@ -1190,6 +1194,8 @@ func toolCallingBestPracticesDocWithAgentTools() string {
 		"Use skill.list/skill.read, scheduler.add/scheduler.resume with scheduler.list/scheduler.remove/scheduler.pause, and session.list/session.close for built-in workflow state.",
 		"Use agent.list/agent.switch/agent.create for routing and scaffolding, agent.profile.get/agent.profile.set for per-agent controls, agent.message.send/agent.message.inbox for coordination, and agent.run for direct subagent execution. Give iterative agent.run calls descriptive task_id values so Agent Monitor can distinguish phases.",
 		"Use agent.prompt.read/agent.prompt.suggest for prompt governance; use agent.prompt.update only when self-improvement controls allow it.",
+		"Use agent.prompt.read for SOUL.md/RULES.md/TOOLS.md/SPECPLAN.md/DEVPLAN.md/HANDOFF.md, and do not use fs.read/fs.write against guessed HANDOFF.md workspace paths.",
+		"If prompt updates are unavailable, save checkpoints and prompt patch notes in workspace notes, memory.write, or decision.log instead of trying to write HANDOFF.md directly.",
 		"Use agent.identity.set to bootstrap SOUL identity fields when SOUL.md is empty; provide assistant_name and user_name.",
 		"Use policy.list/policy.grant/policy.revoke for capability governance, run.list/run.get/run.cancel for run control, metrics.get for run-level trends, and http.request for network reads when allowed.",
 		"Never emit pseudo-XML tool syntax (for example `<tool_call>...` or `<arg_value>`); runtime executes only valid JSON tool-call objects.",
@@ -1745,6 +1751,9 @@ func resolveAgentModelConfig(cfg config.Config, agentID string) config.ModelConf
 	}
 	if override.MaxTokens > 0 {
 		selected.MaxTokens = override.MaxTokens
+	}
+	if override.TimeoutMS > 0 {
+		selected.TimeoutMS = override.TimeoutMS
 	}
 	return selected
 }

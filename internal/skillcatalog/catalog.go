@@ -40,7 +40,7 @@ Use this skill when an OpenClawssy mission keeps stalling on harness friction: a
 
 1. Load evidence first with run.list, run.get, metrics.get, agent.prompt.read, and skill.read.
 2. State one failure hypothesis in a single sentence.
-3. Save a checkpoint before risky work using HANDOFF.md, a workspace note, decision.log, or memory.write.
+3. Save a checkpoint before risky work using HANDOFF.md via agent.prompt.update when allowed, or use a workspace note, decision.log, or memory.write.
 4. Prefer a bounded self-run before spawning new agents.
 5. Apply the smallest fix that directly addresses the current failure.
 6. Verify with the narrowest relevant check.
@@ -76,7 +76,7 @@ At the end of each phase, save:
 - the resume point after timeout
 
 Good checkpoint targets:
-- HANDOFF.md for agent-level state
+- HANDOFF.md via agent.prompt.update for agent-level state when self-improvement is enabled
 - workspace/clawdefuckifier/<topic>/phase-<n>.md for detailed mission state
 - memory.write or decision.log for durable summaries
 
@@ -87,7 +87,7 @@ When the agent id starts with clawdefuckifier, the runtime also writes automatic
 - Use agent.prompt.read on SOUL.md, RULES.md, and TOOLS.md.
 - Use agent.prompt.suggest with focus terms like timeouts, retries, quota awareness, checkpointing, or tool recovery.
 - Use agent.prompt.update only if self-improvement is enabled for the current agent.
-- If prompt updates are not allowed, write the proposed patch into HANDOFF.md and continue operational fixes.
+- If prompt updates are not allowed, write the proposed patch into a workspace note, decision.log, or memory entry and continue operational fixes.
 
 ## Research And Tome Pattern
 

@@ -29,6 +29,7 @@ type ProviderModel struct {
 	apiKey            string
 	headers           map[string]string
 	httpClient        *http.Client
+	providerTimeout   time.Duration
 	responseMaxTokens int
 	contextWindow     int
 }
@@ -59,6 +60,74 @@ type providerStreamingToolCallDelta struct {
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"`
 	} `json:"function"`
+}
+
+type providerResponseContentPart struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type providerResponseOutputItem struct {
+	ID        string                        `json:"id"`
+	CallID    string                        `json:"call_id"`
+	Type      string                        `json:"type"`
+	Text      string                        `json:"text"`
+	Name      string                        `json:"name"`
+	Arguments string                        `json:"arguments"`
+	Content   []providerResponseContentPart `json:"content"`
+}
+
+type providerResponseUsage struct {
+	PromptTokens       int `json:"prompt_tokens"`
+	CompletionTokens   int `json:"completion_tokens"`
+	TotalTokens        int `json:"total_tokens"`
+	InputTokens        int `json:"input_tokens"`
+	OutputTokens       int `json:"output_tokens"`
+	PromptTokensDetail struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+	InputTokensDetail struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"input_tokens_details"`
+}
+
+type providerResponseBody struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+	Choices []struct {
+		Text    string `json:"text"`
+		Message struct {
+			Content   string             `json:"content"`
+			ToolCalls []providerToolCall `json:"tool_calls"`
+		} `json:"message"`
+	} `json:"choices"`
+	OutputText string                       `json:"output_text"`
+	Output     []providerResponseOutputItem `json:"output"`
+	Usage      providerResponseUsage        `json:"usage"`
+	Error      any                          `json:"error"`
+}
+
+type providerStreamingEnvelope struct {
+	Type     string                      `json:"type"`
+	Delta    string                      `json:"delta"`
+	Text     string                      `json:"text"`
+	Message  string                      `json:"message"`
+	ItemID   string                      `json:"item_id"`
+	Part     providerResponseContentPart `json:"part"`
+	Item     providerResponseOutputItem  `json:"item"`
+	Response providerResponseBody        `json:"response"`
+	Choices  []struct {
+		Text  string `json:"text"`
+		Delta struct {
+			Content   string                           `json:"content"`
+			ToolCalls []providerStreamingToolCallDelta `json:"tool_calls"`
+		} `json:"delta"`
+		Message struct {
+			Content   string             `json:"content"`
+			ToolCalls []providerToolCall `json:"tool_calls"`
+		} `json:"message"`
+	} `json:"choices"`
+	Usage providerResponseUsage `json:"usage"`
 }
 
 const (
@@ -160,6 +229,7 @@ func NewProviderModelForConfig(cfg config.Config, modelCfg config.ModelConfig, l
 	if responseMaxTokens <= 0 || responseMaxTokens > maxResponseTokens {
 		responseMaxTokens = maxResponseTokens
 	}
+	providerTimeout := providerTimeoutForConfig(modelCfg)
 
 	return &ProviderModel{
 		providerName:      pName,
@@ -167,10 +237,18 @@ func NewProviderModelForConfig(cfg config.Config, modelCfg config.ModelConfig, l
 		baseURL:           base,
 		apiKey:            apiKey,
 		headers:           headers,
-		httpClient:        &http.Client{Timeout: defaultProviderTimeout},
+		httpClient:        &http.Client{Timeout: providerTimeout},
+		providerTimeout:   providerTimeout,
 		responseMaxTokens: responseMaxTokens,
 		contextWindow:     contextWindowForModel(pName, modelCfg.Name),
 	}, nil
+}
+
+func providerTimeoutForConfig(modelCfg config.ModelConfig) time.Duration {
+	if modelCfg.TimeoutMS > 0 {
+		return time.Duration(modelCfg.TimeoutMS) * time.Millisecond
+	}
+	return defaultProviderTimeout
 }
 
 func ListProviderModels(ctx context.Context, cfg config.Config, provider string, lookup SecretLookup) ([]string, error) {
@@ -305,16 +383,7 @@ func (m *ProviderModel) Generate(ctx context.Context, req agent.ModelRequest) (a
 
 	content := ""
 	if req.OnTextDelta == nil {
-		var payload struct {
-			Choices []struct {
-				Message struct {
-					Content   string             `json:"content"`
-					ToolCalls []providerToolCall `json:"tool_calls"`
-				} `json:"message"`
-			} `json:"choices"`
-			Usage completionUsage `json:"usage"`
-			Error any             `json:"error"`
-		}
+		var payload providerResponseBody
 		statusCode, err := m.doChatCompletionWithRetry(ctx, raw, &payload)
 		if err != nil {
 			return agent.ModelResponse{}, err
@@ -323,12 +392,15 @@ func (m *ProviderModel) Generate(ctx context.Context, req agent.ModelRequest) (a
 			return agent.ModelResponse{}, fmt.Errorf("provider %s request failed: status=%d error=%v", m.providerName, statusCode, payload.Error)
 		}
 		if trace := runTraceCollectorFromContext(ctx); trace != nil {
-			trace.RecordModelUsage(payload.Usage.PromptTokens, payload.Usage.PromptTokensDetail.CachedTokens, payload.Usage.CompletionTokens, payload.Usage.TotalTokens)
+			usage, ok := normalizeProviderUsage(payload.Usage)
+			if ok {
+				trace.RecordModelUsage(usage.PromptTokens, usage.PromptTokensDetail.CachedTokens, usage.CompletionTokens, usage.TotalTokens)
+			}
 		}
-		if len(payload.Choices) == 0 {
+		choiceMessage, ok := extractProviderResponseBody(payload)
+		if !ok {
 			return agent.ModelResponse{}, errors.New("provider returned no choices")
 		}
-		choiceMessage := payload.Choices[0].Message
 		if len(choiceMessage.ToolCalls) > 0 {
 			toolCalls, parseFailure, parseFailureReason := parseNativeProviderToolCalls(choiceMessage.ToolCalls, req.AllowedTools)
 			if len(toolCalls) > 0 {
@@ -405,13 +477,17 @@ func (m *ProviderModel) Generate(ctx context.Context, req agent.ModelRequest) (a
 }
 
 func (m *ProviderModel) doChatCompletionWithRetry(ctx context.Context, raw []byte, payload any) (int, error) {
+	providerTimeout := m.providerTimeout
+	if providerTimeout <= 0 {
+		providerTimeout = defaultProviderTimeout
+	}
 	if m.httpClient == nil {
-		m.httpClient = &http.Client{Timeout: defaultProviderTimeout}
+		m.httpClient = &http.Client{Timeout: providerTimeout}
 	}
 
 	var lastErr error
 	for attempt := 1; attempt <= providerMaxAttempts; attempt++ {
-		attemptCtx, cancel := ensureProviderRequestTimeout(ctx, defaultProviderTimeout)
+		attemptCtx, cancel := ensureProviderRequestTimeout(ctx, providerTimeout)
 		statusCode, err := m.doChatCompletionOnce(attemptCtx, raw, payload)
 		cancel()
 		if err == nil {
@@ -452,14 +528,18 @@ type streamingChatCompletionResult struct {
 }
 
 func (m *ProviderModel) doStreamingChatCompletionWithRetry(ctx context.Context, raw []byte, onDelta func(string) error) (streamingChatCompletionResult, error) {
+	providerTimeout := m.providerTimeout
+	if providerTimeout <= 0 {
+		providerTimeout = defaultProviderTimeout
+	}
 	if m.httpClient == nil {
-		m.httpClient = &http.Client{Timeout: defaultProviderTimeout}
+		m.httpClient = &http.Client{Timeout: providerTimeout}
 	}
 
 	var lastResult streamingChatCompletionResult
 	var lastErr error
 	for attempt := 1; attempt <= providerMaxAttempts; attempt++ {
-		attemptCtx, cancel := ensureProviderRequestTimeout(ctx, defaultProviderTimeout)
+		attemptCtx, cancel := ensureProviderRequestTimeout(ctx, providerTimeout)
 		result, err := m.doStreamingChatCompletionOnce(attemptCtx, raw, onDelta)
 		cancel()
 		if err == nil {
@@ -494,6 +574,7 @@ func (m *ProviderModel) doStreamingChatCompletionWithRetry(ctx context.Context, 
 }
 
 func (m *ProviderModel) doStreamingChatCompletionOnce(ctx context.Context, raw []byte, onDelta func(string) error) (streamingChatCompletionResult, error) {
+	startedAt := time.Now()
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, m.baseURL+"/chat/completions", bytes.NewReader(raw))
 	if err != nil {
 		return streamingChatCompletionResult{}, err
@@ -516,6 +597,9 @@ func (m *ProviderModel) doStreamingChatCompletionOnce(ctx context.Context, raw [
 		if readErr != nil {
 			return result, readErr
 		}
+		if trace := runTraceCollectorFromContext(ctx); trace != nil {
+			trace.RecordModelOutput(resp.StatusCode, string(body), true, time.Since(startedAt).Milliseconds())
+		}
 		result.Error = parseProviderErrorBody(body)
 		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
 			return result, fmt.Errorf("retryable provider status: %d", resp.StatusCode)
@@ -523,11 +607,15 @@ func (m *ProviderModel) doStreamingChatCompletionOnce(ctx context.Context, raw [
 		return result, nil
 	}
 
-	content, toolCalls, emitted, usage, err := consumeProviderSSE(resp.Body, onDelta)
+	var rawStream bytes.Buffer
+	content, toolCalls, emitted, usage, err := consumeProviderSSE(io.TeeReader(resp.Body, &rawStream), onDelta)
 	result.Content = content
 	result.ToolCalls = toolCalls
 	result.DeltaEmitted = emitted
 	result.Usage = usage
+	if trace := runTraceCollectorFromContext(ctx); trace != nil {
+		trace.RecordModelOutput(resp.StatusCode, rawStream.String(), true, time.Since(startedAt).Milliseconds())
+	}
 	if err != nil {
 		return result, err
 	}
@@ -540,6 +628,8 @@ func consumeProviderSSE(reader io.Reader, onDelta func(string) error) (string, [
 	emitted := false
 	latestUsage := completionUsage{}
 	var toolCalls []providerToolCall
+	fallbackContent := ""
+	var fallbackToolCalls []providerToolCall
 	toolCallByIndex := map[int]providerToolCall{}
 	toolCallOrder := make([]int, 0, 4)
 	toolCallIndexByID := map[string]int{}
@@ -563,6 +653,16 @@ func consumeProviderSSE(reader io.Reader, onDelta func(string) error) (string, [
 			return content.String(), toolCalls, emitted, latestUsage, err
 		} else if ok {
 			latestUsage = usage
+		}
+		if fallbackText, fallbackCalls, ok, err := extractStreamingFallbackResponse(trimmed); err != nil {
+			return content.String(), toolCalls, emitted, latestUsage, err
+		} else if ok {
+			if fallbackContent == "" && strings.TrimSpace(fallbackText) != "" {
+				fallbackContent = strings.TrimSpace(fallbackText)
+			}
+			if len(fallbackToolCalls) == 0 && len(fallbackCalls) > 0 {
+				fallbackToolCalls = append(fallbackToolCalls, fallbackCalls...)
+			}
 		}
 		if update, ok, err := extractStreamingToolCallUpdate(trimmed); err != nil {
 			return content.String(), toolCalls, emitted, latestUsage, err
@@ -652,6 +752,9 @@ func consumeProviderSSE(reader io.Reader, onDelta func(string) error) (string, [
 			}
 		}
 	}
+	if content.Len() == 0 && fallbackContent != "" {
+		content.WriteString(fallbackContent)
+	}
 	if len(toolCallOrder) > 0 {
 		toolCalls = make([]providerToolCall, 0, len(toolCallOrder))
 		for _, idx := range toolCallOrder {
@@ -661,6 +764,9 @@ func consumeProviderSSE(reader io.Reader, onDelta func(string) error) (string, [
 			}
 			toolCalls = append(toolCalls, call)
 		}
+	}
+	if len(toolCalls) == 0 && len(fallbackToolCalls) > 0 {
+		toolCalls = append(toolCalls, fallbackToolCalls...)
 	}
 	return content.String(), toolCalls, emitted, latestUsage, nil
 }
@@ -709,22 +815,132 @@ func extractStreamingToolCallUpdate(raw string) (struct {
 	}, hasToolCalls, nil
 }
 
+func normalizeProviderUsage(raw providerResponseUsage) (completionUsage, bool) {
+	usage := completionUsage{
+		PromptTokens:     raw.PromptTokens,
+		CompletionTokens: raw.CompletionTokens,
+		TotalTokens:      raw.TotalTokens,
+	}
+	if usage.PromptTokens <= 0 {
+		usage.PromptTokens = raw.InputTokens
+	}
+	if usage.CompletionTokens <= 0 {
+		usage.CompletionTokens = raw.OutputTokens
+	}
+	usage.PromptTokensDetail.CachedTokens = raw.PromptTokensDetail.CachedTokens
+	if usage.PromptTokensDetail.CachedTokens <= 0 {
+		usage.PromptTokensDetail.CachedTokens = raw.InputTokensDetail.CachedTokens
+	}
+	if usage.TotalTokens <= 0 && (usage.PromptTokens > 0 || usage.CompletionTokens > 0) {
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+	if usage.PromptTokens <= 0 && usage.PromptTokensDetail.CachedTokens <= 0 && usage.CompletionTokens <= 0 && usage.TotalTokens <= 0 {
+		return completionUsage{}, false
+	}
+	return usage, true
+}
+
+func extractProviderResponseBody(body providerResponseBody) (struct {
+	Content   string
+	ToolCalls []providerToolCall
+}, bool) {
+	if strings.EqualFold(strings.TrimSpace(body.Type), "content") && strings.TrimSpace(body.Message) != "" {
+		return struct {
+			Content   string
+			ToolCalls []providerToolCall
+		}{Content: strings.TrimSpace(body.Message)}, true
+	}
+	if len(body.Choices) > 0 {
+		choice := body.Choices[0]
+		content := strings.TrimSpace(choice.Message.Content)
+		if content == "" {
+			content = strings.TrimSpace(choice.Text)
+		}
+		return struct {
+			Content   string
+			ToolCalls []providerToolCall
+		}{Content: content, ToolCalls: choice.Message.ToolCalls}, true
+	}
+
+	content := strings.TrimSpace(body.OutputText)
+	toolCalls := make([]providerToolCall, 0, len(body.Output))
+	for _, item := range body.Output {
+		text, toolCall, ok := extractProviderResponseOutputItem(item)
+		if !ok {
+			continue
+		}
+		if content == "" && text != "" {
+			content = text
+		}
+		if toolCall != nil {
+			toolCalls = append(toolCalls, *toolCall)
+		}
+	}
+	if content == "" && len(toolCalls) == 0 && len(body.Output) == 0 {
+		return struct {
+			Content   string
+			ToolCalls []providerToolCall
+		}{}, false
+	}
+	return struct {
+		Content   string
+		ToolCalls []providerToolCall
+	}{Content: content, ToolCalls: toolCalls}, true
+}
+
+func extractProviderResponseOutputItem(item providerResponseOutputItem) (string, *providerToolCall, bool) {
+	itemType := strings.ToLower(strings.TrimSpace(item.Type))
+	switch itemType {
+	case "function_call":
+		callID := strings.TrimSpace(item.CallID)
+		if callID == "" {
+			callID = strings.TrimSpace(item.ID)
+		}
+		call := providerToolCall{ID: callID, Type: "function"}
+		call.Function.Name = strings.TrimSpace(item.Name)
+		call.Function.Arguments = item.Arguments
+		return "", &call, true
+	case "message":
+		parts := make([]string, 0, len(item.Content))
+		for _, part := range item.Content {
+			partType := strings.ToLower(strings.TrimSpace(part.Type))
+			if partType != "" && partType != "output_text" && partType != "text" {
+				continue
+			}
+			text := strings.TrimSpace(part.Text)
+			if text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, ""), nil, len(parts) > 0
+	case "output_text", "text":
+		text := strings.TrimSpace(item.Text)
+		if text == "" {
+			text = strings.TrimSpace(item.Arguments)
+		}
+		if text == "" {
+			text = strings.TrimSpace(item.Name)
+		}
+		return text, nil, text != ""
+	default:
+		return "", nil, false
+	}
+}
+
 func extractStreamingUsage(raw string) (completionUsage, bool, error) {
 	payload := strings.TrimSpace(raw)
 	if payload == "" {
 		return completionUsage{}, false, nil
 	}
-	var envelope struct {
-		Usage completionUsage `json:"usage"`
-	}
+	var envelope providerStreamingEnvelope
 	if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
 		return completionUsage{}, false, err
 	}
-	usage := envelope.Usage
-	if usage.PromptTokens <= 0 && usage.PromptTokensDetail.CachedTokens <= 0 && usage.CompletionTokens <= 0 && usage.TotalTokens <= 0 {
-		return completionUsage{}, false, nil
+	if usage, ok := normalizeProviderUsage(envelope.Usage); ok {
+		return usage, true, nil
 	}
-	return usage, true, nil
+	usage, ok := normalizeProviderUsage(envelope.Response.Usage)
+	return usage, ok, nil
 }
 
 func readNextSSEData(reader *bufio.Reader) (string, bool, error) {
@@ -751,6 +967,14 @@ func readNextSSEData(reader *bufio.Reader) (string, bool, error) {
 					value = value[1:]
 				}
 				dataLines = append(dataLines, value)
+			} else {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+					if len(dataLines) > 0 {
+						return strings.Join(dataLines, "\n"), false, nil
+					}
+					return trimmed, false, nil
+				}
 			}
 		}
 		if errors.Is(err, io.EOF) {
@@ -767,21 +991,17 @@ func extractStreamingDeltaText(raw string) (string, error) {
 	if payload == "" {
 		return "", nil
 	}
-	var envelope struct {
-		Choices []struct {
-			Delta struct {
-				Content string `json:"content"`
-			} `json:"delta"`
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-			Text string `json:"text"`
-		} `json:"choices"`
-	}
+	var envelope providerStreamingEnvelope
 	if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
 		return "", err
 	}
 	if len(envelope.Choices) == 0 {
+		if strings.EqualFold(strings.TrimSpace(envelope.Type), "content") {
+			return envelope.Message, nil
+		}
+		if strings.EqualFold(strings.TrimSpace(envelope.Type), "response.output_text.delta") {
+			return envelope.Delta, nil
+		}
 		return "", nil
 	}
 	choice := envelope.Choices[0]
@@ -795,6 +1015,39 @@ func extractStreamingDeltaText(raw string) (string, error) {
 		return choice.Message.Content, nil
 	}
 	return "", nil
+}
+
+func extractStreamingFallbackResponse(raw string) (string, []providerToolCall, bool, error) {
+	payload := strings.TrimSpace(raw)
+	if payload == "" {
+		return "", nil, false, nil
+	}
+	var envelope providerStreamingEnvelope
+	if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
+		return "", nil, false, err
+	}
+	responseType := strings.ToLower(strings.TrimSpace(envelope.Type))
+	switch responseType {
+	case "response.completed":
+		parsed, ok := extractProviderResponseBody(envelope.Response)
+		return parsed.Content, parsed.ToolCalls, ok, nil
+	case "response.output_item.done":
+		text, toolCall, ok := extractProviderResponseOutputItem(envelope.Item)
+		if !ok {
+			return "", nil, false, nil
+		}
+		if toolCall != nil {
+			return "", []providerToolCall{*toolCall}, true, nil
+		}
+		return text, nil, true, nil
+	case "response.content_part.done":
+		partType := strings.ToLower(strings.TrimSpace(envelope.Part.Type))
+		if partType == "output_text" || partType == "text" {
+			text := envelope.Part.Text
+			return text, nil, text != "", nil
+		}
+	}
+	return "", nil, false, nil
 }
 
 func parseProviderErrorBody(body []byte) any {
@@ -812,6 +1065,7 @@ func parseProviderErrorBody(body []byte) any {
 }
 
 func (m *ProviderModel) doChatCompletionOnce(ctx context.Context, raw []byte, payload any) (int, error) {
+	startedAt := time.Now()
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, m.baseURL+"/chat/completions", bytes.NewReader(raw))
 	if err != nil {
 		return 0, err
@@ -830,6 +1084,11 @@ func (m *ProviderModel) doChatCompletionOnce(ctx context.Context, raw []byte, pa
 
 	if err := json.NewDecoder(resp.Body).Decode(payload); err != nil {
 		return 0, err
+	}
+	if trace := runTraceCollectorFromContext(ctx); trace != nil {
+		if rawPayload, err := json.Marshal(payload); err == nil {
+			trace.RecordModelOutput(resp.StatusCode, string(rawPayload), false, time.Since(startedAt).Milliseconds())
+		}
 	}
 	if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
 		return resp.StatusCode, fmt.Errorf("retryable provider status: %d", resp.StatusCode)
@@ -2258,6 +2517,11 @@ func resolveProviderAccess(endpoint config.ProviderEndpointConfig, provider stri
 	headers := map[string]string{}
 	for k, v := range endpoint.Headers {
 		headers[k] = v
+	}
+	if provider == "hatz" && apiKey != "" {
+		if _, ok := headers["X-API-Key"]; !ok {
+			headers["X-API-Key"] = apiKey
+		}
 	}
 	return baseURL, apiKey, headers, nil
 }

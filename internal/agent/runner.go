@@ -173,11 +173,24 @@ func recoverFromModelError(err error, toolResults []ToolCallResult, toolCap int)
 	if isProviderNoChoicesError(err) {
 		return recoverFromNoChoices(toolResults, toolCap)
 	}
+	if isTransientProviderModelError(err) {
+		return recoverFromTransientModelError(err, toolResults, toolCap)
+	}
 	msg := strings.TrimSpace("I hit a model/API error while processing the next step: " + strings.TrimSpace(err.Error()))
 	if len(toolResults) == 0 {
 		return msg
 	}
 	return msg + "\n\nLatest tool results before the model/API error:\n" + formatLatestToolResults(toolResults) + fmt.Sprintf("\n(Iteration cap: %d)", toolCap)
+}
+
+func recoverFromTransientModelError(err error, toolResults []ToolCallResult, toolCap int) string {
+	if len(toolResults) == 0 {
+		return recoverFromInterruptedStream(err)
+	}
+	if latestToolResultsAreEmptySearches(toolResults) {
+		return "The response stream was interrupted before I could finish, but the latest search attempts found no matching entries."
+	}
+	return recoverFromInterruptedStream(err) + "\n\nLatest tool results before the interruption:\n" + formatLatestToolResults(toolResults) + fmt.Sprintf("\n(Iteration cap: %d)", toolCap)
 }
 
 func recoverFromNoChoices(toolResults []ToolCallResult, toolCap int) string {

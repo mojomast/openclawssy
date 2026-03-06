@@ -131,6 +131,7 @@ type ModelConfig struct {
 	Name        string  `json:"name"`
 	Temperature float64 `json:"temperature,omitempty"`
 	MaxTokens   int     `json:"max_tokens,omitempty"`
+	TimeoutMS   int     `json:"timeout_ms,omitempty"`
 }
 
 type AgentProfile struct {
@@ -296,6 +297,7 @@ func Default() Config {
 			Name:        "GLM-4.7",
 			Temperature: 0.2,
 			MaxTokens:   20000,
+			TimeoutMS:   90 * 1000,
 		},
 		Providers: ProvidersConfig{
 			OpenAI: ProviderEndpointConfig{
@@ -457,6 +459,9 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.Model.MaxTokens == 0 {
 		c.Model.MaxTokens = d.Model.MaxTokens
+	}
+	if c.Model.TimeoutMS == 0 {
+		c.Model.TimeoutMS = d.Model.TimeoutMS
 	}
 	if c.Chat.DefaultAgentID == "" {
 		c.Chat.DefaultAgentID = d.Chat.DefaultAgentID
@@ -672,6 +677,9 @@ func (c Config) Validate() error {
 		if profile.Model.MaxTokens < 0 || profile.Model.MaxTokens > 20000 {
 			return fmt.Errorf("agents.profiles.%s.model.max_tokens must be between 0 and 20000", agentID)
 		}
+		if profile.Model.TimeoutMS < 0 || profile.Model.TimeoutMS > 600000 {
+			return fmt.Errorf("agents.profiles.%s.model.timeout_ms must be between 0 and 600000", agentID)
+		}
 	}
 
 	// Validate subagent restriction defaults
@@ -734,6 +742,9 @@ func (c Config) Validate() error {
 	}
 	if c.Model.MaxTokens < 1 || c.Model.MaxTokens > 20000 {
 		return errors.New("model.max_tokens must be between 1 and 20000")
+	}
+	if c.Model.TimeoutMS < 1000 || c.Model.TimeoutMS > 600000 {
+		return errors.New("model.timeout_ms must be between 1000 and 600000")
 	}
 	if c.Chat.RateLimitPerMin < 1 {
 		return errors.New("chat.rate_limit_per_min must be >= 1")

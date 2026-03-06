@@ -61,6 +61,9 @@ func TestDefaultConfigSetsMaxTokens(t *testing.T) {
 	if cfg.Model.MaxTokens != 20000 {
 		t.Fatalf("expected default model.max_tokens=20000, got %d", cfg.Model.MaxTokens)
 	}
+	if cfg.Model.TimeoutMS != 90*1000 {
+		t.Fatalf("expected default model.timeout_ms=90000, got %d", cfg.Model.TimeoutMS)
+	}
 }
 
 func TestDefaultConfigBindsServerToLoopback(t *testing.T) {
@@ -75,6 +78,20 @@ func TestValidateRejectsOutOfRangeMaxTokens(t *testing.T) {
 	cfg.Model.MaxTokens = 25000
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected validation error for max_tokens > 20000")
+	}
+}
+
+func TestValidateRejectsOutOfRangeModelTimeout(t *testing.T) {
+	cfg := Default()
+	cfg.Model.TimeoutMS = 999
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for model.timeout_ms below minimum")
+	}
+
+	cfg = Default()
+	cfg.Model.TimeoutMS = 600001
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for model.timeout_ms above maximum")
 	}
 }
 
@@ -93,6 +110,19 @@ func TestApplyDefaultsSetsThinkingModeNever(t *testing.T) {
 	}
 	if cfg.Output.MaxThinkingChars != 4000 {
 		t.Fatalf("expected max_thinking_chars default 4000, got %d", cfg.Output.MaxThinkingChars)
+	}
+	if cfg.Model.TimeoutMS != 90*1000 {
+		t.Fatalf("expected model.timeout_ms default 90000, got %d", cfg.Model.TimeoutMS)
+	}
+}
+
+func TestValidateRejectsOutOfRangeProfileModelTimeout(t *testing.T) {
+	cfg := Default()
+	cfg.Agents.Profiles = map[string]AgentProfile{
+		"alpha": {Model: ModelConfig{TimeoutMS: 700000}},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for profile model.timeout_ms above maximum")
 	}
 }
 
