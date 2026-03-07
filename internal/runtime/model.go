@@ -382,7 +382,7 @@ func (m *ProviderModel) Generate(ctx context.Context, req agent.ModelRequest) (a
 		"max_tokens": m.responseMaxTokens,
 	}
 	if len(req.ToolSchemas) > 0 {
-		body["tools"] = buildProviderTools(req.ToolSchemas)
+		body["tools"] = buildProviderTools(m.providerName, req.ToolSchemas)
 		body["tool_choice"] = "auto"
 	}
 	if req.OnTextDelta != nil {
@@ -2369,19 +2369,19 @@ func parseArgsString(argsStr string) map[string]any {
 	return args
 }
 
-func buildProviderTools(schemas []agent.ToolSchema) []map[string]any {
+func buildProviderTools(providerName string, schemas []agent.ToolSchema) []map[string]any {
 	if len(schemas) == 0 {
 		return nil
 	}
 	out := make([]map[string]any, 0, len(schemas))
 	for _, schema := range schemas {
-		name := strings.TrimSpace(schema.Name)
+		name := normalizeProviderToolSchemaName(providerName, schema.Name)
 		if name == "" {
 			continue
 		}
 		fn := map[string]any{
 			"name":       name,
-			"parameters": schema.Parameters,
+			"parameters": normalizeProviderToolParameters(schema.Parameters),
 		}
 		if desc := strings.TrimSpace(schema.Description); desc != "" {
 			fn["description"] = desc
@@ -2395,6 +2395,62 @@ func buildProviderTools(schemas []agent.ToolSchema) []map[string]any {
 		})
 	}
 	return out
+}
+
+func normalizeProviderToolSchemaName(providerName, name string) string {
+	clean := strings.TrimSpace(name)
+	if clean == "" {
+		return ""
+	}
+	if strings.EqualFold(strings.TrimSpace(providerName), "openai_compat") {
+		return strings.ReplaceAll(clean, ".", "__")
+	}
+	return clean
+}
+
+func normalizeProviderToolParameters(parameters map[string]any) map[string]any {
+	if len(parameters) == 0 {
+		return map[string]any{"type": "object", "properties": map[string]any{}, "required": []string{}}
+	}
+	clean := normalizeToolSchemaValue(parameters).(map[string]any)
+	if _, ok := clean["type"]; !ok {
+		clean["type"] = "object"
+	}
+	if _, ok := clean["properties"]; !ok || clean["properties"] == nil {
+		clean["properties"] = map[string]any{}
+	}
+	if _, ok := clean["required"]; !ok || clean["required"] == nil {
+		clean["required"] = []string{}
+	}
+	return clean
+}
+
+func normalizeToolSchemaValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, child := range typed {
+			if key == "required" && child == nil {
+				out[key] = []string{}
+				continue
+			}
+			out[key] = normalizeToolSchemaValue(child)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, child := range typed {
+			out[i] = normalizeToolSchemaValue(child)
+		}
+		return out
+	case []string:
+		if typed == nil {
+			return []string{}
+		}
+		return append([]string(nil), typed...)
+	default:
+		return value
+	}
 }
 
 func parseNativeProviderToolCalls(rawCalls []providerToolCall, allowed []string) ([]agent.ToolCallRequest, bool, string) {
@@ -2504,8 +2560,8 @@ func providerEndpoint(cfg config.Config, provider string) (config.ProviderEndpoi
 		return cfg.Providers.Hatz, nil
 	case "zai":
 		return cfg.Providers.ZAI, nil
-	case "generic":
-		return cfg.Providers.Generic, nil
+	case "openai_compat":
+		return cfg.Providers.OpenAICompat, nil
 	default:
 		return config.ProviderEndpointConfig{}, fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -2606,8 +2662,14 @@ func canonicalToolName(name string) (string, bool) {
 		return "", false
 	}
 	canonical, ok := toolNameAliases[key]
-	if !ok {
-		return "", false
+	if ok {
+		return canonical, true
 	}
-	return canonical, true
+	if strings.Contains(key, "__") {
+		decoded := strings.ReplaceAll(key, "__", ".")
+		if canonical, ok := toolNameAliases[decoded]; ok {
+			return canonical, true
+		}
+	}
+	return "", false
 }

@@ -282,6 +282,23 @@ func TestParseToolCallsCanonicalizesNetFetchAlias(t *testing.T) {
 	}
 }
 
+func TestParseToolCallsCanonicalizesOpenAICompatEncodedName(t *testing.T) {
+	text := "```json\n{\"tool_name\":\"fs__list\",\"arguments\":{\"path\":\".\"}}\n```"
+	calls, _ := ParseToolCalls(text, []string{"fs.list"})
+	if len(calls) != 1 {
+		t.Fatalf("expected one tool call, got %d", len(calls))
+	}
+	if calls[0].Name != "fs.list" {
+		t.Fatalf("expected canonical fs.list, got %q", calls[0].Name)
+	}
+}
+
+func TestCanonicalToolNameDecodesOpenAICompatStyle(t *testing.T) {
+	if canonical, ok := CanonicalToolName("agent__profile__get"); !ok || canonical != "agent.profile.get" {
+		t.Fatalf("expected encoded name to canonicalize, got ok=%v canonical=%q", ok, canonical)
+	}
+}
+
 func TestParseToolCallsCapsReturnedCallsAtSix(t *testing.T) {
 	var b strings.Builder
 	for i := 0; i < 8; i++ {

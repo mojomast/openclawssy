@@ -429,7 +429,7 @@ func TestAdminConfigEndpointRedactsSecrets(t *testing.T) {
 	configPath := filepath.Join(root, ".openclawssy", "config.json")
 	cfg := config.Default()
 	cfg.Providers.OpenAI.APIKey = "super-secret"
-	cfg.Providers.Generic.APIKey = "generic-secret"
+	cfg.Providers.OpenAICompat.APIKey = "generic-secret"
 	cfg.Discord.Token = "discord-secret"
 	if err := config.Save(configPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)
@@ -450,7 +450,7 @@ func TestAdminConfigEndpointRedactsSecrets(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode config response: %v", err)
 	}
-	if out.Providers.OpenAI.APIKey != "" || out.Providers.Generic.APIKey != "" || out.Discord.Token != "" {
+	if out.Providers.OpenAI.APIKey != "" || out.Providers.OpenAICompat.APIKey != "" || out.Discord.Token != "" {
 		t.Fatalf("expected sensitive values redacted, got %+v", out)
 	}
 }

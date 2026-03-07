@@ -1087,10 +1087,12 @@ func providerForDoctor(cfg config.Config) (config.ProviderEndpointConfig, error)
 		return cfg.Providers.OpenRouter, nil
 	case "requesty":
 		return cfg.Providers.Requesty, nil
+	case "hatz":
+		return cfg.Providers.Hatz, nil
 	case "zai":
 		return cfg.Providers.ZAI, nil
-	case "generic":
-		return cfg.Providers.Generic, nil
+	case "openai_compat":
+		return cfg.Providers.OpenAICompat, nil
 	default:
 		return config.ProviderEndpointConfig{}, errors.New("unsupported provider")
 	}

@@ -7,9 +7,72 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+PROVIDER_OVERRIDE="$(printf '%s' "${OPENCLAWSSY_MODEL_PROVIDER:-}" | tr '[:upper:]' '[:lower:]')"
+MODEL_OVERRIDE="$(printf '%s' "${OPENCLAWSSY_MODEL_NAME:-}")"
+OPENAI_COMPAT_BASE_OVERRIDE="$(printf '%s' "${OPENAI_COMPAT_BASE_URL:-}" | sed 's:/*$::')"
+
+default_model_for_provider() {
+    case "$1" in
+        openai_compat)
+            printf 'gpt-5.4'
+            ;;
+        *)
+            printf 'GLM-4.7'
+            ;;
+    esac
+}
+
+apply_provider_overrides() {
+    if [ -z "$PROVIDER_OVERRIDE" ] && [ -z "$MODEL_OVERRIDE" ] && [ -z "$OPENAI_COMPAT_BASE_OVERRIDE" ]; then
+        return
+    fi
+
+    config_file="/app/.openclawssy/config.json"
+    if [ ! -s "$config_file" ]; then
+        return
+    fi
+
+    current_provider="$(jq -r '.model.provider // "zai"' "$config_file")"
+    current_model="$(jq -r '.model.name // ""' "$config_file")"
+
+    target_provider="$current_provider"
+    target_model="$current_model"
+
+    if [ -n "$PROVIDER_OVERRIDE" ]; then
+        target_provider="$PROVIDER_OVERRIDE"
+    fi
+    if [ -n "$MODEL_OVERRIDE" ]; then
+        target_model="$MODEL_OVERRIDE"
+    fi
+    if [ -z "$target_model" ]; then
+        target_model="$(default_model_for_provider "$target_provider")"
+    fi
+
+    tmp_config="/app/.openclawssy/config.json.tmp.$$"
+    if [ "$target_provider" = "openai_compat" ]; then
+        target_base="$(jq -r '.providers.openai_compat.base_url // ""' "$config_file")"
+        if [ -n "$OPENAI_COMPAT_BASE_OVERRIDE" ]; then
+            target_base="$OPENAI_COMPAT_BASE_OVERRIDE"
+        fi
+        if [ -z "$target_base" ]; then
+            echo -e "${RED}ERROR: openai_compat provider requires providers.openai_compat.base_url (set OPENAI_COMPAT_BASE_URL)${NC}"
+            exit 1
+        fi
+        jq --arg provider "$target_provider" --arg model "$target_model" --arg base "$target_base" \
+            '.model.provider = $provider | .model.name = $model | .providers.openai_compat.base_url = $base' \
+            "$config_file" > "$tmp_config"
+    else
+        jq --arg provider "$target_provider" --arg model "$target_model" \
+            '.model.provider = $provider | .model.name = $model' \
+            "$config_file" > "$tmp_config"
+    fi
+    mv "$tmp_config" "$config_file"
+    echo -e "${GREEN}✓ Applied provider override: ${target_provider}/${target_model}${NC}"
+}
+
 echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║     Openclawssy - ZAI Setup            ║${NC}"
-echo -e "${GREEN}║     Powered by GLM-4.7 Coding Plan     ║${NC}"
+echo -e "${GREEN}║     Openclawssy - Docker Setup         ║${NC}"
+echo -e "${GREEN}║     OpenAI-compatible runtime          ║${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -32,27 +95,59 @@ if [ -f "/app/.openclawssy/config.json" ] && [ -s "/app/.openclawssy/config.json
 else
     echo -e "${YELLOW}⚠ First-time setup required${NC}"
     echo ""
-    
-    # Check if API key is provided via environment variable
-    if [ -z "$ZAI_API_KEY" ]; then
-        echo -e "${RED}ERROR: ZAI_API_KEY environment variable is required${NC}"
-        echo ""
-        echo "Please provide your Z.AI API key from https://z.ai/subscribe"
-        echo ""
-        echo "Usage examples:"
-        echo "  docker run -e ZAI_API_KEY=your-key-here ..."
-        echo "  docker-compose up (with ZAI_API_KEY in .env file)"
-        echo ""
+
+    BOOTSTRAP_PROVIDER="zai"
+    if [ -n "$PROVIDER_OVERRIDE" ]; then
+        BOOTSTRAP_PROVIDER="$PROVIDER_OVERRIDE"
+    fi
+
+    case "$BOOTSTRAP_PROVIDER" in
+        openai_compat)
+            if [ -z "$OPENAI_COMPAT_API_KEY" ]; then
+                echo -e "${RED}ERROR: OPENAI_COMPAT_API_KEY environment variable is required for openai_compat provider${NC}"
+                echo ""
+                echo "Usage examples:"
+                echo "  docker run -e OPENAI_COMPAT_API_KEY=your-key-here -e OPENAI_COMPAT_BASE_URL=https://api.example.com/v1 ..."
+                echo "  docker-compose up (with OPENAI_COMPAT_API_KEY and OPENAI_COMPAT_BASE_URL in .env file)"
+                echo ""
+                exit 1
+            fi
+            if [ -z "$OPENAI_COMPAT_BASE_OVERRIDE" ]; then
+                echo -e "${RED}ERROR: OPENAI_COMPAT_BASE_URL environment variable is required for openai_compat provider bootstrap${NC}"
+                echo ""
+                echo "Example: OPENAI_COMPAT_BASE_URL=https://api.example.com/v1"
+                echo ""
+                exit 1
+            fi
+            echo -e "${GREEN}✓ OPENAI_COMPAT_API_KEY found in environment${NC}"
+            ;;
+        zai)
+            if [ -z "$ZAI_API_KEY" ]; then
+                echo -e "${RED}ERROR: ZAI_API_KEY environment variable is required${NC}"
+                echo ""
+                echo "Please provide your Z.AI API key from https://z.ai/subscribe"
+                echo ""
+                echo "Usage examples:"
+                echo "  docker run -e ZAI_API_KEY=your-key-here ..."
+                echo "  docker-compose up (with ZAI_API_KEY in .env file)"
+                echo ""
+                exit 1
+            fi
+            echo -e "${GREEN}✓ ZAI_API_KEY found in environment${NC}"
+            ;;
+        *)
+            echo -e "${YELLOW}⚠ No bootstrap API key validation configured for provider '$BOOTSTRAP_PROVIDER'${NC}"
+            ;;
+    esac
+    echo ""
+
+    # Initialize the configuration
+    echo "Initializing Openclawssy configuration..."
+    if ! openclawssy init -agent default; then
+        echo -e "${RED}ERROR: failed to initialize /app/.openclawssy/config.json${NC}"
         exit 1
     fi
-    
-    echo -e "${GREEN}✓ ZAI_API_KEY found in environment${NC}"
-    echo ""
-    
-    # Initialize the configuration
-    echo "Initializing Openclawssy with ZAI provider..."
-    openclawssy init -agent default || true
-    
+
     # Store the API key in the secret store
     echo "Storing API key securely..."
     # Generate master key if needed
@@ -61,19 +156,38 @@ else
         openssl rand -hex 32 > /app/.openclawssy/master.key
         chmod 600 /app/.openclawssy/master.key
     fi
-    
+
     echo ""
     echo -e "${GREEN}✓ Setup complete!${NC}"
     echo ""
 fi
 
+apply_provider_overrides
+
+ACTIVE_PROVIDER="$(jq -r '.model.provider // "zai"' /app/.openclawssy/config.json 2>/dev/null || printf 'zai')"
+
 # Verify API key is available
-if [ -n "$ZAI_API_KEY" ]; then
-    echo -e "${GREEN}✓ Using ZAI API key from environment${NC}"
-else
-    echo -e "${YELLOW}⚠ ZAI_API_KEY not set in environment${NC}"
-    echo "Make sure it's stored in the secret store or the container will fail."
-fi
+case "$ACTIVE_PROVIDER" in
+    openai_compat)
+        if [ -n "$OPENAI_COMPAT_API_KEY" ]; then
+            echo -e "${GREEN}✓ Using OPENAI_COMPAT_API_KEY from environment${NC}"
+        else
+            echo -e "${YELLOW}⚠ OPENAI_COMPAT_API_KEY not set in environment${NC}"
+            echo "Make sure it's stored in the secret store or the container will fail."
+        fi
+        ;;
+    zai)
+        if [ -n "$ZAI_API_KEY" ]; then
+            echo -e "${GREEN}✓ Using ZAI API key from environment${NC}"
+        else
+            echo -e "${YELLOW}⚠ ZAI_API_KEY not set in environment${NC}"
+            echo "Make sure it's stored in the secret store or the container will fail."
+        fi
+        ;;
+    *)
+        echo -e "${GREEN}✓ Using provider from config: ${ACTIVE_PROVIDER}${NC}"
+        ;;
+esac
 
 # Show sandbox status
 if [ -n "$SANDBOX_FALLBACK" ]; then

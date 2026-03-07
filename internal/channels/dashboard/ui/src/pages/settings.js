@@ -18,8 +18,8 @@ const CATEGORY_LOOKUP = CATEGORY_DEFS.reduce((acc, category) => {
   return acc;
 }, {});
 
-const MODEL_PROVIDERS = ["openai", "openrouter", "requesty", "hatz", "zai", "generic"];
-const EMBEDDING_PROVIDERS = ["openai", "openrouter", "requesty", "zai", "generic"];
+const MODEL_PROVIDERS = ["openai", "openrouter", "requesty", "hatz", "zai", "openai_compat"];
+const EMBEDDING_PROVIDERS = ["openai", "openrouter", "requesty", "zai", "openai_compat"];
 const PROVIDERS_WITH_MODEL_DISCOVERY = new Set(["hatz"]);
 const THINKING_MODES = ["never", "on_error", "always"];
 const DISCORD_SECRET_KEY = "discord/bot_token";
@@ -567,7 +567,7 @@ function validateDraftConfig(draft) {
   if (!provider) {
     setFieldError("model.provider", "Provider is required.");
   } else if (!MODEL_PROVIDERS.includes(provider)) {
-    setFieldError("model.provider", "Provider must be one of openai, openrouter, requesty, hatz, zai, generic.");
+    setFieldError("model.provider", "Provider must be one of openai, openrouter, requesty, hatz, zai, openai_compat.");
   }
   if (!modelName) {
     setFieldError("model.name", "Model name is required.");
@@ -664,8 +664,8 @@ function validateDraftConfig(draft) {
     setFieldError("telegram.rate_limit_per_min", "Telegram rate limit must be an integer >= 1.");
   }
 
-  if (provider === "generic" && !asTrimmedString(draft?.providers?.generic?.base_url)) {
-    setFieldError("providers.generic.base_url", "Generic provider base URL is required when model.provider is generic.");
+  if (provider === "openai_compat" && !asTrimmedString(draft?.providers?.openai_compat?.base_url)) {
+    setFieldError("providers.openai_compat.base_url", "OpenAI compat provider base URL is required when model.provider is openai_compat.");
   }
 
   const allowedCommands = Array.isArray(draft?.shell?.allowed_commands) ? draft.shell.allowed_commands : [];

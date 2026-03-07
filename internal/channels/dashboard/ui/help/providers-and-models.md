@@ -2,7 +2,7 @@
 id: providers-and-models
 title: Providers & Models
 category: Settings
-keywords: providers models openai openrouter requesty hatz zai generic agent overrides subagent defaults validation
+keywords: providers models openai openrouter requesty hatz zai openai_compat agent overrides subagent defaults validation
 related_topics: agent-overrides-and-subagents, secrets-guide, faq
 route_hints: /settings, /help
 ---
@@ -16,7 +16,7 @@ route_hints: /settings, /help
 - `requesty`
 - `hatz`
 - `zai`
-- `generic`
+- `openai_compat`
 
 ## Global switching workflow
 
@@ -63,7 +63,7 @@ Recommended best practices:
 
 ### Unsupported provider
 
-You entered something other than `openai`, `openrouter`, `requesty`, `hatz`, `zai`, or `generic`.
+You entered something other than `openai`, `openrouter`, `requesty`, `hatz`, `zai`, or `openai_compat`.
 
 ### Missing model name
 

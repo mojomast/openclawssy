@@ -55,7 +55,7 @@ Supported model providers:
 - `requesty` (`REQUESTY_API_KEY`)
 - `hatz` (`HATZ_API_KEY` or `provider/hatz/api_key`)
 - `zai` (`ZAI_API_KEY`)
-- `generic` (`OPENAI_COMPAT_API_KEY` + `providers.generic.base_url`)
+- `openai_compat` (`OPENAI_COMPAT_API_KEY` + `providers.openai_compat.base_url`)
 
 Provider key precedence:
 

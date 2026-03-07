@@ -494,8 +494,8 @@ func (h *Handler) handleProviderTest(w http.ResponseWriter, r *http.Request) {
 		writeDashboardError(w, http.StatusBadRequest, "provider_test.invalid_input", "provider and base_url are required", nil)
 		return
 	}
-	if !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "generic": true}[provider] {
-		writeDashboardError(w, http.StatusBadRequest, "provider_test.invalid_provider", "provider must be one of openai, openrouter, requesty, hatz, zai, generic", nil)
+	if !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "openai_compat": true}[provider] {
+		writeDashboardError(w, http.StatusBadRequest, "provider_test.invalid_provider", "provider must be one of openai, openrouter, requesty, hatz, zai, openai_compat", nil)
 		return
 	}
 	client := &http.Client{Timeout: 4 * time.Second}
@@ -529,8 +529,8 @@ func (h *Handler) handleProviderModels(w http.ResponseWriter, r *http.Request) {
 		writeDashboardError(w, http.StatusBadRequest, "provider_models.invalid_provider", "provider is required", nil)
 		return
 	}
-	if !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "generic": true}[provider] {
-		writeDashboardError(w, http.StatusBadRequest, "provider_models.invalid_provider", "provider must be one of openai, openrouter, requesty, hatz, zai, generic", nil)
+	if !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "openai_compat": true}[provider] {
+		writeDashboardError(w, http.StatusBadRequest, "provider_models.invalid_provider", "provider must be one of openai, openrouter, requesty, hatz, zai, openai_compat", nil)
 		return
 	}
 
@@ -1004,8 +1004,8 @@ func collectConfigFieldErrors(cfg config.Config, err error) map[string]string {
 	}
 
 	provider := strings.ToLower(strings.TrimSpace(cfg.Model.Provider))
-	if provider == "" || !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "generic": true}[provider] {
-		set("model.provider", "Provider must be one of openai, openrouter, requesty, hatz, zai, generic.")
+	if provider == "" || !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "openai_compat": true}[provider] {
+		set("model.provider", "Provider must be one of openai, openrouter, requesty, hatz, zai, openai_compat.")
 	}
 	if strings.TrimSpace(cfg.Model.Name) == "" {
 		set("model.name", "Model name is required.")
@@ -1045,7 +1045,7 @@ func collectConfigFieldErrors(cfg config.Config, err error) map[string]string {
 	}
 	for agentID, profile := range cfg.Agents.Profiles {
 		provider := strings.ToLower(strings.TrimSpace(profile.Model.Provider))
-		if provider != "" && !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "generic": true}[provider] {
+		if provider != "" && !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "openai_compat": true}[provider] {
 			set("agents.profiles."+agentID+".model.provider", "Profile model provider must match a supported provider.")
 		}
 		if profile.Model.MaxTokens < 0 || profile.Model.MaxTokens > 20000 {
@@ -1068,8 +1068,8 @@ func collectConfigFieldErrors(cfg config.Config, err error) map[string]string {
 	if !validDelegation[strings.TrimSpace(cfg.Agents.SubAgentDefaults.DelegationMode)] {
 		set("agents.subagent_defaults.delegation_mode", "Delegation mode must be one of prompt_only, tool_gated, auto_execute.")
 	}
-	if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "generic provider base url") && strings.TrimSpace(cfg.Providers.Generic.BaseURL) == "" {
-		set("providers.generic.base_url", "Generic provider base URL is required when model.provider is generic.")
+	if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "openai_compat provider base url") && strings.TrimSpace(cfg.Providers.OpenAICompat.BaseURL) == "" {
+		set("providers.openai_compat.base_url", "OpenAI compat provider base URL is required when model.provider is openai_compat.")
 	}
 	if len(fieldErrors) == 0 {
 		set("config", err.Error())
@@ -2543,7 +2543,7 @@ summary{cursor:pointer;color:#9db2d4}
 <option value="requesty">requesty</option>
 <option value="hatz">hatz</option>
 <option value="zai">zai</option>
-<option value="generic">generic</option>
+<option value="openai_compat">openai_compat</option>
 </select>
 </div>
 <div class="field">
@@ -2554,9 +2554,9 @@ summary{cursor:pointer;color:#9db2d4}
 <label for="cfgTemperature">Temperature</label>
 <input id="cfgTemperature" type="number" step="0.1" placeholder="0.2"/>
 </div>
-<div class="field" id="genericBaseRow" style="display:none">
-<label for="cfgGenericBaseURL">Generic base_url</label>
-<input id="cfgGenericBaseURL" type="text" placeholder="https://example.com/v1"/>
+<div class="field" id="openaiCompatBaseRow" style="display:none">
+<label for="cfgOpenAICompatBaseURL">OpenAI compat base_url</label>
+<input id="cfgOpenAICompatBaseURL" type="text" placeholder="https://example.com/v1"/>
 </div>
 </div>
 
@@ -2823,7 +2823,7 @@ byId('providerSecretName').value=providerSecretKey(provider);
 
 function onProviderChange(){
 const provider=byId('cfgProvider').value;
-byId('genericBaseRow').style.display=provider==='generic'?'flex':'none';
+byId('openaiCompatBaseRow').style.display=provider==='openai_compat'?'flex':'none';
 updateProviderSecretName();
 updateRawPreview();
 }
@@ -2839,7 +2839,7 @@ updateRawPreview();
 function ensureConfigShape(cfg){
 if(!cfg.model)cfg.model={};
 if(!cfg.providers)cfg.providers={};
-if(!cfg.providers.generic)cfg.providers.generic={};
+if(!cfg.providers.openai_compat)cfg.providers.openai_compat={};
 if(!cfg.chat)cfg.chat={};
 if(!cfg.discord)cfg.discord={};
 if(!cfg.telegram)cfg.telegram={};
@@ -2853,7 +2853,7 @@ ensureConfigShape(cfg);
 byId('cfgProvider').value=cfg.model.provider||'zai';
 byId('cfgModelName').value=cfg.model.name||'';
 byId('cfgTemperature').value=(typeof cfg.model.temperature==='number')?String(cfg.model.temperature):'';
-byId('cfgGenericBaseURL').value=(cfg.providers.generic&&cfg.providers.generic.base_url)||'';
+byId('cfgOpenAICompatBaseURL').value=(cfg.providers.openai_compat&&cfg.providers.openai_compat.base_url)||'';
 byId('cfgChatEnabled').checked=!!cfg.chat.enabled;
 byId('cfgDiscordEnabled').checked=!!cfg.discord.enabled;
 byId('cfgTelegramEnabled').checked=!!cfg.telegram.enabled;
@@ -2905,8 +2905,8 @@ cfg.discord.allow_channels=textToList(byId('cfgDiscordChannels').value);
 cfg.discord.allow_guilds=textToList(byId('cfgDiscordGuilds').value);
 cfg.telegram.allow_users=textToList(byId('cfgTelegramUsers').value);
 cfg.telegram.allow_chats=textToList(byId('cfgTelegramChats').value);
-if(provider==='generic'){
-cfg.providers.generic.base_url=byId('cfgGenericBaseURL').value.trim();
+if(provider==='openai_compat'){
+cfg.providers.openai_compat.base_url=byId('cfgOpenAICompatBaseURL').value.trim();
 }
 return cfg;
 }
@@ -2921,7 +2921,7 @@ if(tempRaw!==''&&Number.isNaN(Number(tempRaw)))return 'temperature must be numer
 const sandboxProvider=byId('cfgSandboxProvider').value.trim().toLowerCase();
 if(sandboxProvider!=='local'&&sandboxProvider!=='none'&&sandboxProvider!=='docker')return 'sandbox provider must be local, docker, or none';
 if(byId('cfgSandboxActive').checked&&sandboxProvider==='none')return 'sandbox provider must be local or docker when sandbox is active';
-if(provider==='generic'&&!byId('cfgGenericBaseURL').value.trim())return 'generic base_url is required';
+if(provider==='openai_compat'&&!byId('cfgOpenAICompatBaseURL').value.trim())return 'openai_compat base_url is required';
 return '';
 }
 
@@ -3453,7 +3453,7 @@ renderChat();
 }
 
 function wireFormPreviewUpdates(){
-['cfgProvider','cfgModelName','cfgTemperature','cfgGenericBaseURL','cfgChatEnabled','cfgDiscordEnabled','cfgTelegramEnabled','cfgSandboxActive','cfgShellExecEnabled','cfgChatUsers','cfgChatRooms','cfgDiscordUsers','cfgDiscordChannels','cfgDiscordGuilds','cfgTelegramUsers','cfgTelegramChats'].forEach(function(id){
+['cfgProvider','cfgModelName','cfgTemperature','cfgOpenAICompatBaseURL','cfgChatEnabled','cfgDiscordEnabled','cfgTelegramEnabled','cfgSandboxActive','cfgShellExecEnabled','cfgChatUsers','cfgChatRooms','cfgDiscordUsers','cfgDiscordChannels','cfgDiscordGuilds','cfgTelegramUsers','cfgTelegramChats'].forEach(function(id){
 const el=byId(id);
 if(!el)return;
 el.addEventListener('input',updateRawPreview);

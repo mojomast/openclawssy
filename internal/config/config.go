@@ -175,12 +175,12 @@ type ProviderEndpointConfig struct {
 }
 
 type ProvidersConfig struct {
-	OpenAI     ProviderEndpointConfig `json:"openai"`
-	OpenRouter ProviderEndpointConfig `json:"openrouter"`
-	Requesty   ProviderEndpointConfig `json:"requesty"`
-	Hatz       ProviderEndpointConfig `json:"hatz"`
-	ZAI        ProviderEndpointConfig `json:"zai"`
-	Generic    ProviderEndpointConfig `json:"generic"`
+	OpenAI       ProviderEndpointConfig `json:"openai"`
+	OpenRouter   ProviderEndpointConfig `json:"openrouter"`
+	Requesty     ProviderEndpointConfig `json:"requesty"`
+	Hatz         ProviderEndpointConfig `json:"hatz"`
+	ZAI          ProviderEndpointConfig `json:"zai"`
+	OpenAICompat ProviderEndpointConfig `json:"openai_compat"`
 }
 
 type ChatConfig struct {
@@ -320,7 +320,7 @@ func Default() Config {
 				BaseURL:   "https://api.z.ai/api/coding/paas/v4",
 				APIKeyEnv: "ZAI_API_KEY",
 			},
-			Generic: ProviderEndpointConfig{
+			OpenAICompat: ProviderEndpointConfig{
 				BaseURL:   "",
 				APIKeyEnv: "OPENAI_COMPAT_API_KEY",
 			},
@@ -591,8 +591,8 @@ func (c *Config) ApplyDefaults() {
 	if c.Providers.ZAI.BaseURL == "" {
 		c.Providers.ZAI = d.Providers.ZAI
 	}
-	if c.Providers.Generic.APIKeyEnv == "" && c.Providers.Generic.APIKey == "" {
-		c.Providers.Generic.APIKeyEnv = d.Providers.Generic.APIKeyEnv
+	if c.Providers.OpenAICompat.APIKeyEnv == "" && c.Providers.OpenAICompat.APIKey == "" {
+		c.Providers.OpenAICompat.APIKeyEnv = d.Providers.OpenAICompat.APIKeyEnv
 	}
 }
 
@@ -668,7 +668,7 @@ func (c Config) Validate() error {
 		if strings.TrimSpace(profile.Model.Provider) != "" {
 			provider := strings.ToLower(strings.TrimSpace(profile.Model.Provider))
 			supported := map[string]bool{
-				"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "generic": true,
+				"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "openai_compat": true,
 			}
 			if !supported[provider] {
 				return fmt.Errorf("agents.profiles.%s.model.provider unsupported: %q", agentID, profile.Model.Provider)
@@ -732,7 +732,7 @@ func (c Config) Validate() error {
 
 	provider := strings.ToLower(strings.TrimSpace(c.Model.Provider))
 	supported := map[string]bool{
-		"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "generic": true,
+		"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "openai_compat": true,
 	}
 	if !supported[provider] {
 		return fmt.Errorf("unsupported model provider: %q", c.Model.Provider)
@@ -776,7 +776,7 @@ func (c Config) Validate() error {
 		return errors.New("memory.event_buffer_size must be between 1 and 10000")
 	}
 	embeddingProvider := strings.ToLower(strings.TrimSpace(c.Memory.EmbeddingProvider))
-	supportedEmbeddingProviders := map[string]bool{"openai": true, "openrouter": true, "requesty": true, "zai": true, "generic": true}
+	supportedEmbeddingProviders := map[string]bool{"openai": true, "openrouter": true, "requesty": true, "zai": true, "openai_compat": true}
 	if !supportedEmbeddingProviders[embeddingProvider] {
 		return fmt.Errorf("unsupported memory.embedding_provider: %q", c.Memory.EmbeddingProvider)
 	}
@@ -875,7 +875,7 @@ func (c Config) Redacted() Config {
 	redacted.Providers.Requesty.APIKey = ""
 	redacted.Providers.Hatz.APIKey = ""
 	redacted.Providers.ZAI.APIKey = ""
-	redacted.Providers.Generic.APIKey = ""
+	redacted.Providers.OpenAICompat.APIKey = ""
 	redacted.Discord.Token = ""
 	redacted.Telegram.Token = ""
 	return redacted

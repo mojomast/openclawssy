@@ -27,7 +27,7 @@ test("Discord setup shows token presence and updates after save", async ({ page 
       shell: { enable_exec: false, allowed_commands: [], default_timeout_ms: 120000, max_timeout_ms: 300000 },
       network: { allowed_domains: [] },
       scheduler: { max_concurrent_jobs: 10 },
-      providers: { openai: {}, openrouter: {}, requesty: {}, zai: {}, generic: {} },
+      providers: { openai: {}, openrouter: {}, requesty: {}, hatz: {}, zai: {}, openai_compat: {} },
       agents: { enabled_agent_ids: ["default"], profiles: {} },
       secrets: {},
       memory: {},

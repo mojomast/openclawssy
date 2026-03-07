@@ -456,7 +456,7 @@ const WIDGETS = [
     defaultH: 4,
     async render({ body }) {
       const cfg = await fetchConfig();
-      const rows = ["openai", "openrouter", "requesty", "zai", "generic"].map((provider) => ({
+      const rows = ["openai", "openrouter", "requesty", "hatz", "zai", "openai_compat"].map((provider) => ({
         label: provider,
         value: `${cfg?.providers?.[provider]?.base_url || "(default)"} · ${cfg?.providers?.[provider]?.api_key_env || "(no env ref)"}`,
       }));

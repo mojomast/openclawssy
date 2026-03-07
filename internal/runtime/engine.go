@@ -1658,25 +1658,25 @@ func toolArgProperties(argTypes map[string]tools.ArgType) map[string]any {
 	}
 	props := make(map[string]any, len(argTypes))
 	for name, argType := range argTypes {
-		props[name] = map[string]any{"type": jsonTypeForArgType(argType)}
+		props[name] = jsonSchemaForArgType(argType)
 	}
 	return props
 }
 
-func jsonTypeForArgType(argType tools.ArgType) string {
+func jsonSchemaForArgType(argType tools.ArgType) map[string]any {
 	switch argType {
 	case tools.ArgTypeString:
-		return "string"
+		return map[string]any{"type": "string"}
 	case tools.ArgTypeNumber:
-		return "number"
+		return map[string]any{"type": "number"}
 	case tools.ArgTypeBool:
-		return "boolean"
+		return map[string]any{"type": "boolean"}
 	case tools.ArgTypeArray:
-		return "array"
+		return map[string]any{"type": "array", "items": map[string]any{}}
 	case tools.ArgTypeObject:
-		return "object"
+		return map[string]any{"type": "object", "additionalProperties": true}
 	default:
-		return "string"
+		return map[string]any{"type": "string"}
 	}
 }
 
