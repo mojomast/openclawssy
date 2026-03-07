@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 
 	"openclawssy/internal/agent"
 	"openclawssy/internal/config"
+	"openclawssy/internal/messagecontent"
 	"openclawssy/internal/toolparse"
 )
 
@@ -65,6 +67,16 @@ type providerStreamingToolCallDelta struct {
 type providerResponseContentPart struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
+}
+
+type providerRequestImageURL struct {
+	URL string `json:"url"`
+}
+
+type providerRequestContentPart struct {
+	Type     string                   `json:"type"`
+	Text     string                   `json:"text,omitempty"`
+	ImageURL *providerRequestImageURL `json:"image_url,omitempty"`
 }
 
 type providerResponseOutputItem struct {
@@ -329,6 +341,56 @@ func normalizeProviderMessageRole(providerName, role string) string {
 	return cleanRole
 }
 
+func buildProviderChatMessage(item agent.ChatMessage) any {
+	parts := messagecontent.Normalize(item.ContentParts)
+	if len(parts) == 0 {
+		return map[string]string{"role": item.Role, "content": item.Content}
+	}
+	providerParts := buildProviderContentParts(strings.TrimSpace(item.Content), parts)
+	if len(providerParts) == 0 {
+		return map[string]string{"role": item.Role, "content": item.Content}
+	}
+	return map[string]any{"role": item.Role, "content": providerParts}
+}
+
+func buildProviderContentParts(content string, parts []messagecontent.Part) []providerRequestContentPart {
+	providerParts := make([]providerRequestContentPart, 0, len(parts)+1)
+	hasTextPart := false
+	for _, part := range parts {
+		switch strings.ToLower(strings.TrimSpace(part.Type)) {
+		case messagecontent.TypeText:
+			text := strings.TrimSpace(part.Text)
+			if text == "" {
+				continue
+			}
+			hasTextPart = true
+			providerParts = append(providerParts, providerRequestContentPart{Type: "text", Text: text})
+		case messagecontent.TypeImage:
+			url := inlineImageDataURL(part)
+			if url == "" {
+				continue
+			}
+			providerParts = append(providerParts, providerRequestContentPart{Type: "image_url", ImageURL: &providerRequestImageURL{URL: url}})
+		}
+	}
+	if !hasTextPart && strings.TrimSpace(content) != "" {
+		providerParts = append([]providerRequestContentPart{{Type: "text", Text: strings.TrimSpace(content)}}, providerParts...)
+	}
+	return providerParts
+}
+
+func inlineImageDataURL(part messagecontent.Part) string {
+	mimeType := strings.TrimSpace(part.MIMEType)
+	data := strings.TrimSpace(part.Data)
+	if mimeType == "" || data == "" {
+		return ""
+	}
+	if _, err := base64.StdEncoding.DecodeString(data); err != nil {
+		return ""
+	}
+	return "data:" + mimeType + ";base64," + data
+}
+
 func (m *ProviderModel) ProviderName() string { return m.providerName }
 func (m *ProviderModel) ModelName() string    { return m.modelName }
 
@@ -362,18 +424,19 @@ func (m *ProviderModel) Generate(ctx context.Context, req agent.ModelRequest) (a
 		}
 		role = normalizeProviderMessageRole(m.providerName, role)
 		content := strings.TrimSpace(item.Content)
-		if content == "" {
+		parts := messagecontent.Normalize(item.ContentParts)
+		if content == "" && len(parts) == 0 {
 			continue
 		}
-		normalizedMessages = append(normalizedMessages, agent.ChatMessage{Role: role, Content: content})
+		normalizedMessages = append(normalizedMessages, agent.ChatMessage{Role: role, Content: content, ContentParts: parts})
 	}
 
 	normalizedMessages = compactMessagesForContext(promptText, normalizedMessages, m.contextWindow)
 
-	chatMessages := make([]map[string]string, 0, len(normalizedMessages)+1)
+	chatMessages := make([]any, 0, len(normalizedMessages)+1)
 	chatMessages = append(chatMessages, map[string]string{"role": "system", "content": promptText})
 	for _, item := range normalizedMessages {
-		chatMessages = append(chatMessages, map[string]string{"role": item.Role, "content": item.Content})
+		chatMessages = append(chatMessages, buildProviderChatMessage(item))
 	}
 
 	body := map[string]any{
@@ -1349,6 +1412,12 @@ func estimateConversationTokens(systemPrompt string, messages []agent.ChatMessag
 	for _, msg := range messages {
 		total += estimateTokens(msg.Role)
 		total += estimateTokens(msg.Content)
+		for _, part := range msg.ContentParts {
+			total += estimateTokens(part.Type)
+			total += estimateTokens(part.Text)
+			total += estimateTokens(part.MIMEType)
+			total += len(part.Data) / 16
+		}
 		total += 4
 	}
 	return total
@@ -2504,7 +2573,11 @@ func formatNativeToolCallParseFailureUserMessage(reason string) string {
 
 func requestMessages(req agent.ModelRequest) []agent.ChatMessage {
 	if len(req.Messages) > 0 {
-		return append([]agent.ChatMessage(nil), req.Messages...)
+		out := append([]agent.ChatMessage(nil), req.Messages...)
+		for i := range out {
+			out[i].ContentParts = append([]messagecontent.Part(nil), out[i].ContentParts...)
+		}
+		return out
 	}
 	msg := strings.TrimSpace(req.Message)
 	if msg == "" {

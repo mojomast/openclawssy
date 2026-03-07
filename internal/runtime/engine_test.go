@@ -18,6 +18,7 @@ import (
 	"openclawssy/internal/chatstore"
 	"openclawssy/internal/config"
 	"openclawssy/internal/memory"
+	"openclawssy/internal/messagecontent"
 	"openclawssy/internal/sandbox"
 	"openclawssy/internal/tools"
 )
@@ -188,6 +189,73 @@ func TestExecuteWithInputLogsTaskIDInAuditRunStart(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected run.start audit payload to include task_id, got %q", string(raw))
+	}
+}
+
+func TestExecuteWithInputAllowsImageOnlyMessage(t *testing.T) {
+	root := t.TempDir()
+	e, err := NewEngine(root)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	if err := e.Init("default", false); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{"message": map[string]string{"content": "ok"}}},
+		})
+	}))
+	defer server.Close()
+
+	cfgPath := filepath.Join(root, ".openclawssy", "config.json")
+	cfg, err := config.LoadOrDefault(cfgPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.Model.Provider = "openai_compat"
+	cfg.Model.Name = "test-model"
+	cfg.Providers.OpenAICompat.BaseURL = server.URL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	res, err := e.ExecuteWithInput(context.Background(), ExecuteInput{
+		AgentID:      "default",
+		ContentParts: []messagecontent.Part{{Type: messagecontent.TypeImage, MIMEType: "image/png", Data: "AAAA"}},
+		Source:       "telegram",
+	})
+	if err != nil {
+		t.Fatalf("execute image-only input: %v", err)
+	}
+	if strings.TrimSpace(res.RunID) == "" {
+		t.Fatalf("expected run id, got %+v", res)
+	}
+}
+
+func TestSystemPromptExtenderAddsTelegramStickerChatDirective(t *testing.T) {
+	e, err := NewEngine(t.TempDir())
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	ext := e.systemPromptExtender(config.Default(), "default", "run-1")
+	if ext == nil {
+		t.Fatal("expected system prompt extender")
+	}
+	prompt := ext(context.Background(), "base prompt", nil, "", nil, "telegram")
+	if !strings.Contains(prompt, "TELEGRAM_STICKER_CHAT_CONTEXT") {
+		t.Fatalf("expected telegram sticker chat directive, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "Do not respond by merely describing the sticker") {
+		t.Fatalf("expected anti-description guidance, got %q", prompt)
+	}
+	prompt = ext(context.Background(), "base prompt", nil, "", nil, "dashboard")
+	if strings.Contains(prompt, "TELEGRAM_STICKER_CHAT_CONTEXT") {
+		t.Fatalf("did not expect telegram directive for dashboard source, got %q", prompt)
 	}
 }
 

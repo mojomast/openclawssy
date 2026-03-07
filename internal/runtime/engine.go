@@ -22,6 +22,7 @@ import (
 	"openclawssy/internal/config"
 	"openclawssy/internal/memory"
 	memorystore "openclawssy/internal/memory/store"
+	"openclawssy/internal/messagecontent"
 	"openclawssy/internal/policy"
 	"openclawssy/internal/sandbox"
 	"openclawssy/internal/secrets"
@@ -73,6 +74,7 @@ func (e *Engine) RunTracker() *RunTracker {
 type ExecuteInput struct {
 	AgentID           string
 	Message           string
+	ContentParts      []messagecontent.Part
 	TaskID            string
 	Source            string
 	SessionID         string
@@ -173,13 +175,14 @@ func (e *Engine) Execute(ctx context.Context, agentID, message string) (RunResul
 func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResult, error) {
 	agentID := strings.TrimSpace(in.AgentID)
 	message := strings.TrimSpace(in.Message)
+	contentParts := messagecontent.Normalize(in.ContentParts)
 	source := strings.TrimSpace(in.Source)
 	sessionID := strings.TrimSpace(in.SessionID)
 
 	if agentID == "" {
 		return RunResult{}, errors.New("runtime: agent id is required")
 	}
-	if message == "" {
+	if message == "" && len(contentParts) == 0 {
 		return RunResult{}, errors.New("runtime: message is required")
 	}
 
@@ -388,7 +391,8 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	}
 	toolSchemas := e.allowedToolSchemas(registry.List(), allowedTools)
 
-	modelMessages := []agent.ChatMessage{{Role: "user", Content: runMessage}}
+	normalizedContentParts := contentParts
+	modelMessages := []agent.ChatMessage{{Role: "user", Content: runMessage, ContentParts: normalizedContentParts}}
 	var conversationStore *chatstore.Store
 	if sessionID != "" {
 		conversationStore = e.chatStore
@@ -407,8 +411,8 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 			modelMessages = history
 		}
 	}
-	if len(modelMessages) == 0 || !hasTrailingUserMessage(modelMessages, runMessage) {
-		modelMessages = append(modelMessages, agent.ChatMessage{Role: "user", Content: runMessage})
+	if len(modelMessages) == 0 || !hasTrailingUserMessage(modelMessages, runMessage, normalizedContentParts) {
+		modelMessages = append(modelMessages, agent.ChatMessage{Role: "user", Content: runMessage, ContentParts: normalizedContentParts})
 	}
 
 	appendToolsAfterRun := true
@@ -461,6 +465,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		AgentID:           agentID,
 		RunID:             runID,
 		Message:           runMessage,
+		Source:            source,
 		Messages:          modelMessages,
 		ArtifactDocs:      docs,
 		PerFileByteLimit:  16 * 1024,
@@ -469,7 +474,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		AllowedTools:      allowedTools,
 		ToolSchemas:       toolSchemas,
 		OnToolCall:        onToolCall,
-		SystemPromptExt:   e.memoryPromptExtender(cfg, agentID, runID),
+		SystemPromptExt:   e.systemPromptExtender(cfg, agentID, runID),
 		OnTextDelta:       onTextDelta,
 	})
 	if runErr == nil {
@@ -497,7 +502,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 				finalOutput = formatFinalOutputWithThinking(finalOutput, persistedThinking)
 			}
 			artifactPath, err = artifacts.WriteRunBundleV1(e.rootDir, agentID, runID, artifacts.BundleV1Input{
-				Input:     map[string]any{"agent_id": agentID, "message": message},
+				Input:     map[string]any{"agent_id": agentID, "message": message, "content_parts": normalizedContentParts},
 				PromptMD:  out.Prompt,
 				ToolCalls: toolLines,
 				OutputMD:  finalOutput,
@@ -864,15 +869,20 @@ func (e *Engine) loadSessionMessages(sessionID string, limit int) ([]agent.ChatM
 	for _, msg := range history {
 		role := normalizeSessionRole(msg.Role)
 		content := buildSessionMessageContent(role, msg)
-		if content == "" {
+		parts := messagecontent.Normalize(msg.ContentParts)
+		if !strings.EqualFold(role, "user") {
+			parts = nil
+		}
+		if content == "" && len(parts) == 0 {
 			continue
 		}
 		out = append(out, agent.ChatMessage{
-			Role:       role,
-			Content:    content,
-			Name:       strings.TrimSpace(msg.ToolName),
-			ToolCallID: strings.TrimSpace(msg.ToolCallID),
-			TS:         msg.TS,
+			Role:         role,
+			Content:      content,
+			ContentParts: parts,
+			Name:         strings.TrimSpace(msg.ToolName),
+			ToolCallID:   strings.TrimSpace(msg.ToolCallID),
+			TS:           msg.TS,
 		})
 	}
 	return clampSessionContext(out, chatstore.ClampHistoryCount(limit, maxSessionContextMessageCap), maxSessionContextChars), nil
@@ -1020,7 +1030,7 @@ func splitToolError(errText string) (code string, message string) {
 	return candidate, message
 }
 
-func hasTrailingUserMessage(messages []agent.ChatMessage, currentMessage string) bool {
+func hasTrailingUserMessage(messages []agent.ChatMessage, currentMessage string, currentParts []messagecontent.Part) bool {
 	if len(messages) == 0 {
 		return false
 	}
@@ -1029,7 +1039,20 @@ func hasTrailingUserMessage(messages []agent.ChatMessage, currentMessage string)
 	if role != "" && role != "user" {
 		return false
 	}
-	return strings.TrimSpace(last.Content) == strings.TrimSpace(currentMessage)
+	if strings.TrimSpace(last.Content) != strings.TrimSpace(currentMessage) {
+		return false
+	}
+	lastParts := messagecontent.Normalize(last.ContentParts)
+	currentParts = messagecontent.Normalize(currentParts)
+	if len(lastParts) != len(currentParts) {
+		return len(lastParts) == 0 && len(currentParts) == 0
+	}
+	for i := range lastParts {
+		if lastParts[i] != currentParts[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *Engine) appendRunConversation(sessionID, runID string, out agent.RunOutput, includeToolMessages bool) error {
@@ -2026,11 +2049,38 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
+func (e *Engine) systemPromptExtender(cfg config.Config, agentID, runID string) agent.SystemPromptExtender {
+	base := e.memoryPromptExtender(cfg, agentID, runID)
+	return func(ctx context.Context, basePrompt string, messages []agent.ChatMessage, message string, toolResults []agent.ToolCallResult, source string) string {
+		prompt := appendTelegramStickerChatDirective(basePrompt, source)
+		if base == nil {
+			return prompt
+		}
+		return base(ctx, prompt, messages, message, toolResults, source)
+	}
+}
+
+func appendTelegramStickerChatDirective(prompt, source string) string {
+	if !strings.EqualFold(strings.TrimSpace(source), "telegram") {
+		return prompt
+	}
+	directive := "# TELEGRAM_STICKER_CHAT_CONTEXT\n- Telegram stickers are part of the user's chat message, reaction, or conversational context.\n- Do not respond by merely describing the sticker or offering to convert it into a prompt unless the user explicitly asks for that.\n- Treat sticker images as something the user sent to communicate mood, intent, or context in chat.\n- Reply as a normal conversational assistant responding to the user's message, using the sticker only as supporting context when helpful."
+	base := strings.TrimSpace(prompt)
+	extra := strings.TrimSpace(directive)
+	if extra == "" {
+		return base
+	}
+	if base == "" {
+		return extra
+	}
+	return base + "\n\n" + extra
+}
+
 func (e *Engine) memoryPromptExtender(cfg config.Config, agentID, runID string) agent.SystemPromptExtender {
 	if !cfg.Memory.Enabled {
 		return nil
 	}
-	return func(ctx context.Context, basePrompt string, messages []agent.ChatMessage, message string, _ []agent.ToolCallResult) string {
+	return func(ctx context.Context, basePrompt string, messages []agent.ChatMessage, message string, _ []agent.ToolCallResult, _ string) string {
 		block, err := e.buildMemoryRecallBlock(ctx, cfg, agentID, message, messages)
 		if err != nil {
 			slog.Warn("runtime: memory recall unavailable", "run_id", runID, "error", err)

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"openclawssy/internal/chatstore"
+	"openclawssy/internal/messagecontent"
 )
 
 var (
@@ -21,6 +22,7 @@ type Message struct {
 	AgentID      string
 	Source       string
 	Text         string
+	ContentParts []messagecontent.Part
 	ThinkingMode string
 }
 
@@ -36,7 +38,7 @@ type QueuedRun struct {
 	Status string
 }
 
-type QueueFunc func(ctx context.Context, agentID, message, source, sessionID, thinkingMode string) (QueuedRun, error)
+type QueueFunc func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error)
 
 type Connector struct {
 	Allowlist      *Allowlist
@@ -55,8 +57,12 @@ func (c *Connector) HandleMessage(ctx context.Context, msg Message) (Result, err
 	if c.Store == nil {
 		return Result{}, errors.New("chat store is not configured")
 	}
-	if strings.TrimSpace(msg.UserID) == "" || strings.TrimSpace(msg.Text) == "" {
-		return Result{}, errors.New("user id and text are required")
+	parts := messagecontent.Normalize(msg.ContentParts)
+	if strings.TrimSpace(msg.Text) == "" {
+		msg.Text = messagecontent.VisibleText(parts)
+	}
+	if strings.TrimSpace(msg.UserID) == "" || (strings.TrimSpace(msg.Text) == "" && len(parts) == 0) {
+		return Result{}, errors.New("user id and message content are required")
 	}
 	if c.Allowlist != nil && !c.Allowlist.MessageAllowed(msg.UserID, msg.RoomID) {
 		return Result{}, ErrNotAllowlisted
@@ -207,11 +213,11 @@ func (c *Connector) HandleMessage(ctx context.Context, msg Message) (Result, err
 		return Result{}, err
 	}
 
-	if err := c.Store.AppendMessage(session.SessionID, chatstore.Message{Role: "user", Content: msg.Text}); err != nil {
+	if err := c.Store.AppendMessage(session.SessionID, chatstore.Message{Role: "user", Content: msg.Text, ContentParts: parts}); err != nil {
 		return Result{}, err
 	}
 
-	queued, err := c.Queue(ctx, agentID, msg.Text, source, session.SessionID, msg.ThinkingMode)
+	queued, err := c.Queue(ctx, agentID, msg.Text, parts, source, session.SessionID, msg.ThinkingMode)
 	if err != nil {
 		return Result{}, err
 	}

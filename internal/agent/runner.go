@@ -108,14 +108,14 @@ func nonActionableFinalText(lastText string) string {
 	return "I could not complete an actionable execution step in time. Please retry and I will run it directly and report concrete results."
 }
 
-func finalizeFromToolResults(ctx context.Context, model Model, agentID, runID, prompt string, messages []ChatMessage, message string, toolTimeoutMS int, toolResults []ToolCallResult, extender SystemPromptExtender, extraDirective string) string {
+func finalizeFromToolResults(ctx context.Context, model Model, agentID, runID, prompt string, messages []ChatMessage, message string, toolTimeoutMS int, toolResults []ToolCallResult, extender SystemPromptExtender, source, extraDirective string) string {
 	if model == nil || len(toolResults) == 0 {
 		return ""
 	}
 
 	finalPrompt := strings.TrimSpace(prompt)
 	if extender != nil {
-		if extended := strings.TrimSpace(extender(ctx, finalPrompt, append([]ChatMessage(nil), messages...), message, append([]ToolCallResult(nil), toolResults...))); extended != "" {
+		if extended := strings.TrimSpace(extender(ctx, finalPrompt, append([]ChatMessage(nil), messages...), message, append([]ToolCallResult(nil), toolResults...), source)); extended != "" {
 			finalPrompt = extended
 		}
 	}

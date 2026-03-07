@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"openclawssy/internal/messagecontent"
 )
 
-type SystemPromptExtender func(ctx context.Context, basePrompt string, messages []ChatMessage, message string, toolResults []ToolCallResult) string
+type SystemPromptExtender func(ctx context.Context, basePrompt string, messages []ChatMessage, message string, toolResults []ToolCallResult, source string) string
 
 // ArtifactDoc is a prompt source document.
 type ArtifactDoc struct {
@@ -19,6 +21,7 @@ type RunInput struct {
 	AgentID           string                     `json:"agent_id"`
 	RunID             string                     `json:"run_id"`
 	Message           string                     `json:"message"`
+	Source            string                     `json:"source,omitempty"`
 	Messages          []ChatMessage              `json:"messages,omitempty"`
 	ArtifactDocs      []ArtifactDoc              `json:"artifact_docs"`
 	PerFileByteLimit  int                        `json:"per_file_byte_limit"`
@@ -68,11 +71,12 @@ type ToolSchema struct {
 
 // ChatMessage is a role-tagged conversational turn passed to the model.
 type ChatMessage struct {
-	Role       string    `json:"role"`
-	Content    string    `json:"content"`
-	Name       string    `json:"name,omitempty"`
-	ToolCallID string    `json:"tool_call_id,omitempty"`
-	TS         time.Time `json:"ts,omitempty"`
+	Role         string                `json:"role"`
+	Content      string                `json:"content"`
+	ContentParts []messagecontent.Part `json:"content_parts,omitempty"`
+	Name         string                `json:"name,omitempty"`
+	ToolCallID   string                `json:"tool_call_id,omitempty"`
+	TS           time.Time             `json:"ts,omitempty"`
 }
 
 // ToolCallRequest is a model-requested tool invocation.

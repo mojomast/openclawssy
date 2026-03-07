@@ -15,6 +15,7 @@ import (
 
 	"openclawssy/internal/agent"
 	"openclawssy/internal/config"
+	"openclawssy/internal/messagecontent"
 )
 
 type requestCapture struct {
@@ -25,12 +26,17 @@ type requestCapture struct {
 	ToolChoice any    `json:"tool_choice,omitempty"`
 	Messages   []struct {
 		Role    string `json:"role"`
-		Content string `json:"content"`
+		Content any    `json:"content"`
 	} `json:"messages"`
 }
 
 type staticToolExecutor struct {
 	result agent.ToolCallResult
+}
+
+func contentString(value any) string {
+	text, _ := value.(string)
+	return text
 }
 
 func (s *staticToolExecutor) Execute(_ context.Context, call agent.ToolCallRequest) (agent.ToolCallResult, error) {
@@ -114,7 +120,7 @@ func TestProviderModelRoutesToolResultsBackThroughModel(t *testing.T) {
 	if len(requests[1].Messages) < 1 {
 		t.Fatalf("expected second request messages")
 	}
-	systemPrompt := requests[1].Messages[0].Content
+	systemPrompt := contentString(requests[1].Messages[0].Content)
 	if !strings.Contains(systemPrompt, "## Tool Results") {
 		t.Fatalf("expected tool results section in follow-up prompt")
 	}
@@ -200,14 +206,57 @@ func TestProviderModelSendsStructuredHistoryMessages(t *testing.T) {
 	if captured.Messages[0].Role != "system" {
 		t.Fatalf("expected system role first, got %q", captured.Messages[0].Role)
 	}
-	if captured.Messages[1].Role != "user" || captured.Messages[1].Content != "first" {
+	if captured.Messages[1].Role != "user" || contentString(captured.Messages[1].Content) != "first" {
 		t.Fatalf("unexpected first history message: %+v", captured.Messages[1])
 	}
-	if captured.Messages[2].Role != "assistant" || captured.Messages[2].Content != "done" {
+	if captured.Messages[2].Role != "assistant" || contentString(captured.Messages[2].Content) != "done" {
 		t.Fatalf("unexpected second history message: %+v", captured.Messages[2])
 	}
-	if captured.Messages[3].Role != "user" || captured.Messages[3].Content != "second" {
+	if captured.Messages[3].Role != "user" || contentString(captured.Messages[3].Content) != "second" {
 		t.Fatalf("unexpected final user message: %+v", captured.Messages[3])
+	}
+}
+
+func TestProviderModelSendsMultimodalUserMessage(t *testing.T) {
+	var captured requestCapture
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": "ok"}}}})
+	}))
+	defer server.Close()
+	model := testProviderModel(t, server.URL)
+	_, err := model.Generate(context.Background(), agent.ModelRequest{
+		SystemPrompt: "system",
+		Messages: []agent.ChatMessage{{
+			Role:    "user",
+			Content: "use this sticker",
+			ContentParts: []messagecontent.Part{
+				{Type: messagecontent.TypeText, Text: "use this sticker"},
+				{Type: messagecontent.TypeImage, MIMEType: "image/webp", Data: "AAAA"},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("generate failed: %v", err)
+	}
+	if len(captured.Messages) != 2 {
+		t.Fatalf("expected system + user, got %#v", captured.Messages)
+	}
+	parts, ok := captured.Messages[1].Content.([]any)
+	if !ok || len(parts) != 2 {
+		t.Fatalf("expected multimodal content array, got %#v", captured.Messages[1].Content)
+	}
+	part0, _ := parts[0].(map[string]any)
+	part1, _ := parts[1].(map[string]any)
+	if part0["type"] != "text" || part1["type"] != "image_url" {
+		t.Fatalf("unexpected multimodal parts: %#v", parts)
+	}
+	img, _ := part1["image_url"].(map[string]any)
+	if !strings.HasPrefix(contentString(img["url"]), "data:image/webp;base64,") {
+		t.Fatalf("expected inline image data url, got %#v", img)
 	}
 }
 
@@ -1036,17 +1085,17 @@ func TestProviderModelCompactsAtEightyPercentContext(t *testing.T) {
 	if len(captured.Messages) < 3 {
 		t.Fatalf("expected compacted request with system + history, got %d message(s)", len(captured.Messages))
 	}
-	if captured.Messages[1].Role != "system" || !strings.Contains(captured.Messages[1].Content, "Conversation compaction summary") {
+	if captured.Messages[1].Role != "system" || !strings.Contains(contentString(captured.Messages[1].Content), "Conversation compaction summary") {
 		t.Fatalf("expected compaction summary system message, got %+v", captured.Messages[1])
 	}
-	if captured.Messages[len(captured.Messages)-1].Role != "user" || captured.Messages[len(captured.Messages)-1].Content != "latest-question-marker" {
+	if captured.Messages[len(captured.Messages)-1].Role != "user" || contentString(captured.Messages[len(captured.Messages)-1].Content) != "latest-question-marker" {
 		t.Fatalf("expected latest user turn preserved, got %+v", captured.Messages[len(captured.Messages)-1])
 	}
 
-	reqSystem := captured.Messages[0].Content
+	reqSystem := contentString(captured.Messages[0].Content)
 	reqHistory := make([]agent.ChatMessage, 0, len(captured.Messages)-1)
 	for _, item := range captured.Messages[1:] {
-		reqHistory = append(reqHistory, agent.ChatMessage{Role: item.Role, Content: item.Content})
+		reqHistory = append(reqHistory, agent.ChatMessage{Role: item.Role, Content: contentString(item.Content)})
 	}
 	used := estimateConversationTokens(reqSystem, reqHistory)
 	budget := int(float64(model.contextWindow) * contextCompactionRatio)
@@ -1750,10 +1799,10 @@ func TestGenerateRemapsToolHistoryRolesToUser(t *testing.T) {
 	if captured.Messages[2].Role != "user" {
 		t.Fatalf("expected tool history to be remapped to user, got %+v", captured.Messages[2])
 	}
-	if !strings.Contains(captured.Messages[2].Content, "tool fs.list result") {
+	if !strings.Contains(contentString(captured.Messages[2].Content), "tool fs.list result") {
 		t.Fatalf("expected remapped tool content to be preserved, got %+v", captured.Messages[2])
 	}
-	if captured.Messages[4].Role != "user" || captured.Messages[4].Content != "create foo.txt" {
+	if captured.Messages[4].Role != "user" || contentString(captured.Messages[4].Content) != "create foo.txt" {
 		t.Fatalf("expected last user turn preserved, got %+v", captured.Messages[4])
 	}
 	for _, msg := range captured.Messages {

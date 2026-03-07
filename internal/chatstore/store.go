@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"openclawssy/internal/fsutil"
+	"openclawssy/internal/messagecontent"
 )
 
 var ErrSessionNotFound = errors.New("chatstore: session not found")
@@ -64,12 +65,13 @@ func (s Session) IsClosed() bool {
 }
 
 type Message struct {
-	Role       string    `json:"role"`
-	Content    string    `json:"content"`
-	TS         time.Time `json:"ts"`
-	RunID      string    `json:"run_id,omitempty"`
-	ToolCallID string    `json:"tool_call_id,omitempty"`
-	ToolName   string    `json:"tool_name,omitempty"`
+	Role         string                `json:"role"`
+	Content      string                `json:"content"`
+	ContentParts []messagecontent.Part `json:"content_parts,omitempty"`
+	TS           time.Time             `json:"ts"`
+	RunID        string                `json:"run_id,omitempty"`
+	ToolCallID   string                `json:"tool_call_id,omitempty"`
+	ToolName     string                `json:"tool_name,omitempty"`
 }
 
 type CreateSessionInput struct {
@@ -250,7 +252,11 @@ func (s *Store) AppendMessage(sessionID string, msg Message) error {
 	if strings.TrimSpace(msg.Role) == "" {
 		return fmt.Errorf("chatstore: message role is required")
 	}
+	msg.ContentParts = messagecontent.Normalize(msg.ContentParts)
 	if strings.TrimSpace(msg.Content) == "" {
+		msg.Content = messagecontent.VisibleText(msg.ContentParts)
+	}
+	if strings.TrimSpace(msg.Content) == "" && len(msg.ContentParts) == 0 {
 		return fmt.Errorf("chatstore: message content is required")
 	}
 	if msg.TS.IsZero() {

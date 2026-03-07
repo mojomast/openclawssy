@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"openclawssy/internal/messagecontent"
 )
 
 type traceExecutor struct {
@@ -53,7 +55,7 @@ func (p progressPublishingExecutor) Execute(_ context.Context, input ExecutionIn
 
 func TestQueueRunPersistsSessionAndTrace(t *testing.T) {
 	store := NewInMemoryRunStore()
-	queued, err := QueueRun(context.Background(), store, traceExecutor{result: ExecutionResult{Output: "ok", Trace: map[string]any{"run_id": "trace-run", "prompt_length": float64(12)}}}, "agent-1", "hello", "dashboard", "chat_123", "always")
+	queued, err := QueueRun(context.Background(), store, traceExecutor{result: ExecutionResult{Output: "ok", Trace: map[string]any{"run_id": "trace-run", "prompt_length": float64(12)}}}, "agent-1", "hello", nil, "dashboard", "chat_123", "always")
 	if err != nil {
 		t.Fatalf("queue run: %v", err)
 	}
@@ -85,7 +87,7 @@ func TestQueueRunPersistsSessionAndTrace(t *testing.T) {
 
 func TestQueueRunPersistsTraceOnFailure(t *testing.T) {
 	store := NewInMemoryRunStore()
-	queued, err := QueueRun(context.Background(), store, traceExecutor{result: ExecutionResult{Trace: map[string]any{"run_id": "trace-fail"}}, err: context.DeadlineExceeded}, "agent-1", "hello", "dashboard", "chat_123", "")
+	queued, err := QueueRun(context.Background(), store, traceExecutor{result: ExecutionResult{Trace: map[string]any{"run_id": "trace-fail"}}, err: context.DeadlineExceeded}, "agent-1", "hello", nil, "dashboard", "chat_123", "")
 	if err != nil {
 		t.Fatalf("queue run: %v", err)
 	}
@@ -112,7 +114,7 @@ func TestQueueRunPersistsTraceOnFailure(t *testing.T) {
 func TestWaitForQueuedRunsBlocksUntilCompletion(t *testing.T) {
 	store := NewInMemoryRunStore()
 	release := make(chan struct{})
-	_, err := QueueRun(context.Background(), store, blockingExecutor{release: release}, "agent-1", "hello", "dashboard", "chat_123", "")
+	_, err := QueueRun(context.Background(), store, blockingExecutor{release: release}, "agent-1", "hello", nil, "dashboard", "chat_123", "")
 	if err != nil {
 		t.Fatalf("queue run: %v", err)
 	}
@@ -135,7 +137,7 @@ func TestWaitForQueuedRunsBlocksUntilCompletion(t *testing.T) {
 func TestQueueRunRetriesRetryableExecutorFailureOnce(t *testing.T) {
 	store := NewInMemoryRunStore()
 	exec := &flakyRetryableExecutor{}
-	queued, err := QueueRun(context.Background(), store, exec, "agent-1", "hello", "dashboard", "chat_123", "")
+	queued, err := QueueRun(context.Background(), store, exec, "agent-1", "hello", nil, "dashboard", "chat_123", "")
 	if err != nil {
 		t.Fatalf("queue run: %v", err)
 	}
@@ -167,7 +169,7 @@ func TestQueueRunRetriesRetryableExecutorFailureOnce(t *testing.T) {
 
 func TestQueueRunWritesFallbackOutputWhenExecutorReturnsEmptyText(t *testing.T) {
 	store := NewInMemoryRunStore()
-	queued, err := QueueRun(context.Background(), store, traceExecutor{result: ExecutionResult{Output: "   ", Trace: map[string]any{"run_id": "trace-empty"}}}, "agent-1", "hello", "dashboard", "chat_123", "")
+	queued, err := QueueRun(context.Background(), store, traceExecutor{result: ExecutionResult{Output: "   ", Trace: map[string]any{"run_id": "trace-empty"}}}, "agent-1", "hello", nil, "dashboard", "chat_123", "")
 	if err != nil {
 		t.Fatalf("queue run: %v", err)
 	}
@@ -208,12 +210,12 @@ func TestQueueRunRejectsWhenQueueLimitReached(t *testing.T) {
 	}()
 
 	release := make(chan struct{})
-	_, err := QueueRun(context.Background(), store, blockingExecutor{release: release}, "agent-1", "hello", "dashboard", "chat_123", "")
+	_, err := QueueRun(context.Background(), store, blockingExecutor{release: release}, "agent-1", "hello", nil, "dashboard", "chat_123", "")
 	if err != nil {
 		t.Fatalf("queue first run: %v", err)
 	}
 
-	_, err = QueueRun(context.Background(), store, blockingExecutor{release: release}, "agent-1", "second", "dashboard", "chat_123", "")
+	_, err = QueueRun(context.Background(), store, blockingExecutor{release: release}, "agent-1", "second", nil, "dashboard", "chat_123", "")
 	if !errors.Is(err, ErrQueueFull) {
 		t.Fatalf("expected ErrQueueFull, got %v", err)
 	}
@@ -236,6 +238,7 @@ func TestQueueRunWithOptionsPublishesStatusAndTerminalEvents(t *testing.T) {
 		traceExecutor{result: ExecutionResult{Output: "ok"}},
 		"agent-1",
 		"hello",
+		nil,
 		"dashboard",
 		"chat_123",
 		"",
@@ -288,6 +291,7 @@ func TestQueueRunWithOptionsPublishesProgressEvents(t *testing.T) {
 		progressPublishingExecutor{},
 		"agent-1",
 		"hello",
+		nil,
 		"dashboard",
 		"chat_123",
 		"",
@@ -345,6 +349,7 @@ func TestQueueRunWithOptionsPublishesFailedTerminalEvent(t *testing.T) {
 		traceExecutor{result: ExecutionResult{Trace: map[string]any{"attempt": 1}}, err: context.DeadlineExceeded},
 		"agent-1",
 		"hello",
+		nil,
 		"dashboard",
 		"chat_123",
 		"",
@@ -379,5 +384,31 @@ func TestQueueRunWithOptionsPublishesFailedTerminalEvent(t *testing.T) {
 	}
 	if !seenFailed {
 		t.Fatal("expected failed terminal event")
+	}
+}
+
+func TestQueueRunPersistsContentParts(t *testing.T) {
+	store := NewInMemoryRunStore()
+	parts := []messagecontent.Part{{Type: messagecontent.TypeText, Text: "describe this sticker"}, {Type: messagecontent.TypeImage, MIMEType: "image/webp", Data: "AAAA"}}
+	queued, err := QueueRun(context.Background(), store, traceExecutor{result: ExecutionResult{Output: "ok"}}, "agent-1", "describe this sticker", parts, "dashboard", "chat_123", "")
+	if err != nil {
+		t.Fatalf("queue run: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		run, getErr := store.Get(context.Background(), queued.ID)
+		if getErr != nil {
+			t.Fatalf("get run: %v", getErr)
+		}
+		if run.Status == "completed" {
+			if len(run.ContentParts) != 2 || run.ContentParts[1].Type != messagecontent.TypeImage {
+				t.Fatalf("expected persisted content parts, got %#v", run.ContentParts)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run did not complete in time, last status=%q", run.Status)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

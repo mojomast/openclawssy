@@ -422,7 +422,7 @@ func TestRunnerAppliesSystemPromptExtenderEachTurn(t *testing.T) {
 	tools := &mockTools{results: map[string]ToolCallResult{"call-1": {ID: "call-1", Output: "2026-02-19T00:00:00Z"}}}
 
 	callCount := 0
-	ext := func(_ context.Context, basePrompt string, _ []ChatMessage, _ string, _ []ToolCallResult) string {
+	ext := func(_ context.Context, basePrompt string, _ []ChatMessage, _ string, _ []ToolCallResult, _ string) string {
 		callCount++
 		return appendPromptDirective(basePrompt, "--- RELEVANT MEMORY ---\n[MEM-1] Test memory\n------------------------")
 	}

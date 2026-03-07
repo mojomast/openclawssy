@@ -1,9 +1,16 @@
 package telegram
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
+	"fmt"
+	"image"
+	"image/png"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -11,8 +18,10 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	_ "golang.org/x/image/webp"
 	"openclawssy/internal/channels/chat"
 	"openclawssy/internal/config"
+	"openclawssy/internal/messagecontent"
 )
 
 const (
@@ -29,6 +38,7 @@ type Message struct {
 	AgentID      string
 	Source       string
 	Text         string
+	ContentParts []messagecontent.Part
 	ThinkingMode string
 }
 
@@ -55,15 +65,16 @@ type MessageHandler func(ctx context.Context, msg Message) (Response, error)
 type RunStatusFunc = chat.RunStatusFunc
 
 type Bot struct {
-	cfg       config.TelegramConfig
-	allow     *chat.Allowlist
-	limiter   *chat.RateLimiter
-	handler   MessageHandler
-	runStatus RunStatusFunc
-	outcome   OutcomeResponder
-	api       *tgbotapi.BotAPI
-	closeOnce sync.Once
-	wg        sync.WaitGroup
+	cfg        config.TelegramConfig
+	allow      *chat.Allowlist
+	limiter    *chat.RateLimiter
+	handler    MessageHandler
+	runStatus  RunStatusFunc
+	outcome    OutcomeResponder
+	api        *tgbotapi.BotAPI
+	httpClient *http.Client
+	closeOnce  sync.Once
+	wg         sync.WaitGroup
 }
 
 func New(cfg config.Config, handler MessageHandler, runStatus RunStatusFunc) (*Bot, error) {
@@ -80,7 +91,7 @@ func New(cfg config.Config, handler MessageHandler, runStatus RunStatusFunc) (*B
 	if err != nil {
 		return nil, err
 	}
-	return &Bot{cfg: cfg.Telegram, allow: allow, limiter: limiter, handler: handler, runStatus: runStatus, api: api}, nil
+	return &Bot{cfg: cfg.Telegram, allow: allow, limiter: limiter, handler: handler, runStatus: runStatus, api: api, httpClient: &http.Client{Timeout: 20 * time.Second}}, nil
 }
 
 func (b *Bot) Start() error {
@@ -126,16 +137,25 @@ func (b *Bot) onUpdate(update tgbotapi.Update) {
 	}
 	rawText := strings.TrimSpace(m.Text)
 	slog.Debug("telegram: received message", "from", m.From.UserName, "from_id", m.From.ID, "chat_id", m.Chat.ID, "text", rawText, "command_prefix", b.cfg.CommandPrefix)
-	content := normalizeInboundMessage(rawText, b.cfg.CommandPrefix)
-	if content == "" {
+	content, contentParts, mediaErr := b.normalizeIncomingContent(m)
+	if mediaErr != nil {
+		b.sendMessage(m.Chat.ID, m.MessageID, formatTelegramError(mediaErr))
+		return
+	}
+	if content == "" && len(contentParts) == 0 {
 		slog.Debug("telegram: message filtered out by normalizeInboundMessage", "raw", rawText, "prefix", b.cfg.CommandPrefix)
 		return
 	}
-	content, thinkingMode, parseErr := parseThinkingOverride(content)
-	if parseErr != nil {
-		slog.Debug("telegram: thinking parse error", "err", parseErr)
-		b.sendMessage(m.Chat.ID, m.MessageID, formatTelegramError(parseErr))
-		return
+	thinkingMode := ""
+	if strings.TrimSpace(content) != "" {
+		parsedContent, parsedThinkingMode, parseErr := parseThinkingOverride(content)
+		if parseErr != nil {
+			slog.Debug("telegram: thinking parse error", "err", parseErr)
+			b.sendMessage(m.Chat.ID, m.MessageID, formatTelegramError(parseErr))
+			return
+		}
+		content = parsedContent
+		thinkingMode = parsedThinkingMode
 	}
 
 	userID := strconv.FormatInt(m.From.ID, 10)
@@ -166,6 +186,7 @@ func (b *Bot) onUpdate(update tgbotapi.Update) {
 		AgentID:      agentID,
 		Source:       "telegram",
 		Text:         content,
+		ContentParts: contentParts,
 		ThinkingMode: thinkingMode,
 	})
 	if err != nil {
@@ -193,6 +214,77 @@ func normalizeInboundMessage(content, commandPrefix string) string {
 
 func parseThinkingOverride(content string) (string, string, error) {
 	return chat.ParseThinkingOverride(content)
+}
+
+func (b *Bot) normalizeIncomingContent(m *tgbotapi.Message) (string, []messagecontent.Part, error) {
+	content := normalizeInboundMessage(strings.TrimSpace(m.Text), b.cfg.CommandPrefix)
+	if content == "" && m.Sticker == nil {
+		return "", nil, nil
+	}
+	parts := make([]messagecontent.Part, 0, 2)
+	if strings.TrimSpace(content) != "" {
+		parts = append(parts, messagecontent.Part{Type: messagecontent.TypeText, Text: strings.TrimSpace(content)})
+	}
+	if m.Sticker != nil {
+		imagePart, err := b.stickerPart(m.Sticker)
+		if err != nil {
+			return "", nil, err
+		}
+		parts = append(parts, imagePart)
+	}
+	return content, messagecontent.Normalize(parts), nil
+}
+
+func (b *Bot) stickerPart(sticker *tgbotapi.Sticker) (messagecontent.Part, error) {
+	if sticker == nil || strings.TrimSpace(sticker.FileID) == "" {
+		return messagecontent.Part{}, errors.New("telegram sticker is missing file id")
+	}
+	if sticker.IsAnimated {
+		return messagecontent.Part{}, errors.New("animated telegram stickers are not supported yet")
+	}
+	url, err := b.api.GetFileDirectURL(sticker.FileID)
+	if err != nil {
+		return messagecontent.Part{}, fmt.Errorf("download telegram sticker url: %w", err)
+	}
+	resp, err := b.httpClient.Get(url)
+	if err != nil {
+		return messagecontent.Part{}, fmt.Errorf("download telegram sticker: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return messagecontent.Part{}, fmt.Errorf("download telegram sticker: status=%d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
+	if err != nil {
+		return messagecontent.Part{}, fmt.Errorf("read telegram sticker: %w", err)
+	}
+	if len(body) == 0 {
+		return messagecontent.Part{}, errors.New("telegram sticker download returned empty body")
+	}
+	pngBody, err := convertStickerToPNG(body)
+	if err != nil {
+		return messagecontent.Part{}, fmt.Errorf("convert telegram sticker to png: %w", err)
+	}
+	return messagecontent.Part{Type: messagecontent.TypeImage, MIMEType: "image/png", Data: base64.StdEncoding.EncodeToString(pngBody)}, nil
+}
+
+func convertStickerToPNG(body []byte) ([]byte, error) {
+	img, _, err := image.Decode(bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	return encodePNG(img)
+}
+
+func encodePNG(img image.Image) ([]byte, error) {
+	if img == nil {
+		return nil, errors.New("nil image")
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func formatTelegramError(err error) string {

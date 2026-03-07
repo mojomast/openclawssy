@@ -5,28 +5,31 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"openclawssy/internal/messagecontent"
 )
 
 var ErrRunNotFound = errors.New("run not found")
 
 type Run struct {
-	ID           string         `json:"id"`
-	AgentID      string         `json:"agent_id"`
-	Message      string         `json:"message"`
-	ThinkingMode string         `json:"thinking_mode,omitempty"`
-	Source       string         `json:"source,omitempty"`
-	SessionID    string         `json:"session_id,omitempty"`
-	Status       string         `json:"status"`
-	Output       string         `json:"output,omitempty"`
-	ArtifactPath string         `json:"artifact_path,omitempty"`
-	DurationMS   int64          `json:"duration_ms,omitempty"`
-	ToolCalls    int            `json:"tool_calls,omitempty"`
-	Provider     string         `json:"provider,omitempty"`
-	Model        string         `json:"model,omitempty"`
-	Trace        map[string]any `json:"trace,omitempty"`
-	Error        string         `json:"error,omitempty"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
+	ID           string                `json:"id"`
+	AgentID      string                `json:"agent_id"`
+	Message      string                `json:"message"`
+	ContentParts []messagecontent.Part `json:"content_parts,omitempty"`
+	ThinkingMode string                `json:"thinking_mode,omitempty"`
+	Source       string                `json:"source,omitempty"`
+	SessionID    string                `json:"session_id,omitempty"`
+	Status       string                `json:"status"`
+	Output       string                `json:"output,omitempty"`
+	ArtifactPath string                `json:"artifact_path,omitempty"`
+	DurationMS   int64                 `json:"duration_ms,omitempty"`
+	ToolCalls    int                   `json:"tool_calls,omitempty"`
+	Provider     string                `json:"provider,omitempty"`
+	Model        string                `json:"model,omitempty"`
+	Trace        map[string]any        `json:"trace,omitempty"`
+	Error        string                `json:"error,omitempty"`
+	CreatedAt    time.Time             `json:"created_at"`
+	UpdatedAt    time.Time             `json:"updated_at"`
 }
 
 type RunStore interface {

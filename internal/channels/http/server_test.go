@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"openclawssy/internal/messagecontent"
 )
 
 type testChatConnector struct {
@@ -47,7 +49,9 @@ func (e cancelBlockingExecutor) Execute(ctx context.Context, _ ExecutionInput) (
 
 func (c testChatConnector) HandleMessage(ctx context.Context, msg ChatMessage) (ChatResponse, error) {
 	_ = ctx
-	_ = msg
+	if strings.TrimSpace(msg.Message) == "" && len(msg.ContentParts) == 0 {
+		return ChatResponse{}, errors.New("missing content")
+	}
 	if c.err != nil {
 		return ChatResponse{}, c.err
 	}
@@ -55,6 +59,33 @@ func (c testChatConnector) HandleMessage(ctx context.Context, msg ChatMessage) (
 		return c.response, nil
 	}
 	return ChatResponse{ID: "run-chat", Status: "queued"}, nil
+}
+
+func TestServer_ChatAcceptsContentPartsWithoutMessage(t *testing.T) {
+	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore(), Executor: NopExecutor{}, Chat: testChatConnector{response: ChatResponse{ID: "run-chat", Status: "queued"}}})
+	body := bytes.NewBufferString(`{"user_id":"u1","room_id":"r1","content_parts":[{"type":"text","text":"use this sticker"},{"type":"image","mime_type":"image/webp","data":"AAAA"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/messages", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected %d, got %d body=%s", http.StatusAccepted, rr.Code, rr.Body.String())
+	}
+}
+
+func TestServer_ChatRejectsEmptyMessageAndContentParts(t *testing.T) {
+	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore(), Executor: NopExecutor{}, Chat: testChatConnector{}})
+	body, err := json.Marshal(ChatMessage{UserID: "u1", RoomID: "r1", ContentParts: []messagecontent.Part{}})
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/messages", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d", http.StatusBadRequest, rr.Code)
+	}
 }
 
 func TestServer_DefaultAddrIsLoopback(t *testing.T) {

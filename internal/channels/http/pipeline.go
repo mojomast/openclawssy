@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"openclawssy/internal/messagecontent"
 )
 
 type ExecutionResult struct {
@@ -33,16 +35,17 @@ type QueueRunOptions struct {
 	Tracker  *ActiveRunTracker
 }
 
-func QueueRun(ctx context.Context, store RunStore, executor RunExecutor, agentID, message, source, sessionID, thinkingMode string) (Run, error) {
-	return QueueRunWithOptions(ctx, store, executor, agentID, message, source, sessionID, thinkingMode, QueueRunOptions{})
+func QueueRun(ctx context.Context, store RunStore, executor RunExecutor, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (Run, error) {
+	return QueueRunWithOptions(ctx, store, executor, agentID, message, contentParts, source, sessionID, thinkingMode, QueueRunOptions{})
 }
 
-func QueueRunWithOptions(ctx context.Context, store RunStore, executor RunExecutor, agentID, message, source, sessionID, thinkingMode string, opts QueueRunOptions) (Run, error) {
+func QueueRunWithOptions(ctx context.Context, store RunStore, executor RunExecutor, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string, opts QueueRunOptions) (Run, error) {
 	now := time.Now().UTC()
 	run := Run{
 		ID:           newRunID(),
 		AgentID:      agentID,
 		Message:      message,
+		ContentParts: messagecontent.Normalize(contentParts),
 		ThinkingMode: strings.TrimSpace(thinkingMode),
 		Source:       source,
 		SessionID:    sessionID,
@@ -84,6 +87,7 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 	input := ExecutionInput{
 		AgentID:      run.AgentID,
 		Message:      run.Message,
+		ContentParts: append([]messagecontent.Part(nil), run.ContentParts...),
 		Source:       run.Source,
 		SessionID:    run.SessionID,
 		ThinkingMode: run.ThinkingMode,
