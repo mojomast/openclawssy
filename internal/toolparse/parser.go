@@ -69,6 +69,30 @@ var toolAliases = map[string]string{
 	"bash.exec":            "shell.exec",
 	"terminal.exec":        "shell.exec",
 	"terminal.run":         "shell.exec",
+	// becomussy continuity tools
+	"becomussy.resume":             "becomussy.resume",
+	"becomussy.memory.create":      "becomussy.memory.create",
+	"becomussy.memory.search":      "becomussy.memory.search",
+	"becomussy.memory.get":         "becomussy.memory.get",
+	"becomussy.memory.reinforce":   "becomussy.memory.reinforce",
+	"becomussy.journal.create":     "becomussy.journal.create",
+	"becomussy.journal.search":     "becomussy.journal.search",
+	"becomussy.threads.list":       "becomussy.threads.list",
+	"becomussy.threads.create":     "becomussy.threads.create",
+	"becomussy.projects.list":      "becomussy.projects.list",
+	"becomussy.projects.create":    "becomussy.projects.create",
+	"becomussy.selfmodel.current":  "becomussy.selfmodel.current",
+	"becomussy.selfmodel.history":  "becomussy.selfmodel.history",
+	"becomussy.selfmodel.propose":  "becomussy.selfmodel.propose",
+	"becomussy.commitments.list":   "becomussy.commitments.list",
+	"becomussy.commitments.create": "becomussy.commitments.create",
+	"becomussy.approvals.pending":  "becomussy.approvals.pending",
+	"becomussy.audit.list":         "becomussy.audit.list",
+	// becomussy aliases
+	"continuity.resume":       "becomussy.resume",
+	"becomussy.memory.store":  "becomussy.memory.create",
+	"becomussy.journal.write": "becomussy.journal.create",
+	"becomussy.reflect":       "becomussy.journal.create",
 }
 
 type Extraction struct {

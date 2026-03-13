@@ -358,7 +358,7 @@ func TestLoadPromptDocsIncludesRuntimeContext(t *testing.T) {
 		t.Fatalf("init: %v", err)
 	}
 
-	docs, err := e.loadPromptDocs("default")
+	docs, err := e.loadPromptDocs("default", "")
 	if err != nil {
 		t.Fatalf("load prompt docs: %v", err)
 	}
@@ -513,7 +513,7 @@ func TestLoadPromptDocsIncludesIdentityBootstrapWhenSoulEmpty(t *testing.T) {
 	identityPath := filepath.Join(root, ".openclawssy", "agents", "default", "identity.json")
 	_ = os.Remove(identityPath)
 
-	docs, err := e.loadPromptDocs("default")
+	docs, err := e.loadPromptDocs("default", "")
 	if err != nil {
 		t.Fatalf("load prompt docs: %v", err)
 	}
@@ -547,7 +547,7 @@ func TestLoadPromptDocsIncludesIdentityBootstrapWhenSoulIsDefaultScaffold(t *tes
 	identityPath := filepath.Join(root, ".openclawssy", "agents", "default", "identity.json")
 	_ = os.Remove(identityPath)
 
-	docs, err := e.loadPromptDocs("default")
+	docs, err := e.loadPromptDocs("default", "")
 	if err != nil {
 		t.Fatalf("load prompt docs: %v", err)
 	}
@@ -579,7 +579,7 @@ func TestLoadPromptDocsSkipsIdentityBootstrapWhenSoulIsCustomized(t *testing.T) 
 		t.Fatalf("write custom SOUL.md: %v", err)
 	}
 
-	docs, err := e.loadPromptDocs("default")
+	docs, err := e.loadPromptDocs("default", "")
 	if err != nil {
 		t.Fatalf("load prompt docs: %v", err)
 	}

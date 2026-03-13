@@ -25,6 +25,12 @@ services:
       # This is a Unix socket mount, not HTTP. The docker CLI inside the
       # container talks to the host daemon directly through this socket.
       - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - default
+      - infra
+    depends_on:
+      becomussy:
+        condition: service_healthy
     # Optional: enable advanced network diagnostics (tcpdump, some nmap modes)
     # cap_add:
     #   - NET_ADMIN
@@ -36,3 +42,30 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+
+  becomussy:
+    build:
+      context: /tmp/becomussy/backend
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${BECOMUSSY_DB_USER:-becoming}:${BECOMUSSY_DB_PASS:-changeme}@infrastructure-db-1:5432/becoming
+      - SYNC_DATABASE_URL=postgresql://${BECOMUSSY_DB_USER:-becoming}:${BECOMUSSY_DB_PASS:-changeme}@infrastructure-db-1:5432/becoming
+      - REDIS_URL=redis://infrastructure-redis-1:6379/0
+      - SECRET_KEY=${BECOMUSSY_SECRET_KEY:-changeme}
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+    networks:
+      - default
+      - infra
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+networks:
+  default:
+  infra:
+    external: true
+    name: infrastructure_default

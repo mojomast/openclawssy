@@ -29,6 +29,7 @@ type Config struct {
 	Secrets   SecretsConfig   `json:"secrets"`
 	Memory    MemoryConfig    `json:"memory"`
 	OpenClaw  OpenClawConfig  `json:"openclaw"`
+	Becomussy BecomussyConfig `json:"becomussy"`
 }
 
 const (
@@ -236,6 +237,16 @@ type OpenClawConfig struct {
 	Remote OpenClawRemoteConfig `json:"remote"`
 }
 
+// BecomussyConfig configures the becomussy continuity system integration.
+type BecomussyConfig struct {
+	Enabled   bool              `json:"enabled"`
+	BaseURL   string            `json:"base_url"`
+	UserID    string            `json:"user_id,omitempty"`
+	UserRole  string            `json:"user_role,omitempty"`
+	TimeoutMS int               `json:"timeout_ms,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
+}
+
 type OpenClawRemoteConfig struct {
 	Enabled          bool   `json:"enabled"`
 	RepositoryURL    string `json:"repository_url"`
@@ -394,6 +405,13 @@ func Default() Config {
 				PollTimeoutMS:    60000,
 				PreferTailnetWSS: true,
 			},
+		},
+		Becomussy: BecomussyConfig{
+			Enabled:   false,
+			BaseURL:   "http://localhost:8000",
+			UserID:    "openclawssy-agent",
+			UserRole:  "agent_runtime",
+			TimeoutMS: 15000,
 		},
 	}
 }
@@ -574,6 +592,20 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.OpenClaw.Remote.PollTimeoutMS <= 0 {
 		c.OpenClaw.Remote.PollTimeoutMS = d.OpenClaw.Remote.PollTimeoutMS
+	}
+
+	// Becomussy defaults
+	if strings.TrimSpace(c.Becomussy.BaseURL) == "" {
+		c.Becomussy.BaseURL = d.Becomussy.BaseURL
+	}
+	if strings.TrimSpace(c.Becomussy.UserID) == "" {
+		c.Becomussy.UserID = d.Becomussy.UserID
+	}
+	if strings.TrimSpace(c.Becomussy.UserRole) == "" {
+		c.Becomussy.UserRole = d.Becomussy.UserRole
+	}
+	if c.Becomussy.TimeoutMS <= 0 {
+		c.Becomussy.TimeoutMS = d.Becomussy.TimeoutMS
 	}
 
 	if c.Providers.OpenAI.BaseURL == "" {
@@ -814,6 +846,32 @@ func (c Config) Validate() error {
 	}
 	if c.OpenClaw.Remote.PollTimeoutMS < c.OpenClaw.Remote.PollIntervalMS {
 		return errors.New("openclaw.remote.poll_timeout_ms cannot be less than openclaw.remote.poll_interval_ms")
+	}
+
+	// Becomussy validation
+	if c.Becomussy.Enabled {
+		if strings.TrimSpace(c.Becomussy.BaseURL) == "" {
+			return errors.New("becomussy.base_url is required when becomussy.enabled is true")
+		}
+		baseURL, err := url.Parse(strings.TrimSpace(c.Becomussy.BaseURL))
+		if err != nil {
+			return fmt.Errorf("becomussy.base_url is invalid: %w", err)
+		}
+		scheme := strings.ToLower(baseURL.Scheme)
+		if scheme != "http" && scheme != "https" {
+			return fmt.Errorf("becomussy.base_url must use http or https scheme, got %q", baseURL.Scheme)
+		}
+		if strings.TrimSpace(c.Becomussy.UserID) == "" {
+			return errors.New("becomussy.user_id is required when becomussy.enabled is true")
+		}
+		validRoles := map[string]bool{"agent_runtime": true, "steward": true, "reviewer": true, "admin": true, "observer": true}
+		role := strings.ToLower(strings.TrimSpace(c.Becomussy.UserRole))
+		if !validRoles[role] {
+			return fmt.Errorf("becomussy.user_role must be one of agent_runtime|steward|reviewer|admin|observer, got %q", c.Becomussy.UserRole)
+		}
+	}
+	if c.Becomussy.TimeoutMS < 1000 || c.Becomussy.TimeoutMS > 120000 {
+		return errors.New("becomussy.timeout_ms must be between 1000 and 120000")
 	}
 
 	return nil

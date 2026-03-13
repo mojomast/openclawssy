@@ -250,7 +250,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		defer e.runTracker.Remove(runID)
 	}
 
-	docs, err := e.loadPromptDocs(agentID)
+	docs, err := e.loadPromptDocs(agentID, message)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -1091,7 +1091,7 @@ func appendToolCallMessage(store *chatstore.Store, sessionID, runID string, rec 
 	return nil
 }
 
-func (e *Engine) loadPromptDocs(agentID string) ([]agent.ArtifactDoc, error) {
+func (e *Engine) loadPromptDocs(agentID, userMessage string) ([]agent.ArtifactDoc, error) {
 	agentRoot := filepath.Join(e.agentsDir, agentID)
 	docs := make([]agent.ArtifactDoc, 0, len(promptDocOrder)+2)
 	soulContent := ""
@@ -1133,12 +1133,62 @@ func (e *Engine) loadPromptDocs(agentID string) ([]agent.ArtifactDoc, error) {
 		}
 	}
 
+	// Skip bootstrap when user message looks like a direct tool invocation —
+	// the caller wants the agent to execute, not run identity setup.
+	if needsBootstrap && messageIsToolInvocation(userMessage) {
+		needsBootstrap = false
+	}
+
 	if needsBootstrap {
 		docs = append(docs, agent.ArtifactDoc{Name: "IDENTITY_BOOTSTRAP.md", Content: identityBootstrapDoc()})
 	}
 	docs = append(docs, agent.ArtifactDoc{Name: "RUNTIME_CONTEXT.md", Content: runtimeContextDoc(e.workspaceDir)})
 	docs = append(docs, agent.ArtifactDoc{Name: "TOOL_CALLING_BEST_PRACTICES.md", Content: toolCallingBestPracticesDocWithAgentTools()})
 	return docs, nil
+}
+
+// messageIsToolInvocation returns true when the user message looks like a direct
+// tool call (e.g. "becomussy.resume", "memory.search", "fs.read") rather than
+// conversational text. This lets agent.run invocations skip identity bootstrap.
+func messageIsToolInvocation(msg string) bool {
+	trimmed := strings.TrimSpace(msg)
+	if trimmed == "" {
+		return false
+	}
+	// A tool invocation is typically a dotted identifier, optionally followed
+	// by JSON arguments or nothing else.  We detect the common pattern:
+	//   <namespace>.<action>[.<sub>]  with no spaces in the name portion.
+	first := trimmed
+	if idx := strings.IndexByte(trimmed, ' '); idx > 0 {
+		first = trimmed[:idx]
+	}
+	if idx := strings.IndexByte(trimmed, '{'); idx > 0 && idx < len(first) {
+		first = trimmed[:idx]
+	}
+	first = strings.TrimSpace(first)
+	parts := strings.Split(first, ".")
+	if len(parts) < 2 {
+		return false
+	}
+	for _, p := range parts {
+		if p == "" {
+			return false
+		}
+	}
+	// Known tool namespaces that should bypass bootstrap
+	knownPrefixes := []string{
+		"becomussy.", "memory.", "fs.", "code.", "config.", "secrets.",
+		"skill.", "scheduler.", "session.", "agent.", "policy.", "run.",
+		"metrics.", "http.", "net.", "shell.", "bash.", "terminal.",
+		"time.", "decision.",
+	}
+	lower := strings.ToLower(first) + "."
+	for _, prefix := range knownPrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func identityBootstrapDoc() string {
@@ -1616,6 +1666,28 @@ func (e *Engine) allowedTools(cfg config.Config) []string {
 	}
 	if cfg.Shell.EnableExec && cfg.Sandbox.Active && strings.ToLower(cfg.Sandbox.Provider) != "none" {
 		toolsList = append(toolsList, "shell.exec")
+	}
+	if cfg.Becomussy.Enabled {
+		toolsList = append(toolsList,
+			"becomussy.resume",
+			"becomussy.memory.create",
+			"becomussy.memory.search",
+			"becomussy.memory.get",
+			"becomussy.memory.reinforce",
+			"becomussy.journal.create",
+			"becomussy.journal.search",
+			"becomussy.threads.list",
+			"becomussy.threads.create",
+			"becomussy.projects.list",
+			"becomussy.projects.create",
+			"becomussy.selfmodel.current",
+			"becomussy.selfmodel.history",
+			"becomussy.selfmodel.propose",
+			"becomussy.commitments.list",
+			"becomussy.commitments.create",
+			"becomussy.approvals.pending",
+			"becomussy.audit.list",
+		)
 	}
 	return toolsList
 }

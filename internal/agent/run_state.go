@@ -28,6 +28,8 @@ const (
 	agentCreateGlobalCap         = 8
 	shellExecRepetitionCap       = 3
 	memoryWriteRepetitionCap     = 2
+	becomussyWriteRepetitionCap  = 2
+	becomussyReadRepetitionCap   = 6
 	noChoicesRetryCap            = 3
 	noChoicesRetryDelay          = 300 * time.Millisecond
 	transientModelRetryCap       = 3
@@ -959,6 +961,18 @@ func repeatedCallRepetitionKey(call ToolCallRequest) (string, int, bool) {
 		return "memory.write|" + key, memoryWriteRepetitionCap, true
 	}
 
+	// becomussy tools: write tools (create, propose, reinforce) get a tight
+	// cap to prevent duplicate entries; read tools (search, list, get,
+	// resume, current, history, pending) get a higher cap because they are
+	// idempotent and commonly re-invoked during batch workflows.
+	if strings.HasPrefix(name, "becomussy.") {
+		cap := becomussyReadRepetitionCap
+		if strings.HasSuffix(name, ".create") || strings.HasSuffix(name, ".propose") || strings.HasSuffix(name, ".reinforce") {
+			cap = becomussyWriteRepetitionCap
+		}
+		return name + "|" + string(call.Arguments), cap, true
+	}
+
 	if name != "fs.write" && name != "fs.append" && name != "fs.read" && name != "shell.exec" {
 		return "", 0, false
 	}
@@ -1043,6 +1057,13 @@ func toolCallCacheKey(call ToolCallRequest) string {
 	// contents change after writes.  Returning stale cached results causes the
 	// agent to believe files are missing or have old content.
 	if name == "fs.list" || name == "fs.read" {
+		return "|"
+	}
+	// becomussy tools should not be cached — each call should either
+	// execute fresh (on first use) or be caught by repetition detection
+	// (on subsequent identical calls) so the model gets the explicit
+	// "repetition detected" signal to stop and produce a text response.
+	if strings.HasPrefix(name, "becomussy.") {
 		return "|"
 	}
 	if name == "http.request" || name == "net.fetch" {

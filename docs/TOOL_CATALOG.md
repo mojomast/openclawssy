@@ -11,6 +11,10 @@ All tools are deny-by-default through capability policy, and all tool inputs are
 - `bash.exec` -> `shell.exec`
 - `terminal.exec` -> `shell.exec`
 - `terminal.run` -> `shell.exec`
+- `continuity.resume` -> `becomussy.resume`
+- `becomussy.memory.store` -> `becomussy.memory.create`
+- `becomussy.journal.write` -> `becomussy.journal.create`
+- `becomussy.reflect` -> `becomussy.journal.create`
 
 ## Filesystem and Code
 
@@ -229,3 +233,96 @@ All tools are deny-by-default through capability policy, and all tool inputs are
 - Required: `command`
 - Optional: `args`, `timeout_ms`
 - Notes: available only when shell execution is enabled by policy; supports command-prefix allowlist and shell fallback (`bash` -> `/bin/bash` -> `/usr/bin/bash` -> `sh`).
+
+## Becomussy Continuity Tools
+
+Requires `becomussy.enabled=true` in config. All tools communicate with a running becomussy instance at `becomussy.base_url`.
+
+### Config Fields
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `becomussy.enabled` | `bool` | `false` | Enable becomussy integration |
+| `becomussy.base_url` | `string` | `http://localhost:8000` | Becomussy API base URL |
+| `becomussy.user_id` | `string` | `openclawssy-agent` | X-User-Id header value |
+| `becomussy.user_role` | `string` | `agent_runtime` | X-User-Role header value |
+| `becomussy.timeout_ms` | `int` | `15000` | HTTP request timeout in ms |
+| `becomussy.headers` | `object` | `null` | Extra HTTP headers to send |
+
+### `becomussy.resume`
+- Required: none
+- Optional: `query`, `token_budget`
+- Notes: loads the continuity resume bundle (threads, commitments, memories, identity changes, constraints, recommended next actions). Call at session start.
+
+### `becomussy.memory.create`
+- Required: `memory_type` (episodic|semantic|autobiographical|working|relational)
+- Optional: `summary`, `statement`, `importance_score`, `confidence_level`, `metadata`, `source_kind`, `source_ref`
+
+### `becomussy.memory.search`
+- Required: none
+- Optional: `q`, `memory_type`, `date_from`, `date_to`, `confidence`, `limit`, `offset`
+
+### `becomussy.memory.get`
+- Required: `id`
+- Optional: none
+
+### `becomussy.memory.reinforce`
+- Required: `id`, `reason`
+- Optional: `source_ref`
+- Notes: bumps the salience score of a memory item.
+
+### `becomussy.journal.create`
+- Required: `entry_type`, `title`, `body_md`
+- Optional: `confidence_level`, `tags`, `linked_memory_ids`, `linked_project_ids`, `linked_identity_themes`
+
+### `becomussy.journal.search`
+- Required: none
+- Optional: `keyword`, `entry_type`, `date_from`, `date_to`, `linked_project_id`, `linked_theme`, `limit`, `offset`
+
+### `becomussy.threads.list`
+- Required: none
+- Optional: `status`, `thread_type`, `limit`, `offset`
+
+### `becomussy.threads.create`
+- Required: `title`
+- Optional: `description`, `thread_type`, `urgency` (1-10), `importance` (1-10), `next_action`, `blocker`
+
+### `becomussy.projects.list`
+- Required: none
+- Optional: `status`, `limit`, `offset`
+
+### `becomussy.projects.create`
+- Required: `name`
+- Optional: `purpose`, `origin`, `current_phase`, `linked_themes`, `linked_people`, `status`
+
+### `becomussy.selfmodel.current`
+- Required: none
+- Optional: none
+- Notes: returns the latest self-model version with descriptive, aspirational, constrained, and relational facets.
+
+### `becomussy.selfmodel.history`
+- Required: none
+- Optional: none
+
+### `becomussy.selfmodel.propose`
+- Required: `revision_type`, `target_entity_type`, `summary`
+- Optional: `target_entity_id`, `rationale`, `evidence_links`, `proposed_diff`
+- Notes: creates a revision proposal gated by risk-based governance (high-risk identity changes require human approval).
+
+### `becomussy.commitments.list`
+- Required: none
+- Optional: `project_id`, `status`, `overdue`, `limit`, `offset`
+
+### `becomussy.commitments.create`
+- Required: `commitment_text`
+- Optional: `project_id`, `made_to`, `due_date`, `risk_if_missed`
+
+### `becomussy.approvals.pending`
+- Required: none
+- Optional: none
+- Notes: lists pending governance approval items (requires steward/admin/reviewer role in becomussy).
+
+### `becomussy.audit.list`
+- Required: none
+- Optional: `entity_type`, `event_type`, `actor`, `limit`, `offset`
+- Notes: lists audit events from becomussy (requires admin/steward/observer role in becomussy).

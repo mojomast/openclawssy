@@ -1037,6 +1037,76 @@ func TestRunnerBlocksRepeatedAgentRunForNormalizedTaskID(t *testing.T) {
 	}
 }
 
+func TestRunnerBecomussyToolAllowsOneRetryThenBlocks(t *testing.T) {
+	journalArgs := []byte(`{"entry_type":"reflection","title":"Chaos Theory","body_md":"# Chaos Theory\nExploring deterministic systems."}`)
+	model := &mockModel{responses: []ModelResponse{
+		// First attempt: succeeds
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "becomussy.journal.create", Arguments: journalArgs}}},
+		// Second attempt (retry): still allowed with cap=2
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "becomussy.journal.create", Arguments: journalArgs}}},
+		// Third attempt: should be blocked by repetition detection
+		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "becomussy.journal.create", Arguments: journalArgs}}},
+		{FinalText: "done"},
+	}}
+
+	tools := &mockTools{}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "write journal"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	// First two calls should execute (cap=2 allows two attempts).
+	if len(tools.calls) != 2 {
+		t.Fatalf("expected first two becomussy calls to execute, got %d executions", len(tools.calls))
+	}
+	// Third call should be blocked by repetition detection.
+	if len(out.ToolCalls) != 3 {
+		t.Fatalf("expected three tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[2].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on third becomussy call, got %q", out.ToolCalls[2].Result.Error)
+	}
+}
+
+func TestRunnerBecomussyReadToolsGetHigherRepetitionCap(t *testing.T) {
+	searchArgs := []byte(`{"query":"consciousness","limit":10}`)
+	// Build 7 iterations: calls 1-6 should execute (cap=6), call 7 should be blocked.
+	var responses []ModelResponse
+	for i := 1; i <= 7; i++ {
+		responses = append(responses, ModelResponse{
+			ToolCalls: []ToolCallRequest{{ID: fmt.Sprintf("%d", i), Name: "becomussy.journal.search", Arguments: searchArgs}},
+		})
+	}
+	responses = append(responses, ModelResponse{FinalText: "done"})
+
+	model := &mockModel{responses: responses}
+	tools := &mockTools{}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "search journal"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	// First 6 calls should execute (read cap=6).
+	if len(tools.calls) != 6 {
+		t.Fatalf("expected 6 becomussy.journal.search executions, got %d", len(tools.calls))
+	}
+	// 7th call should be blocked.
+	if len(out.ToolCalls) != 7 {
+		t.Fatalf("expected 7 tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[6].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on 7th search call, got %q", out.ToolCalls[6].Result.Error)
+	}
+}
+
 func TestRunnerFinalizesWithModelWhenToolCapReached(t *testing.T) {
 	model := &mockModel{responses: []ModelResponse{
 		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "shell.exec", Arguments: []byte(`{"command":"bash","args":["-lc","nmap -sT 127.0.0.1"]}`)}}},
