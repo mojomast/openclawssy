@@ -1,0 +1,24 @@
+commands:
+  build: go build -o ./bin/openclawssy ./cmd/openclawssy
+  test: go test -parallel 2 ./...
+  lint: go vet ./...
+  fmt: gofmt -w $(go list -f '{{ range .GoFiles }}{{ $.Dir }}/{{ . }} {{ end }}' ./...)
+  typecheck-ui: cd internal/channels/dashboard/ui && npx tsc --noEmit
+  build-ui: cd internal/channels/dashboard/ui && npx vite build
+  test-ui: cd internal/channels/dashboard/ui && npx playwright test
+  install-ui: cd internal/channels/dashboard/ui && npm install
+
+services:
+  openclawssy:
+    start: "docker compose up -d openclawssy"
+    stop: "docker compose stop openclawssy"
+    healthcheck: "curl -sf http://localhost:8081/dashboard"
+    port: 8081
+    depends_on: []
+
+  vite-dev:
+    start: "cd internal/channels/dashboard/ui && npx vite --port 5175 &"
+    stop: "lsof -ti :5175 | xargs kill 2>/dev/null || true"
+    healthcheck: "curl -sf http://localhost:5175"
+    port: 5175
+    depends_on: []
