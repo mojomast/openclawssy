@@ -121,6 +121,7 @@ const (
 var builtInSkillCatalog = skillcatalog.Catalog()
 
 //go:embed ui/*
+//go:embed ui/dist/*
 var dashboardUIFS embed.FS
 
 func New(rootDir string, store httpchannel.RunStore, schedulerStore ...*scheduler.Store) *Handler {
@@ -332,10 +333,15 @@ func (h *Handler) serveDashboard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	content, err := dashboardUIFS.ReadFile("ui/index.html")
+	// Serve React build from dist/ if available, fallback to legacy index.html
+	content, err := dashboardUIFS.ReadFile("ui/dist/index.html")
 	if err != nil {
-		http.Error(w, "dashboard ui not available", http.StatusInternalServerError)
-		return
+		// Fallback to original index.html for development
+		content, err = dashboardUIFS.ReadFile("ui/index.html")
+		if err != nil {
+			http.Error(w, "dashboard ui not available", http.StatusInternalServerError)
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(content)
@@ -363,10 +369,14 @@ func (h *Handler) serveDashboardStatic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := dashboardUIFS.ReadFile("ui/" + assetPath)
+	// Try to serve from dist/ first (React build), then fallback to ui/ (legacy)
+	content, err := dashboardUIFS.ReadFile("ui/dist/" + assetPath)
 	if err != nil {
-		http.NotFound(w, r)
-		return
+		content, err = dashboardUIFS.ReadFile("ui/" + assetPath)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
 	}
 
 	contentType := mime.TypeByExtension(filepath.Ext(assetPath))
