@@ -96,7 +96,9 @@ func (r *Resolver) Resolve(agentID string, opts *ResolveOptions) (AgentContract,
 	}
 
 	if profile, ok := cfg.Agents.Profiles[resolvedAgentID]; ok {
-		applyProfileModelOverrides(&contract, profile, contract.Inheritance.Source)
+		if cfg.Agents.AllowAgentModelOverrides {
+			applyProfileModelOverrides(&contract, profile, contract.Inheritance.Source)
+		}
 		if profile.SelfImprovement {
 			contract.Mission.Goals = appendUnique(contract.Mission.Goals, "self-improvement")
 			setInheritanceSource(contract.Inheritance.Source, "mission.goals", InheritanceSourceAgentProfile)

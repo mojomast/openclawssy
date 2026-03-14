@@ -95,6 +95,48 @@ func TestResolve(t *testing.T) {
 			},
 		},
 		{
+			name:    "does not apply profile model overrides when model override gate is disabled",
+			agentID: "coder",
+			configure: func(cfg *config.Config) {
+				cfg.Agents.AllowAgentModelOverrides = false
+				cfg.Agents.Profiles["coder"] = config.AgentProfile{
+					Model: config.ModelConfig{
+						Provider:    "openrouter",
+						Name:        "moonshot/test",
+						Temperature: 0.73,
+						MaxTokens:   1024,
+						TimeoutMS:   45000,
+					},
+				}
+			},
+			assert: func(t *testing.T, cfg config.Config, got AgentContract) {
+				t.Helper()
+
+				if got.ModelPolicy.Provider != cfg.Model.Provider {
+					t.Fatalf("ModelPolicy.Provider = %q, want %q", got.ModelPolicy.Provider, cfg.Model.Provider)
+				}
+				if got.ModelPolicy.Model != cfg.Model.Name {
+					t.Fatalf("ModelPolicy.Model = %q, want %q", got.ModelPolicy.Model, cfg.Model.Name)
+				}
+				if got.ModelPolicy.Temperature != cfg.Model.Temperature {
+					t.Fatalf("ModelPolicy.Temperature = %v, want %v", got.ModelPolicy.Temperature, cfg.Model.Temperature)
+				}
+				if got.ModelPolicy.MaxTokens != cfg.Model.MaxTokens {
+					t.Fatalf("ModelPolicy.MaxTokens = %d, want %d", got.ModelPolicy.MaxTokens, cfg.Model.MaxTokens)
+				}
+				if got.ModelPolicy.TimeoutMS != cfg.Model.TimeoutMS {
+					t.Fatalf("ModelPolicy.TimeoutMS = %d, want %d", got.ModelPolicy.TimeoutMS, cfg.Model.TimeoutMS)
+				}
+
+				assertInheritanceSource(t, got, "model_policy", InheritanceSourceGlobal)
+				assertInheritanceSource(t, got, "model_policy.provider", InheritanceSourceGlobal)
+				assertInheritanceSource(t, got, "model_policy.model", InheritanceSourceGlobal)
+				assertInheritanceSource(t, got, "model_policy.temperature", InheritanceSourceGlobal)
+				assertInheritanceSource(t, got, "model_policy.max_tokens", InheritanceSourceGlobal)
+				assertInheritanceSource(t, got, "model_policy.timeout_ms", InheritanceSourceGlobal)
+			},
+		},
+		{
 			name:    "zero value profile fields do not override parent values",
 			agentID: "zero-profile",
 			configure: func(cfg *config.Config) {
