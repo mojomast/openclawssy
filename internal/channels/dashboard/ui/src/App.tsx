@@ -1,5 +1,6 @@
 import { HashRouter, Routes, Route } from 'react-router-dom'
 import { Layout } from './components/Layout'
+import { AuthTokenGate } from './components/AuthTokenGate'
 import { Toaster } from './components/ui/toaster'
 import {
   // Migrated pages
@@ -54,6 +55,7 @@ function App() {
           <Route path="eval" element={<EvalPage />} />
         </Route>
       </Routes>
+      <AuthTokenGate />
       <Toaster />
     </HashRouter>
   )

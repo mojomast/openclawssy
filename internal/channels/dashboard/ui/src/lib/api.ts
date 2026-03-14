@@ -4,6 +4,101 @@
 
 const STORAGE_KEY = 'openclawssy.dashboard.bearer'
 
+export interface AuthTokenGateState {
+  open: boolean
+  errorMessage: string
+}
+
+const authTokenGateListeners = new Set<(state: AuthTokenGateState) => void>()
+let authTokenGateState: AuthTokenGateState = {
+  open: false,
+  errorMessage: '',
+}
+
+let pendingTokenRequest: Promise<string> | null = null
+let resolvePendingTokenRequest: ((token: string) => void) | null = null
+
+function emitAuthTokenGateState(): void {
+  const snapshot = { ...authTokenGateState }
+  authTokenGateListeners.forEach((listener) => listener(snapshot))
+}
+
+function updateAuthTokenGateState(nextState: Partial<AuthTokenGateState>): void {
+  authTokenGateState = {
+    ...authTokenGateState,
+    ...nextState,
+  }
+  emitAuthTokenGateState()
+}
+
+function resetPendingTokenRequest(): void {
+  pendingTokenRequest = null
+  resolvePendingTokenRequest = null
+}
+
+async function waitForTokenFromGate(): Promise<string> {
+  if (pendingTokenRequest) {
+    return pendingTokenRequest
+  }
+
+  updateAuthTokenGateState({
+    open: true,
+    errorMessage: '',
+  })
+
+  pendingTokenRequest = new Promise<string>((resolve) => {
+    resolvePendingTokenRequest = resolve
+  })
+
+  return pendingTokenRequest
+}
+
+export function subscribeAuthTokenGate(
+  listener: (state: AuthTokenGateState) => void
+): () => void {
+  authTokenGateListeners.add(listener)
+  listener({ ...authTokenGateState })
+
+  return () => {
+    authTokenGateListeners.delete(listener)
+  }
+}
+
+export function getAuthTokenGateState(): AuthTokenGateState {
+  return { ...authTokenGateState }
+}
+
+export function clearAuthTokenGateError(): void {
+  if (!authTokenGateState.errorMessage) {
+    return
+  }
+  updateAuthTokenGateState({ errorMessage: '' })
+}
+
+export function submitAuthToken(token: string): boolean {
+  const value = String(token || '').trim()
+  if (!value) {
+    updateAuthTokenGateState({
+      open: true,
+      errorMessage: 'Token is required.',
+    })
+    return false
+  }
+
+  setBearerToken(value)
+
+  if (resolvePendingTokenRequest) {
+    resolvePendingTokenRequest(value)
+  }
+
+  resetPendingTokenRequest()
+  updateAuthTokenGateState({
+    open: false,
+    errorMessage: '',
+  })
+  return true
+}
+
 /**
  * Structured API error with status code and error details
  */
@@ -36,21 +131,19 @@ export class ApiError extends Error {
 }
 
 /**
- * Resolve bearer token from URL query params, localStorage, or prompt user
+ * Resolve bearer token from URL query params, localStorage, or in-app auth gate
  */
-export function resolveBearerToken(options?: {
+export async function resolveBearerToken(options?: {
   query?: string
   queryKeys?: string[]
   storage?: Storage
   storageKey?: string
-  promptFn?: (message: string) => string | null
-}): string {
+}): Promise<string> {
   const {
     query = window.location.search,
     queryKeys = ['token', 'bearer', 'bearer_token'],
     storage = window.localStorage,
     storageKey = STORAGE_KEY,
-    promptFn = window.prompt.bind(window),
   } = options || {}
 
   // Check URL query params
@@ -69,12 +162,8 @@ export function resolveBearerToken(options?: {
     return stored
   }
 
-  // Prompt user
-  const prompted = (promptFn('Enter dashboard bearer token') || '').trim()
-  if (prompted) {
-    storage.setItem(storageKey, prompted)
-  }
-  return prompted
+  // Request token via in-app auth gate
+  return waitForTokenFromGate()
 }
 
 /**
@@ -131,7 +220,7 @@ export interface ApiClient {
   put: <T = unknown>(path: string, body?: unknown, options?: RequestOptions) => Promise<T>
   patch: <T = unknown>(path: string, body?: unknown, options?: RequestOptions) => Promise<T>
   delete: <T = unknown>(path: string, options?: RequestOptions) => Promise<T>
-  resolveBearerToken: () => string
+  resolveBearerToken: () => Promise<string>
 }
 
 /**
@@ -140,7 +229,7 @@ export interface ApiClient {
 export function createApiClient(options?: {
   baseUrl?: string
   fetchImpl?: typeof fetch
-  tokenResolver?: typeof resolveBearerToken
+  tokenResolver?: () => string | Promise<string>
 }): ApiClient {
   const {
     baseUrl = '',
@@ -156,7 +245,7 @@ export function createApiClient(options?: {
     const allHeaders = new Headers(headers)
 
     // Add auth header
-    const token = skipAuth ? '' : tokenResolver()
+    const token = skipAuth ? '' : await tokenResolver()
     if (token) {
       allHeaders.set('Authorization', `Bearer ${token}`)
     }
@@ -202,7 +291,7 @@ export function createApiClient(options?: {
       request<T>(path, { ...options, method: 'PATCH', body }),
     delete: <T = unknown>(path: string, options?: RequestOptions) =>
       request<T>(path, { ...options, method: 'DELETE' }),
-    resolveBearerToken: tokenResolver,
+    resolveBearerToken: () => Promise.resolve(tokenResolver()),
   }
 }
 
