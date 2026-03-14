@@ -1,0 +1,40 @@
+{
+  "assertionResults": [
+    {
+      "id": "VAL-REACT-FND-014",
+      "status": "pass",
+      "reason": "Fresh isolated browser validation on /dashboard covered help/workspace/secrets/docs/skills and shell-level rendering. A loading indicator was observed during workspace fetch refresh (\"Refreshing...\") with the shell still rendered (no blank/broken screen). Meaningful empty states were observed for zero/none results surfaces (Secrets search: \"No keys match this search.\" and Skills activation area: \"Not active for default\" with API evidence showing activated_skills: []).",
+      "evidence": [
+        "react-foundation/react-foundation-rerun3-val-react-fnd-014/VAL-REACT-FND-014-loading-workspace.png",
+        "react-foundation/react-foundation-rerun3-val-react-fnd-014/VAL-REACT-FND-014-loading-workspace-refresh.png",
+        "react-foundation/react-foundation-rerun3-val-react-fnd-014/VAL-REACT-FND-014-loading-docs.png",
+        "react-foundation/react-foundation-rerun3-val-react-fnd-014/VAL-REACT-FND-014-loading-secrets.png",
+        "react-foundation/react-foundation-rerun3-val-react-fnd-014/VAL-REACT-FND-014-empty-secrets-filter.png",
+        "react-foundation/react-foundation-rerun3-val-react-fnd-014/VAL-REACT-FND-014-empty-skills.png",
+        "react-foundation/react-foundation-rerun3-val-react-fnd-014/VAL-REACT-FND-014-help-shell.png",
+        "react-foundation/react-foundation-rerun3-val-react-fnd-014/VAL-REACT-FND-014-skills-page-text.txt",
+        "react-foundation/react-foundation-rerun3-val-react-fnd-014/VAL-REACT-FND-014-console-errors.txt",
+        "react-foundation/react-foundation-rerun3-val-react-fnd-014/VAL-REACT-FND-014-console-log.txt",
+        "react-foundation/react-foundation-rerun3-val-react-fnd-014/VAL-REACT-FND-014-network-skills.http.txt",
+        "react-foundation/react-foundation-rerun3-val-react-fnd-014/VAL-REACT-FND-014-network-secrets.http.txt",
+        "react-foundation/react-foundation-rerun3-val-react-fnd-014/VAL-REACT-FND-014-network-status.http.txt"
+      ]
+    }
+  ],
+  "toolsUsed": [
+    "agent-browser",
+    "curl"
+  ],
+  "frictions": [
+    {
+      "description": "agent-browser request tracking returned no captured requests for dashboard flows in this run.",
+      "resolved": true,
+      "resolution": "Collected supplemental API evidence with curl against the same localhost endpoints used by the validated pages.",
+      "affectedAssertions": [
+        "VAL-REACT-FND-014"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "VAL-REACT-FND-014 passed for react-foundation rerun3 in a fresh isolated browser context."
+}

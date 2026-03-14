@@ -1,44 +1,24 @@
 {
   "milestone": "react-foundation",
-  "round": 2,
-  "status": "fail",
-  "generatedAt": "2026-03-14T04:34:02Z",
+  "round": 3,
+  "status": "pass",
+  "generatedAt": "2026-03-14T04:50:15Z",
   "assertionsSummary": {
-    "total": 4,
+    "total": 2,
     "passed": 2,
-    "failed": 2,
+    "failed": 0,
     "blocked": 0
   },
   "passedAssertions": [
-    "VAL-REACT-FND-003",
-    "VAL-REACT-FND-009"
+    "VAL-REACT-FND-004",
+    "VAL-REACT-FND-014"
   ],
-  "failedAssertions": [
-    {
-      "id": "VAL-REACT-FND-004",
-      "reason": "Narrow-screen contract behavior still not observed: nav did not collapse and inspector drawer trigger was not visible at mobile viewport during rerun."
-    },
-    {
-      "id": "VAL-REACT-FND-014",
-      "reason": "Runs route still renders a static migration placeholder instead of contract-compliant loading/empty-state behavior across data pages."
-    }
-  ],
+  "failedAssertions": [],
   "blockedAssertions": [],
   "flowReports": [
-    ".factory/validation/react-foundation/user-testing/flows/react-foundation-rerun-flow-a.json",
-    ".factory/validation/react-foundation/user-testing/flows/react-foundation-rerun-flow-b.json"
+    ".factory/validation/react-foundation/user-testing/flows/react-foundation-rerun3-val-react-fnd-004.json",
+    ".factory/validation/react-foundation/user-testing/flows/react-foundation-rerun3-val-react-fnd-014.json"
   ],
-  "appliedUpdates": [
-    {
-      "target": "services.yaml",
-      "description": "Updated openclawssy service start command to use --no-deps so validation setup is not blocked by unrelated unhealthy compose dependencies.",
-      "source": "setup"
-    },
-    {
-      "target": "user-testing.md",
-      "description": "Added guidance for missing agent-browser request capture and documented --no-deps dashboard rebuild/start path for this environment.",
-      "source": "flow-report"
-    }
-  ],
-  "previousRound": ".factory/validation/react-foundation/user-testing/synthesis.round1.json"
+  "appliedUpdates": [],
+  "previousRound": ".factory/validation/react-foundation/user-testing/synthesis.round2.json"
 }
