@@ -7,7 +7,9 @@ commands:
   build-ui: cd internal/channels/dashboard/ui && npx vite build
   test-ui: cd internal/channels/dashboard/ui && npx playwright test
   test-ui-component: cd internal/channels/dashboard/ui && npx playwright test tests/e2e/shared-components.spec.js
+  test-ui-component-ts: cd internal/channels/dashboard/ui && npx playwright test tests/e2e/shared-components.spec.ts
   install-ui: cd internal/channels/dashboard/ui && npm install
+  openclawssy-start-no-deps: docker compose up -d --no-deps openclawssy
 
 services:
   openclawssy:

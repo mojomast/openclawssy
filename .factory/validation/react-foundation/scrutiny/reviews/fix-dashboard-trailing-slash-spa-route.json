@@ -1,0 +1,26 @@
+{
+  "featureId": "fix-dashboard-trailing-slash-spa-route",
+  "reviewedAt": "2026-03-14T03:06:42Z",
+  "commitId": "c7f6a4c57de6263a879025adb3e340200b68c1fb",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix commit fully addresses the prior blocking routing failure from both react-vite-setup and react-embed-integration by registering `/dashboard/` alongside `/dashboard`, constraining SPA index serving to exact dashboard entry paths, and updating unauthenticated dashboard route checks to normalize trailing slashes. Static asset and `/dashboard-legacy` behavior are preserved.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The fullstack-worker skill procedure is rigid for mixed-scope work: it requires frontend test-first and Playwright/tsc/vite verification even when a fullstack-assigned fix is backend-only. The worker reasonably executed backend-focused tests only and marked followedProcedure=true, indicating the skill guidance should document a backend-only exception path.",
+      "evidence": ".factory/skills/fullstack-worker/SKILL.md ('Write Tests First — Both Layers' and frontend verification steps) vs worker-transcripts.jsonl skeleton for session 212e3c93-aeab-4ce8-b493-6ffc23b5fddd (Go tests/vet/build only; no frontend test commands)."
+    },
+    {
+      "area": "services",
+      "observation": "The service start command in services.yaml does not capture a known recovery path when compose dependency health blocks openclawssy startup. The worker had to use `docker compose up -d --no-deps openclawssy` due an unhealthy dependency.",
+      "evidence": ".factory/services.yaml openclawssy.start uses `docker compose up -d openclawssy`; handoff for session 212e3c93-aeab-4ce8-b493-6ffc23b5fddd records failure from unhealthy `openclawssy-becomussy-1` and successful workaround with `--no-deps`."
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/react-foundation/scrutiny/reviews/react-vite-setup.json; .factory/validation/react-foundation/scrutiny/reviews/react-embed-integration.json",
+  "summary": "Reviewed fix feature transcript skeleton and commit c7f6a4c, plus original diffs for react-vite-setup (6fe0789) and react-embed-integration (2cca87b) and both prior failure reviews. The fix resolves the shared blocking gap (/dashboard/ SPA serving and auth allowance) while preserving static and legacy route behavior, so this fix passes scrutiny."
+}
