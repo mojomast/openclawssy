@@ -108,6 +108,28 @@ func TestLedgerRunnerEmitsKeyDecisionRecords(t *testing.T) {
 			t.Fatalf("expected decision record type %q in %+v", recordType, records)
 		}
 	}
+
+	delegationRecords := make([]DecisionRecord, 0)
+	for _, record := range records {
+		if record.RecordType == DecisionRecordTypeDelegationTrigger {
+			delegationRecords = append(delegationRecords, record)
+			assertDelegationTriggerPayloadContract(t, record, "run-ledger-key-events")
+		}
+	}
+	if len(delegationRecords) == 0 {
+		t.Fatalf("expected delegation trigger records, got %+v", records)
+	}
+
+	triggerFiredRecordFound := false
+	for _, record := range delegationRecords {
+		if _, hasMode := record.Payload["mode"]; hasMode {
+			triggerFiredRecordFound = true
+			break
+		}
+	}
+	if !triggerFiredRecordFound {
+		t.Fatalf("expected at least one trigger-fired delegation record with mode metadata, got %+v", delegationRecords)
+	}
 }
 
 type denyToolExecutor struct{}
@@ -223,6 +245,8 @@ func TestIntegrationDelegationEventsEmitLedgerRecordsWithRoutingContext(t *testi
 	for _, event := range state.out.DelegationEvents {
 		matched := false
 		for _, record := range delegationRecords {
+			assertDelegationTriggerPayloadContract(t, record, "run-integration-ledger")
+
 			taskID, _ := record.Payload["task_id"].(string)
 			outcome, _ := record.Payload["outcome"].(string)
 			if strings.TrimSpace(taskID) != strings.TrimSpace(event.TaskID) || strings.TrimSpace(outcome) != strings.TrimSpace(event.Outcome) {
@@ -253,5 +277,44 @@ func TestIntegrationDelegationEventsEmitLedgerRecordsWithRoutingContext(t *testi
 		if !matched {
 			t.Fatalf("missing delegation ledger record for event %+v", event)
 		}
+	}
+}
+
+func assertDelegationTriggerPayloadContract(t *testing.T, record DecisionRecord, expectedParentRunID string) {
+	t.Helper()
+
+	if record.RecordType != DecisionRecordTypeDelegationTrigger {
+		t.Fatalf("assertDelegationTriggerPayloadContract called for non-delegation record: %+v", record)
+	}
+
+	payload := record.Payload
+	if payload == nil {
+		t.Fatalf("expected delegation payload, got nil for record %+v", record)
+	}
+
+	requiredNonEmpty := []string{"trigger_reason", "selected_role", "task_assignment", "parent_run_id"}
+	for _, key := range requiredNonEmpty {
+		value, ok := payload[key]
+		if !ok {
+			t.Fatalf("expected delegation payload key %q, got %+v", key, payload)
+		}
+		text, ok := value.(string)
+		if !ok {
+			t.Fatalf("expected delegation payload key %q to be string, got %T (%#v)", key, value, value)
+		}
+		if strings.TrimSpace(text) == "" {
+			t.Fatalf("expected delegation payload key %q to be non-empty, got %+v", key, payload)
+		}
+	}
+
+	if got := strings.TrimSpace(payload["parent_run_id"].(string)); got != expectedParentRunID {
+		t.Fatalf("expected parent_run_id=%q, got %q in payload %+v", expectedParentRunID, got, payload)
+	}
+
+	if _, ok := payload["confidence"]; !ok {
+		t.Fatalf("expected delegation payload key confidence, got %+v", payload)
+	}
+	if _, ok := floatValueFromAny(payload["confidence"]); !ok {
+		t.Fatalf("expected confidence numeric, got %T (%#v)", payload["confidence"], payload["confidence"])
 	}
 }

@@ -256,6 +256,131 @@ func (s *runState) emitDecision(ctx context.Context, recordType string, payload 
 	})
 }
 
+func (s *runState) delegationParentRunID() string {
+	if s == nil {
+		return ""
+	}
+	if parent := strings.TrimSpace(s.parentRunID); parent != "" {
+		return parent
+	}
+	return strings.TrimSpace(s.runID)
+}
+
+func (s *runState) normalizeDelegationTriggerPayload(payload map[string]any) map[string]any {
+	if payload == nil {
+		payload = map[string]any{}
+	}
+
+	normalized := make(map[string]any, len(payload)+8)
+	for k, v := range payload {
+		normalized[k] = v
+	}
+
+	triggerReason := strings.TrimSpace(stringValueFromAny(normalized["trigger_reason"]))
+	if triggerReason == "" {
+		triggerReason = strings.TrimSpace(stringValueFromAny(normalized["reason"]))
+	}
+
+	selectedRole := strings.TrimSpace(stringValueFromAny(normalized["selected_role"]))
+	if selectedRole == "" {
+		selectedRole = "delegation_controller"
+	}
+
+	taskAssignment := strings.TrimSpace(stringValueFromAny(normalized["task_assignment"]))
+	if taskAssignment == "" {
+		taskAssignment = "delegation trigger evaluation"
+	}
+
+	confidence, ok := floatValueFromAny(normalized["confidence"])
+	if !ok {
+		confidence = 0
+	}
+
+	parentRunID := strings.TrimSpace(stringValueFromAny(normalized["parent_run_id"]))
+	if parentRunID == "" {
+		parentRunID = s.delegationParentRunID()
+	}
+
+	eventTimestamp := strings.TrimSpace(stringValueFromAny(normalized["event_timestamp"]))
+	if eventTimestamp == "" {
+		eventTimestamp = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+
+	sourceRunID := strings.TrimSpace(stringValueFromAny(normalized["source_run_id"]))
+	if sourceRunID == "" {
+		sourceRunID = strings.TrimSpace(s.runID)
+	}
+
+	sourceAgentID := strings.TrimSpace(stringValueFromAny(normalized["source_agent_id"]))
+	if sourceAgentID == "" {
+		sourceAgentID = strings.TrimSpace(s.agentID)
+	}
+
+	normalized["trigger_reason"] = triggerReason
+	normalized["reason"] = triggerReason
+	normalized["selected_role"] = selectedRole
+	normalized["task_assignment"] = taskAssignment
+	normalized["confidence"] = confidence
+	normalized["parent_run_id"] = parentRunID
+	normalized["event_timestamp"] = eventTimestamp
+	normalized["source_run_id"] = sourceRunID
+	normalized["source_agent_id"] = sourceAgentID
+
+	return normalized
+}
+
+func (s *runState) emitDelegationTriggerDecision(ctx context.Context, payload map[string]any, summary string) {
+	s.emitDecision(ctx, DecisionRecordTypeDelegationTrigger, s.normalizeDelegationTriggerPayload(payload), summary)
+}
+
+func stringValueFromAny(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case fmt.Stringer:
+		return v.String()
+	default:
+		return ""
+	}
+}
+
+func floatValueFromAny(value any) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return v, true
+	case float32:
+		return float64(v), true
+	case int:
+		return float64(v), true
+	case int8:
+		return float64(v), true
+	case int16:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case uint:
+		return float64(v), true
+	case uint8:
+		return float64(v), true
+	case uint16:
+		return float64(v), true
+	case uint32:
+		return float64(v), true
+	case uint64:
+		return float64(v), true
+	case json.Number:
+		parsed, err := v.Float64()
+		if err != nil {
+			return 0, false
+		}
+		return parsed, true
+	default:
+		return 0, false
+	}
+}
+
 func (s *runState) emitToolDecision(ctx context.Context, call ToolCallRequest, result ToolCallResult) {
 	decision := "allowed"
 	policyReference := "policy.capability_allowlist"
@@ -573,8 +698,19 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 		if !s.delegationLocked {
 			if trigger := s.computeDelegationTrigger(promptTokens, contextWindow, snapshot); trigger != nil {
 				s.delegationReason = strings.TrimSpace(trigger.Reason)
-				s.emitDecision(ctx, DecisionRecordTypeDelegationTrigger, map[string]any{
-					"reason":          strings.TrimSpace(trigger.Reason),
+				configuredMode := normalizeDelegationMode(input.DelegationMode)
+				selectedRole := "delegation_controller"
+				taskAssignment := "evaluate delegation trigger conditions"
+				if isPlannerDelegationMode(configuredMode) {
+					selectedRole = "planner"
+					taskAssignment = "generate delegation decomposition plan"
+				}
+
+				s.emitDelegationTriggerDecision(ctx, map[string]any{
+					"trigger_reason":  strings.TrimSpace(trigger.Reason),
+					"selected_role":   selectedRole,
+					"task_assignment": taskAssignment,
+					"confidence":      0.0,
 					"mode":            string(trigger.Mode),
 					"cooldown_for":    trigger.CooldownFor,
 					"context_tokens":  promptTokens,
@@ -584,7 +720,6 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 					"snapshot_errors": append([]string(nil), snapshot.LastErrorTypes...),
 				}, fmt.Sprintf("Delegation trigger fired (%s): %s", strings.TrimSpace(string(trigger.Mode)), firstN(strings.TrimSpace(trigger.Reason), 140)))
 
-				configuredMode := normalizeDelegationMode(input.DelegationMode)
 				if isPlannerDelegationMode(configuredMode) {
 					plan, plannedTasks, planErr := GenerateDecompositionPlan(trigger.Reason, configuredMode, trigger.Subtasks, nil)
 					if planErr != nil {
@@ -1583,7 +1718,6 @@ func (s *runState) recordDelegationEvent(ctx context.Context, event DelegationEv
 		"task_assignment":   strings.TrimSpace(event.TaskAssignment),
 		"role_rationale":    strings.TrimSpace(event.Rationale),
 		"outcome":           strings.TrimSpace(event.Outcome),
-		"parent_run_id":     strings.TrimSpace(s.runID),
 		"event_timestamp":   event.Timestamp.UTC().Format(time.RFC3339Nano),
 		"delegation_active": s.delegationActive,
 	}
@@ -1593,5 +1727,5 @@ func (s *runState) recordDelegationEvent(ctx context.Context, event DelegationEv
 		firstN(strings.TrimSpace(event.SelectedRole), 48),
 		firstN(strings.TrimSpace(event.Outcome), 24),
 	)
-	s.emitDecision(ctx, DecisionRecordTypeDelegationTrigger, payload, summary)
+	s.emitDelegationTriggerDecision(ctx, payload, summary)
 }
