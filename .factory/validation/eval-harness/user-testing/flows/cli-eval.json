@@ -1,0 +1,216 @@
+{
+  "groupId": "cli-eval",
+  "testedAt": "2026-03-14T21:29:21Z",
+  "isolation": {
+    "surface": "terminal backend assertions only",
+    "repo": "/home/mojo/projects/openclawssy",
+    "binaryPath": "./bin/openclawssy",
+    "serviceEndpoint": "http://localhost:8081",
+    "authToken": "change-me"
+  },
+  "toolsUsed": [
+    "Execute"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-EVAL-001",
+      "title": "CLI help and usage",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Command: /home/mojo/projects/openclawssy/bin/openclawssy eval",
+          "expected": "Usage text lists subcommands run, list, results, baseline, compare",
+          "observed": "exit=0; output includes 'usage: openclawssy eval <command> [flags]' and commands run/list/results/baseline/compare"
+        },
+        {
+          "action": "Command: /home/mojo/projects/openclawssy/bin/openclawssy eval --help",
+          "expected": "Detailed eval help is printed",
+          "observed": "exit=0; help output printed with commands and examples"
+        }
+      ],
+      "evidence": {
+        "terminalLogs": [
+          "eval-harness/cli-eval/VAL-EVAL-001-eval.log",
+          "eval-harness/cli-eval/VAL-EVAL-001-help.log"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-EVAL-002",
+      "title": "Run eval suite",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Command: /home/mojo/projects/openclawssy/bin/openclawssy eval run --suite basic",
+          "expected": "Suite executes with progress plus per-case pass/fail and summary totals",
+          "observed": "exit=0; output shows 'Running suite 1/1: basic', PASS for greeting/math, and 'Overall: total=2 passed=2 failed=0 status=PASS'"
+        }
+      ],
+      "evidence": {
+        "terminalLogs": [
+          "eval-harness/cli-eval/VAL-EVAL-002-run-basic.log"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-EVAL-003",
+      "title": "List available suites",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Command: /home/mojo/projects/openclawssy/bin/openclawssy eval list",
+          "expected": "Lists available suites with name, description, and case count",
+          "observed": "exit=0; output lists suites such as basic/delegation/delegation_correctness/tool_choice with '| ... | cases=N' format"
+        }
+      ],
+      "evidence": {
+        "terminalLogs": [
+          "eval-harness/cli-eval/VAL-EVAL-003-list.log"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-EVAL-004",
+      "title": "Results persisted to SQLite",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Command: /home/mojo/projects/openclawssy/bin/openclawssy eval results",
+          "expected": "Past runs appear with timestamps, suite names, and summary metrics",
+          "observed": "exit=0; output shows 'Eval run history:' and multiple rows like '2026-03-14 ... suite=basic ... total=2 passed=2 failed=0 completion=100.0%'"
+        }
+      ],
+      "evidence": {
+        "terminalLogs": [
+          "eval-harness/cli-eval/VAL-EVAL-004-results.log"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-EVAL-005",
+      "title": "Baseline comparison detects regressions",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Command: /home/mojo/projects/openclawssy/bin/openclawssy eval run --suite regression",
+          "expected": "Generate baseline source run",
+          "observed": "exit=0; baseline-source run passed (total=1 passed=1 failed=0)"
+        },
+        {
+          "action": "Command: /home/mojo/projects/openclawssy/bin/openclawssy eval baseline set --suite regression",
+          "expected": "Baseline is saved",
+          "observed": "exit=0; output 'Saved baseline for suite regression'"
+        },
+        {
+          "action": "Command: /home/mojo/projects/openclawssy/bin/openclawssy eval run --suite regression (after updating suite to fail)",
+          "expected": "Latest run fails for regression scenario",
+          "observed": "exit=1; output shows FAIL for was_passing and overall failed=1"
+        },
+        {
+          "action": "Command: /home/mojo/projects/openclawssy/bin/openclawssy eval compare --suite regression",
+          "expected": "Compare flags regressions",
+          "observed": "exit=1; output shows 'regressions=1' and 'REGRESSION was_passing (baseline=pass latest=fail)'"
+        }
+      ],
+      "evidence": {
+        "terminalLogs": [
+          "eval-harness/cli-eval/VAL-EVAL-005-run-regression-baseline-source.log",
+          "eval-harness/cli-eval/VAL-EVAL-005-baseline-set.log",
+          "eval-harness/cli-eval/VAL-EVAL-005-modify-regression-suite.log",
+          "eval-harness/cli-eval/VAL-EVAL-005-run-regression-latest.log",
+          "eval-harness/cli-eval/VAL-EVAL-005-compare.log"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-EVAL-006",
+      "title": "Metrics computation",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Command: /home/mojo/projects/openclawssy/bin/openclawssy eval run --suite basic",
+          "expected": "Run output includes completion_rate, tool_misuse_rate, delegation_precision, unnecessary_delegation_rate, token_cost, time_to_completion",
+          "observed": "exit=0; metrics line includes all required metric fields"
+        },
+        {
+          "action": "Command: python3 sqlite read of /home/mojo/projects/openclawssy/.openclawssy/eval/results.db (latest metrics_json)",
+          "expected": "Metrics are persisted with required keys",
+          "observed": "exit=0; output includes metrics_json and 'MISSING_KEYS=none'"
+        }
+      ],
+      "evidence": {
+        "terminalLogs": [
+          "eval-harness/cli-eval/VAL-EVAL-002-run-basic.log",
+          "eval-harness/cli-eval/VAL-EVAL-006-metrics-persisted-db.log"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-EVAL-007",
+      "title": "Custom eval suites",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Command: create custom suite JSON files in /home/mojo/projects/openclawssy/.openclawssy/eval",
+          "expected": "Operator-defined custom suites become discoverable",
+          "observed": "exit=0; custom suite files created for custom_alpha and regression"
+        },
+        {
+          "action": "Command: /home/mojo/projects/openclawssy/bin/openclawssy eval list",
+          "expected": "Custom suite appears in list",
+          "observed": "exit=0; output includes 'custom_alpha | custom suite from json for CLI validation | cases=1'"
+        },
+        {
+          "action": "Command: /home/mojo/projects/openclawssy/bin/openclawssy eval run --suite custom_alpha",
+          "expected": "Custom suite executes successfully",
+          "observed": "exit=0; output shows PASS alpha_pass and overall passed"
+        }
+      ],
+      "evidence": {
+        "terminalLogs": [
+          "eval-harness/cli-eval/VAL-EVAL-007-create-custom-suites.log",
+          "eval-harness/cli-eval/VAL-EVAL-007-list-with-custom.log",
+          "eval-harness/cli-eval/VAL-EVAL-007-run-custom-alpha.log",
+          "eval-harness/cli-eval/cleanup-custom-suites.log"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-010",
+      "title": "Eval validates role selection correctness",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Command: /home/mojo/projects/openclawssy/bin/openclawssy eval run --suite delegation_correctness",
+          "expected": "Delegation correctness suite runs and validates role-routing behavior",
+          "observed": "exit=0; output shows PASS scout_read_task, PASS implementer_write_task, PASS analyst_reasoning_task, overall passed"
+        }
+      ],
+      "evidence": {
+        "terminalLogs": [
+          "eval-harness/cli-eval/VAL-CROSS-010-run-delegation-correctness.log"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "Regression detection required constructing a controlled failing latest run for the same suite name.",
+      "resolved": true,
+      "resolution": "Created temporary custom suite JSON for 'regression', saved baseline from a passing run, updated suite to fail, then ran compare.",
+      "affectedAssertions": [
+        "VAL-EVAL-005"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 8 assigned assertions via terminal CLI. All 8 passed, including regression detection (VAL-EVAL-005) and delegation correctness suite validation (VAL-CROSS-010)."
+}

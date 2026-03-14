@@ -1,0 +1,202 @@
+{
+  "groupId": "api-cross",
+  "testedAt": "2026-03-14T21:44:54.407046+00:00",
+  "isolation": {
+    "surface": "API contract endpoints + terminal/curl support only",
+    "baseUrl": "http://localhost:8081",
+    "authHeader": "Authorization: Bearer change-me",
+    "repo": "/home/mojo/projects/openclawssy",
+    "missionDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3"
+  },
+  "toolsUsed": [
+    "curl",
+    "Execute"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-CROSS-001",
+      "title": "Agent contract reflects prompt stack policy",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "GET /api/admin/agents/AutonomousResearcher-1/prompt-stack/preview",
+          "expected": "Returns assembled_prompt for the agent",
+          "observed": "200 OK with assembled_prompt content"
+        },
+        {
+          "action": "GET /api/admin/agents/AutonomousResearcher-1/resolved",
+          "expected": "Resolved contract system_prompt.content matches effective prompt policy",
+          "observed": "200 OK and system_prompt.content exactly matched assembled_prompt"
+        }
+      ],
+      "evidence": {
+        "files": {
+          "previewRequest": "eval-harness/api-cross/x2-VAL-CROSS-001-preview.request.txt",
+          "previewStatus": "eval-harness/api-cross/x2-VAL-CROSS-001-preview.status.txt",
+          "previewResponse": "eval-harness/api-cross/x2-VAL-CROSS-001-preview.body.json",
+          "resolvedRequest": "eval-harness/api-cross/x2-VAL-CROSS-001-resolved.request.txt",
+          "resolvedStatus": "eval-harness/api-cross/x2-VAL-CROSS-001-resolved.status.txt",
+          "resolvedResponse": "eval-harness/api-cross/x2-VAL-CROSS-001-resolved.body.json"
+        },
+        "network": "GET /api/admin/agents/AutonomousResearcher-1/prompt-stack/preview -> 200; GET /api/admin/agents/AutonomousResearcher-1/resolved -> 200",
+        "responseExcerpt": "resolved.system_prompt.content begins with '<<<LAYER: global_operator_policy>>>' and equals preview.assembled_prompt"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-002",
+      "title": "Role templates visible in agent contract",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "GET /api/admin/roles",
+          "expected": "Registered role templates are available",
+          "observed": "200 OK with count=6 built-in roles"
+        },
+        {
+          "action": "GET /api/admin/agents/AutonomousResearcher-1/resolved",
+          "expected": "delegation_policy references role constraints/templates",
+          "observed": "200 OK with delegation_policy.role_templates containing role entries (e.g., implementer, scout)"
+        }
+      ],
+      "evidence": {
+        "files": {
+          "rolesRequest": "eval-harness/api-cross/x2-shared-roles.request.txt",
+          "rolesStatus": "eval-harness/api-cross/x2-shared-roles.status.txt",
+          "rolesResponse": "eval-harness/api-cross/x2-shared-roles.body.json",
+          "resolvedRequest": "eval-harness/api-cross/x2-VAL-CROSS-001-resolved.request.txt",
+          "resolvedStatus": "eval-harness/api-cross/x2-VAL-CROSS-001-resolved.status.txt",
+          "resolvedResponse": "eval-harness/api-cross/x2-VAL-CROSS-001-resolved.body.json"
+        },
+        "network": "GET /api/admin/roles -> 200; GET /api/admin/agents/AutonomousResearcher-1/resolved -> 200",
+        "responseExcerpt": "roles count=6; resolved delegation_policy.role_templates count=6 and names align with /api/admin/roles"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-003",
+      "title": "Delegation uses role templates for routing",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "PATCH /api/admin/config set agents.delegation_mode=full_autonomous and agents.subagent_defaults.delegation_mode=full_autonomous",
+          "expected": "Planner-led delegation path can execute for validation",
+          "observed": "200 OK"
+        },
+        {
+          "action": "POST /v1/runs with a message that triggers repeated tool failure delegation",
+          "expected": "Run triggers delegation and role routing",
+          "observed": "202 Accepted (run_id=run_1773524502595159315)"
+        },
+        {
+          "action": "GET /api/admin/runs/run_1773524502595159315/decisions",
+          "expected": "Role assignment and role constraints are recorded; spawned subagent visible",
+          "observed": "200 OK with role_selection records, constraint_activation containing role_allowed_tools/role_timeout_ms, and non-empty subagents[]"
+        },
+        {
+          "action": "PATCH /api/admin/config restore original delegation settings",
+          "expected": "No lasting global config mutation",
+          "observed": "200 OK restore"
+        }
+      ],
+      "evidence": {
+        "files": {
+          "configPatchRequest": "eval-harness/api-cross/x3-deleg-config-patch.request.txt",
+          "configPatchStatus": "eval-harness/api-cross/x3-deleg-config-patch.status.txt",
+          "runCreateRequest": "eval-harness/api-cross/x3-deleg-run-create.request.txt",
+          "runCreateStatus": "eval-harness/api-cross/x3-deleg-run-create.status.txt",
+          "decisionsRequest": "eval-harness/api-cross/x3-deleg-decisions.request.txt",
+          "decisionsStatus": "eval-harness/api-cross/x3-deleg-decisions.status.txt",
+          "decisionsResponse": "eval-harness/api-cross/x3-deleg-decisions.body.json",
+          "restoreRequest": "eval-harness/api-cross/x3-deleg-config-restore.request.txt",
+          "restoreStatus": "eval-harness/api-cross/x3-deleg-config-restore.status.txt",
+          "attemptSummary": "eval-harness/api-cross/x3-delegation-attempt-summary.json"
+        },
+        "network": "PATCH /api/admin/config -> 200; POST /v1/runs -> 202; GET /api/admin/runs/run_1773524502595159315/decisions -> 200; PATCH /api/admin/config (restore) -> 200",
+        "responseExcerpt": "decision ledger includes role_selection(role=implementer), constraint_activation(role_allowed_tools=[...], role_timeout_ms=20000), and subagents[run_1773524511519465949]"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-004",
+      "title": "Every delegation produces ledger entries with required fields",
+      "status": "fail",
+      "steps": [
+        {
+          "action": "GET /api/admin/runs/run_1773524502595159315/decisions",
+          "expected": "Each delegation_trigger ledger record includes trigger_reason, selected_role, task_assignment, confidence, and parent_run context",
+          "observed": "Mixed shapes: planned/executed delegation_trigger records include required fields, but at least one delegation_trigger record only has mode/reason/cooldown/snapshot fields and omits selected_role/task_assignment/confidence/parent_run_id"
+        }
+      ],
+      "evidence": {
+        "files": {
+          "decisionsRequest": "eval-harness/api-cross/x3-deleg-decisions.request.txt",
+          "decisionsStatus": "eval-harness/api-cross/x3-deleg-decisions.status.txt",
+          "decisionsResponse": "eval-harness/api-cross/x3-deleg-decisions.body.json"
+        },
+        "network": "GET /api/admin/runs/run_1773524502595159315/decisions -> 200",
+        "responseExcerpt": "First delegation_trigger payload contains {mode, reason, cooldown_for, context_tokens...} without selected_role/task_assignment/confidence/parent_run_id"
+      },
+      "issues": "Ledger schema is inconsistent for record_type=delegation_trigger; not every delegation_trigger entry includes the full required rationale/role/task/parent context fields."
+    },
+    {
+      "id": "VAL-CROSS-005",
+      "title": "Global config changes propagate to resolved contracts",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "GET /api/admin/config",
+          "expected": "Capture original global model.timeout_ms",
+          "observed": "200 OK with original model.timeout_ms=120000"
+        },
+        {
+          "action": "PATCH /api/admin/config with model.timeout_ms=121000",
+          "expected": "Global model timeout update accepted",
+          "observed": "200 OK"
+        },
+        {
+          "action": "GET /api/admin/agents/{id}/resolved for inheriting agents",
+          "expected": "Inherited model_policy.timeout_ms updates to 121000",
+          "observed": "All 70 detected inheriting agents reflected 121000"
+        },
+        {
+          "action": "PATCH /api/admin/config restoring model.timeout_ms=120000 and re-check resolved contracts",
+          "expected": "Original value restored and propagation reversed",
+          "observed": "200 OK restore; all 70 inheriting agents reverted to 120000"
+        }
+      ],
+      "evidence": {
+        "files": {
+          "configBeforeRequest": "eval-harness/api-cross/x2-VAL-CROSS-005-config-before.request.txt",
+          "configBeforeStatus": "eval-harness/api-cross/x2-VAL-CROSS-005-config-before.status.txt",
+          "configBeforeResponse": "eval-harness/api-cross/x2-VAL-CROSS-005-config-before.body.json",
+          "configPatchRequest": "eval-harness/api-cross/x2-VAL-CROSS-005-config-patch.request.txt",
+          "configPatchStatus": "eval-harness/api-cross/x2-VAL-CROSS-005-config-patch.status.txt",
+          "configPatchResponse": "eval-harness/api-cross/x2-VAL-CROSS-005-config-patch.body.json",
+          "resolvedAfterSample": "eval-harness/api-cross/x2-VAL-CROSS-005-resolved-after-default.body.json",
+          "configRestoreRequest": "eval-harness/api-cross/x2-VAL-CROSS-005-config-restore.request.txt",
+          "configRestoreStatus": "eval-harness/api-cross/x2-VAL-CROSS-005-config-restore.status.txt",
+          "configRestoreResponse": "eval-harness/api-cross/x2-VAL-CROSS-005-config-restore.body.json",
+          "resolvedRestoredSample": "eval-harness/api-cross/x2-VAL-CROSS-005-resolved-restored-default.body.json",
+          "analysis": "eval-harness/api-cross/analysis-final.json"
+        },
+        "network": "GET /api/admin/config -> 200; PATCH /api/admin/config -> 200; GET /api/admin/agents/{id}/resolved (70 inheriting ids) -> 200; PATCH /api/admin/config restore -> 200; GET resolved restored -> 200",
+        "responseExcerpt": "Propagation verified across 70 inheriting agents and reverted across the same set after restore"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "Initial broad run-history query and decision scan was expensive (large /v1/runs payload) and timed out during first attempt.",
+      "resolved": true,
+      "resolution": "Narrowed to latest run window and then validated with targeted decision retrieval plus one controlled runtime run.",
+      "affectedAssertions": [
+        "VAL-CROSS-003",
+        "VAL-CROSS-004"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 5 assertions: 4 passed (VAL-CROSS-001, VAL-CROSS-002, VAL-CROSS-003, VAL-CROSS-005) and 1 failed (VAL-CROSS-004 due to inconsistent delegation_trigger ledger payload fields)."
+}

@@ -1,0 +1,225 @@
+{
+  "groupId": "browser-ui",
+  "testedAt": "2026-03-14T21:53:23Z",
+  "isolation": {
+    "surface": "Browser Dashboard only",
+    "url": "http://localhost:8081/dashboard",
+    "token": "change-me",
+    "session": "browser-ui-f0f27df9 (isolated)",
+    "notes": "Used isolated Chromium instance on local CDP port 9333 and a dedicated agent-browser session."
+  },
+  "toolsUsed": [
+    "agent-browser"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-EVAL-008",
+      "title": "Eval results dashboard page",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Navigate to Eval via sidebar link",
+          "expected": "Eval Results page loads",
+          "observed": "Loaded /#/eval with Eval Results heading"
+        },
+        {
+          "action": "Inspect page content and metrics sections",
+          "expected": "Suite history, per-test-case results, metrics cards, and baseline comparison are visible",
+          "observed": "Visible: Suite run history, Test case results, Completion/Tool misuse/Time metrics cards, Baseline comparison section"
+        },
+        {
+          "action": "Verify regression highlighting guidance",
+          "expected": "Baseline regressions highlighted (red) with explanatory text",
+          "observed": "Displayed regression run data and text: 'Highlighted red rows indicate regressions'"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "eval-harness/browser-ui/VAL-EVAL-008-eval-results-page.png",
+          "eval-harness/browser-ui/VAL-EVAL-008-metrics-cards.png"
+        ],
+        "consoleErrors": "none",
+        "network": "n/a"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-001",
+      "title": "Agent contract reflects prompt stack policy",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Open Agent Contract page for the active agent",
+          "expected": "Resolved contract includes effective system_prompt",
+          "observed": "System Prompt section displayed merged layered prompt content"
+        },
+        {
+          "action": "Open Prompt Stack page for same agent",
+          "expected": "Prompt layers/merged preview match contract system_prompt",
+          "observed": "Prompt Stack merged preview matched the same layer blocks and content seen in Agent Contract"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "eval-harness/browser-ui/VAL-CROSS-001-contract-prompt-section.png",
+          "eval-harness/browser-ui/VAL-CROSS-001-prompt-stack-same-agent.png"
+        ],
+        "consoleErrors": "none",
+        "network": "n/a"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-002",
+      "title": "Role templates visible in agent contract",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Inspect Delegation Policy section on Agent Contract page",
+          "expected": "delegation_policy references role template constraints",
+          "observed": "delegation_policy.role_templates displayed built-in roles (implementer/operator/planner/reviewer/scout/verifier) with allowed_tools, max_tool_iterations, timeout_ms"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "eval-harness/browser-ui/VAL-CROSS-002-contract-delegation-policy-with-roles.png"
+        ],
+        "consoleErrors": "none",
+        "network": "n/a"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-006",
+      "title": "All pages reachable from navigation",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Expand desktop sidebar and click each nav link",
+          "expected": "All migrated/new pages reachable without direct URL entry",
+          "observed": "Clicked and reached Help, Workspace, Secrets, Docs, Skills, Chat, Settings, Runs, Sessions, Monitor, Scheduler, Sandbox, Dashboards, Agent Contract, Prompt Stack, Role Templates, Delegation, Eval"
+        },
+        {
+          "action": "Record resulting route hashes",
+          "expected": "Route hash updates correctly for each page",
+          "observed": "URLs updated correctly for all 18 routes (/#/help ... /#/eval)"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "eval-harness/browser-ui/VAL-CROSS-006-nav-sidebar-with-all-links.png"
+        ],
+        "consoleErrors": "none",
+        "network": "n/a"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-007",
+      "title": "Auth gating on all pages",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Open dashboard in fresh isolated browser context",
+          "expected": "Token prompt appears before content access",
+          "observed": "Dashboard bearer token prompt displayed"
+        },
+        {
+          "action": "Enter token change-me and continue",
+          "expected": "Dashboard page loads normally",
+          "observed": "Authenticated dashboard loaded"
+        },
+        {
+          "action": "Navigate across multiple sidebar pages after login",
+          "expected": "Token persists across navigation",
+          "observed": "Navigations across all tested pages succeeded with no repeated auth prompt"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "eval-harness/browser-ui/VAL-CROSS-007-auth-prompt.png",
+          "eval-harness/browser-ui/VAL-CROSS-007-authenticated-page.png"
+        ],
+        "consoleErrors": "none",
+        "network": "n/a"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-008",
+      "title": "Design consistency across pages",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Capture Settings, Agent Contract, and Eval pages",
+          "expected": "Consistent shadcn/Tailwind visual language across pages",
+          "observed": "Consistent shell layout, sidebar/nav, button/card/table patterns, spacing, and typography on all three pages"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "eval-harness/browser-ui/VAL-CROSS-008-settings-page.png",
+          "eval-harness/browser-ui/VAL-CROSS-008-agent-contract-page.png",
+          "eval-harness/browser-ui/VAL-CROSS-008-eval-page.png"
+        ],
+        "consoleErrors": "none",
+        "network": "n/a"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-011",
+      "title": "Deep linking works for runs and sessions",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Open a run detail from Runs page and capture resulting URL",
+          "expected": "Item-specific run deep link is generated",
+          "observed": "URL became /#/runs/run_1771391671048791574"
+        },
+        {
+          "action": "Directly open run deep-link URL",
+          "expected": "Correct run detail loads from URL",
+          "observed": "Run detail panel for run_1771391671048791574 loaded"
+        },
+        {
+          "action": "Open a session detail from Sessions page and capture resulting URL",
+          "expected": "Item-specific session parameter deep link is generated",
+          "observed": "URL became /#/sessions?session=chat_1772848591909831685_5676c425"
+        },
+        {
+          "action": "Directly open session deep-link URL",
+          "expected": "Correct session detail loads from URL",
+          "observed": "Session detail view loaded with message/tool history for the specified session"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "eval-harness/browser-ui/VAL-CROSS-011-deep-linked-run.png",
+          "eval-harness/browser-ui/VAL-CROSS-011-deep-linked-session.png"
+        ],
+        "consoleErrors": "none",
+        "network": "n/a"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "agent-browser default launch failed due to missing shared library libnspr4.so in this environment.",
+      "resolved": true,
+      "resolution": "Started isolated Chromium manually with required library path and connected agent-browser via CDP (port 9333).",
+      "affectedAssertions": [
+        "VAL-EVAL-008",
+        "VAL-CROSS-001",
+        "VAL-CROSS-002",
+        "VAL-CROSS-006",
+        "VAL-CROSS-007",
+        "VAL-CROSS-008",
+        "VAL-CROSS-011"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 7 assigned browser assertions: 7 passed, 0 failed, 0 blocked."
+}
