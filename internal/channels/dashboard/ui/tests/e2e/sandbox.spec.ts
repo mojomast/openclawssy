@@ -2,21 +2,20 @@ import { expect, test, type Page, type Route } from "@playwright/test"
 
 type SandboxStatus = {
   agent_id: string
-  provider: string
   running: boolean
+  status: string
   container_name: string
   container_id: string
   image: string
   workspace_path: string
   volume_name: string
-  network_mode: string
 }
 
 type SandboxImage = {
   id: string
-  repo: string
+  repository: string
   tag: string
-  size_mb: number
+  size: string
 }
 
 type SandboxVolume = {
@@ -50,18 +49,17 @@ async function installSandboxMocks(page: Page): Promise<SandboxMockState> {
   const state: SandboxMockState = {
     status: {
       agent_id: "default",
-      provider: "docker",
       running: true,
+      status: "running",
       container_name: "openclawssy_agent_default",
       container_id: "abc123def4567890",
       image: "ubuntu:24.04",
       workspace_path: "/workspace",
       volume_name: "openclawssy_ws_default",
-      network_mode: "none",
     },
     images: [
-      { id: "sha256:abc123def456", repo: "ubuntu", tag: "24.04", size_mb: 78 },
-      { id: "sha256:def789ghi012", repo: "python", tag: "3.12-slim", size_mb: 145 },
+      { id: "sha256:abc123def456", repository: "ubuntu", tag: "24.04", size: "78MB" },
+      { id: "sha256:def789ghi012", repository: "python", tag: "3.12-slim", size: "145MB" },
     ],
     volumes: [
       {
@@ -98,6 +96,7 @@ async function installSandboxMocks(page: Page): Promise<SandboxMockState> {
     if (pathname === "/api/admin/sandbox/docker/create" && method === "POST") {
       state.createCalls += 1
       state.status.running = true
+      state.status.status = "running"
       state.status.container_id = "create1234567890"
       await json(route, { ok: true })
       return
@@ -106,6 +105,7 @@ async function installSandboxMocks(page: Page): Promise<SandboxMockState> {
     if (pathname === "/api/admin/sandbox/docker/stop" && method === "POST") {
       state.stopCalls += 1
       state.status.running = false
+      state.status.status = "exited"
       await json(route, { ok: true })
       return
     }
@@ -113,6 +113,7 @@ async function installSandboxMocks(page: Page): Promise<SandboxMockState> {
     if (pathname === "/api/admin/sandbox/docker/reset" && method === "POST") {
       state.resetCalls += 1
       state.status.running = true
+      state.status.status = "running"
       state.status.container_id = "reset1234567890"
       await json(route, { ok: true })
       return
@@ -126,9 +127,9 @@ async function installSandboxMocks(page: Page): Promise<SandboxMockState> {
         const [repo, tag = "latest"] = image.split(":")
         state.images.push({
           id: `sha256:pull${state.pullCalls.length}`,
-          repo: repo || image,
+          repository: repo || image,
           tag,
-          size_mb: 99,
+          size: "99MB",
         })
       }
       await json(route, { ok: true, image })
@@ -185,10 +186,10 @@ test("shows container status metadata and running badge", async ({ page }) => {
   await expect(page.getByText("Container status")).toBeVisible()
   await expect(page.getByText("openclawssy_agent_default")).toBeVisible()
   await expect(page.getByRole("row", { name: /Container ID/ })).toContainText("abc123def456")
+  await expect(page.getByRole("row", { name: /Status/ })).toContainText("running")
   await expect(page.getByRole("row", { name: /Image/ })).toContainText("ubuntu:24.04")
   await expect(page.getByRole("row", { name: /Workspace path/ })).toContainText("/workspace")
   await expect(page.getByRole("row", { name: /Volume name/ })).toContainText("openclawssy_ws_default")
-  await expect(page.getByRole("row", { name: /Network mode/ })).toContainText("none")
   await expect(page.getByTestId("sandbox-running-badge")).toHaveText("running")
 })
 
@@ -227,6 +228,7 @@ test("pull image and refresh image table", async ({ page }) => {
   await expect.poll(() => state.pullCalls).toContain("alpine:3.19")
   await expect(page.getByText("Pulled image: alpine:3.19")).toBeVisible()
   await expect(page.getByRole("table", { name: "Available images" })).toContainText("alpine:3.19")
+  await expect(page.getByRole("table", { name: "Available images" })).toContainText("99MB")
 
   await page.getByRole("button", { name: "Refresh images" }).click()
   await expect.poll(() => state.imagesCalls).toBeGreaterThan(initialImageCalls)

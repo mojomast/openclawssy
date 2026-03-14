@@ -12,21 +12,20 @@ const DEFAULT_MOUNT_CONFIG = "# Example:\n# /host/path:/container/path:ro\n"
 
 type SandboxStatus = {
   agentID: string
-  provider: string
   running: boolean
+  status: string
   containerName: string
   containerID: string
   image: string
   workspacePath: string
   volumeName: string
-  networkMode: string
 }
 
 type SandboxImage = {
   id: string
-  repo: string
+  repository: string
   tag: string
-  sizeMB: number | null
+  size: string
 }
 
 type SandboxVolume = {
@@ -104,16 +103,16 @@ function extractErrorMessage(error: unknown): string {
 
 function normalizeStatus(value: unknown): SandboxStatus {
   const raw = asRecord(value)
+  const running = asBoolean(raw?.running)
   return {
     agentID: asText(raw?.agent_id ?? raw?.agentID).trim() || DEFAULT_AGENT_ID,
-    provider: asText(raw?.provider).trim() || "unknown",
-    running: asBoolean(raw?.running),
+    running,
+    status: asText(raw?.status).trim() || (running ? "running" : "stopped"),
     containerName: asText(raw?.container_name ?? raw?.containerName).trim(),
     containerID: asText(raw?.container_id ?? raw?.containerID).trim(),
     image: asText(raw?.image).trim(),
     workspacePath: asText(raw?.workspace_path ?? raw?.workspacePath).trim(),
     volumeName: asText(raw?.volume_name ?? raw?.volumeName).trim(),
-    networkMode: asText(raw?.network_mode ?? raw?.networkMode).trim(),
   }
 }
 
@@ -130,9 +129,9 @@ function normalizeImage(value: unknown): SandboxImage | null {
 
   return {
     id,
-    repo: asText(raw.repo).trim(),
+    repository: asText(raw.repository ?? raw.repo).trim(),
     tag: asText(raw.tag).trim(),
-    sizeMB: asNumber(raw.size_mb ?? raw.sizeMB),
+    size: asText(raw.size).trim() || asText(asNumber(raw.size_mb ?? raw.sizeMB)).trim(),
   }
 }
 
@@ -336,15 +335,15 @@ export function SandboxPage() {
     [actionPending, loadVolumes]
   )
 
-  const nonDockerProvider = status && status.provider !== "docker"
   const runningBadgeText = status?.running ? "running" : "stopped"
+  const statusBadgeText = status?.status || "docker"
 
   return (
     <div className="space-y-4 p-6" data-testid="sandbox-page">
       <div className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-2xl font-semibold tracking-tight">Sandbox</h2>
-          <Badge variant={status?.provider === "docker" ? "secondary" : "outline"}>{status?.provider || "unknown"}</Badge>
+          <Badge variant={status?.running ? "secondary" : "outline"}>{statusBadgeText}</Badge>
         </div>
         <p className="text-sm text-muted-foreground">
           Manage Docker sandbox containers, images, volumes, and mount configuration.
@@ -368,9 +367,13 @@ export function SandboxPage() {
             <p className="text-sm text-muted-foreground">Status not loaded yet. Click refresh status.</p>
           ) : null}
 
-          {status && !nonDockerProvider ? (
+          {status ? (
             <Table>
               <TableBody>
+                <TableRow>
+                  <TableHead>Status</TableHead>
+                  <TableCell>{status.status || "—"}</TableCell>
+                </TableRow>
                 <TableRow>
                   <TableHead>Container name</TableHead>
                   <TableCell>{status.containerName || "—"}</TableCell>
@@ -398,18 +401,8 @@ export function SandboxPage() {
                   <TableHead>Volume name</TableHead>
                   <TableCell className="font-mono">{status.volumeName || "—"}</TableCell>
                 </TableRow>
-                <TableRow>
-                  <TableHead>Network mode</TableHead>
-                  <TableCell>{status.networkMode || "—"}</TableCell>
-                </TableRow>
               </TableBody>
             </Table>
-          ) : null}
-
-          {nonDockerProvider ? (
-            <p className="text-sm text-yellow-700 dark:text-yellow-400">
-              Switch sandbox provider to docker in Settings to use container lifecycle controls.
-            </p>
           ) : null}
         </CardContent>
       </Card>
@@ -487,17 +480,17 @@ export function SandboxPage() {
                 <TableRow>
                   <TableHead>Repository:Tag</TableHead>
                   <TableHead>ID</TableHead>
-                  <TableHead>Size (MB)</TableHead>
+                  <TableHead>Size</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {images.map((image) => {
-                  const repoTag = `${image.repo || "unknown"}:${image.tag || "latest"}`
+                  const repoTag = `${image.repository || "unknown"}:${image.tag || "latest"}`
                   return (
                     <TableRow key={image.id}>
                       <TableCell>{repoTag}</TableCell>
                       <TableCell className="font-mono">{toShortContainerID(image.id)}</TableCell>
-                      <TableCell>{image.sizeMB ?? "—"}</TableCell>
+                      <TableCell>{image.size || "—"}</TableCell>
                     </TableRow>
                   )
                 })}
