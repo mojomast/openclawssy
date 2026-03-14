@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"openclawssy/internal/roles"
 )
 
 var (
@@ -465,6 +467,7 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 	}
 
 	slog.Debug("delegation: starting subtask execution", "task_count", len(tasks))
+	router := roles.NewRouter(nil)
 
 	ordered, err := topologicalSortTasks(tasks)
 	if err != nil {
@@ -473,41 +476,52 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 	}
 
 	for _, task := range ordered {
-		slog.Debug("delegation: starting subtask", "task_id", task.TaskID, "agent_id", task.AgentID, "priority", task.Priority)
+		routedTask := applyRoleRouting(task, router)
+		slog.Debug(
+			"delegation: starting subtask",
+			"task_id", routedTask.TaskID,
+			"agent_id", routedTask.AgentID,
+			"priority", routedTask.Priority,
+			"assigned_role", routedTask.AssignedRole,
+			"role_confidence", routedTask.RoutingConfidence,
+			"role_rationale", routedTask.RoutingRationale,
+		)
 		// Check dependencies
-		for _, dep := range task.DependsOn {
+		for _, dep := range routedTask.DependsOn {
 			if _, ok := s.completedSubtasks[dep]; !ok {
 				return fmt.Errorf("dependency not satisfied: %s", dep)
 			}
 		}
 
 		// Execute subtask with dependency context and explicit completion rules.
-		modifiedTask := task
-		modifiedTask.Message = formatDelegatedTaskMessage(task, s.delegationArtifacts)
+		modifiedTask := routedTask
+		modifiedTask.Message = formatDelegatedTaskMessage(routedTask, s.delegationArtifacts)
+		modifiedTask.Message = appendRoleRoutingContext(modifiedTask)
 
 		// Apply subtask timeout if specified
 		taskCtx := ctx
-		if task.TimeoutMS > 0 {
+		taskTimeoutMS := effectiveTaskTimeoutMS(modifiedTask)
+		if taskTimeoutMS > 0 {
 			var cancel context.CancelFunc
-			taskCtx, cancel = context.WithTimeout(ctx, time.Duration(task.TimeoutMS)*time.Millisecond)
+			taskCtx, cancel = context.WithTimeout(ctx, time.Duration(taskTimeoutMS)*time.Millisecond)
 			defer cancel()
 		}
 
 		result, err := r.SubAgentRunner.ExecuteSubAgent(taskCtx, modifiedTask)
 
 		if err != nil {
-			slog.Debug("delegation: subtask failed", "task_id", task.TaskID, "error", err)
-			s.completedSubtasks[task.TaskID] = "FAILED: " + err.Error()
+			slog.Debug("delegation: subtask failed", "task_id", routedTask.TaskID, "error", err)
+			s.completedSubtasks[routedTask.TaskID] = "FAILED: " + err.Error()
 			continue
 		}
 
-		slog.Debug("delegation: subtask completed", "task_id", task.TaskID, "success", result.Success, "output_len", len(result.FinalText))
-		s.completedSubtasks[task.TaskID] = result.FinalText
+		slog.Debug("delegation: subtask completed", "task_id", routedTask.TaskID, "success", result.Success, "output_len", len(result.FinalText))
+		s.completedSubtasks[routedTask.TaskID] = result.FinalText
 
 		// Store produced artifacts
-		for _, artifact := range task.Produces {
+		for _, artifact := range routedTask.Produces {
 			s.delegationArtifacts[artifact] = summarizeForArtifact(result.FinalText)
-			slog.Debug("delegation: artifact stored", "key", artifact, "task_id", task.TaskID)
+			slog.Debug("delegation: artifact stored", "key", artifact, "task_id", routedTask.TaskID)
 		}
 	}
 
@@ -515,6 +529,56 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 	s.out.FinalText = aggregateSubtaskResults(s.completedSubtasks)
 	slog.Debug("delegation: all subtasks completed", "output_len", len(s.out.FinalText))
 	return nil
+}
+
+func applyRoleRouting(task DecomposedTask, router *roles.Router) DecomposedTask {
+	if router == nil {
+		return task
+	}
+
+	selection := router.Route(task.Message)
+	task.AssignedRole = selection.RoleName
+	task.RoutingConfidence = selection.Confidence
+	task.RoutingRationale = selection.Rationale
+	task.RoleAllowedTools = append([]string(nil), selection.Template.AllowedTools...)
+	task.RoleMaxToolIterations = selection.Template.MaxIterations
+	task.RoleTimeoutMS = selection.Template.TimeoutMS
+
+	if selection.Template.TimeoutMS > 0 {
+		if task.TimeoutMS > 0 && task.TimeoutMS < selection.Template.TimeoutMS {
+			task.RoleTimeoutMS = task.TimeoutMS
+		} else {
+			task.TimeoutMS = selection.Template.TimeoutMS
+		}
+	}
+
+	return task
+}
+
+func appendRoleRoutingContext(task DecomposedTask) string {
+	message := strings.TrimSpace(task.Message)
+	if task.AssignedRole == "" {
+		return message
+	}
+
+	var b strings.Builder
+	b.WriteString(message)
+	b.WriteString("\n\nRole assignment:\n")
+	b.WriteString("- assigned_role: ")
+	b.WriteString(task.AssignedRole)
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf("- confidence: %.2f\n", task.RoutingConfidence))
+	b.WriteString("- rationale: ")
+	b.WriteString(strings.TrimSpace(task.RoutingRationale))
+	b.WriteString("\n")
+	return b.String()
+}
+
+func effectiveTaskTimeoutMS(task DecomposedTask) int {
+	if task.RoleTimeoutMS > 0 {
+		return task.RoleTimeoutMS
+	}
+	return task.TimeoutMS
 }
 
 func topologicalSortTasks(tasks []DecomposedTask) ([]DecomposedTask, error) {

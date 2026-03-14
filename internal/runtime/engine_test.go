@@ -2578,3 +2578,45 @@ func TestSubAgentAdapterTaskThinkingModeOverridesConfig(t *testing.T) {
 		t.Fatalf("expected task ThinkingMode=always to override config default, got %q", input.ThinkingMode)
 	}
 }
+
+func TestSubAgentAdapterAppliesRoleConstraints(t *testing.T) {
+	mock := &mockAgentRunner{output: tools.AgentRunOutput{RunID: "run-role", FinalText: "ok"}}
+	adapter := &agentSubAgentRunnerAdapter{
+		runner: mock,
+		subAgentDefaults: config.SubAgentRestrictions{
+			AllowedTools:      []string{"fs.read", "test.run", "check.run", "fs.write"},
+			MaxToolIterations: 50,
+			TimeoutMS:         9000,
+			ThinkingMode:      "never",
+		},
+		subAgentOverrides: map[string]config.SubAgentRestrictions{},
+	}
+
+	_, err := adapter.ExecuteSubAgent(context.Background(), agent.DecomposedTask{
+		TaskID:                "task-role",
+		AgentID:               "default",
+		Message:               "test and verify changes",
+		AssignedRole:          "verifier",
+		RoleAllowedTools:      []string{"test.run", "check.run"},
+		RoleMaxToolIterations: 12,
+		RoleTimeoutMS:         2500,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(mock.inputs) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(mock.inputs))
+	}
+	input := mock.inputs[0]
+
+	if input.MaxToolIterations != 12 {
+		t.Fatalf("expected role max iterations 12, got %d", input.MaxToolIterations)
+	}
+	if input.TimeoutMS != 2500 {
+		t.Fatalf("expected role timeout 2500, got %d", input.TimeoutMS)
+	}
+	if len(input.AllowedTools) != 2 || input.AllowedTools[0] != "test.run" || input.AllowedTools[1] != "check.run" {
+		t.Fatalf("expected role allowed tools [test.run check.run], got %v", input.AllowedTools)
+	}
+}

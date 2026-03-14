@@ -1995,6 +1995,7 @@ func (a *agentSubAgentRunnerAdapter) resolveRestrictions(agentID string) config.
 
 func (a *agentSubAgentRunnerAdapter) ExecuteSubAgent(ctx context.Context, task agent.DecomposedTask) (agent.SubAgentOutput, error) {
 	restrictions := a.resolveRestrictions(task.AgentID)
+	restrictions = applyRoleRestrictions(restrictions, task)
 
 	thinkingMode := task.ThinkingMode
 	if thinkingMode == "" {
@@ -2031,6 +2032,61 @@ func (a *agentSubAgentRunnerAdapter) ExecuteSubAgent(ctx context.Context, task a
 		FinalText: result.FinalText,
 		Success:   true,
 	}, nil
+}
+
+func applyRoleRestrictions(base config.SubAgentRestrictions, task agent.DecomposedTask) config.SubAgentRestrictions {
+	restrictions := base
+	if len(task.RoleAllowedTools) > 0 {
+		if len(restrictions.AllowedTools) == 0 {
+			restrictions.AllowedTools = append([]string(nil), task.RoleAllowedTools...)
+		} else {
+			restrictions.AllowedTools = intersectToolAllowlists(restrictions.AllowedTools, task.RoleAllowedTools)
+		}
+	}
+	if task.RoleMaxToolIterations > 0 {
+		if restrictions.MaxToolIterations <= 0 || task.RoleMaxToolIterations < restrictions.MaxToolIterations {
+			restrictions.MaxToolIterations = task.RoleMaxToolIterations
+		}
+	}
+	if task.RoleTimeoutMS > 0 {
+		if restrictions.TimeoutMS <= 0 || task.RoleTimeoutMS < restrictions.TimeoutMS {
+			restrictions.TimeoutMS = task.RoleTimeoutMS
+		}
+	}
+	return restrictions
+}
+
+func intersectToolAllowlists(base, role []string) []string {
+	if len(base) == 0 || len(role) == 0 {
+		return nil
+	}
+
+	allowed := make(map[string]struct{}, len(role))
+	for _, tool := range role {
+		key := strings.TrimSpace(tool)
+		if key == "" {
+			continue
+		}
+		allowed[key] = struct{}{}
+	}
+
+	out := make([]string, 0, len(base))
+	seen := make(map[string]struct{}, len(base))
+	for _, tool := range base {
+		key := strings.TrimSpace(tool)
+		if key == "" {
+			continue
+		}
+		if _, exists := allowed[key]; !exists {
+			continue
+		}
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	return out
 }
 
 func (s *sandboxShellExecutor) Exec(_ context.Context, command string, args []string, workDir string) (string, string, int, error) {

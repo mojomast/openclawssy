@@ -2101,6 +2101,51 @@ func TestFormatDelegatedTaskMessageIncludesCriteriaAndRules(t *testing.T) {
 	}
 }
 
+func TestExecuteDelegatedTasksAssignsRoleRoutingAndConstraints(t *testing.T) {
+	t.Parallel()
+
+	subRunner := &mockSubAgentRunner{
+		result: SubAgentOutput{RunID: "sub-1", FinalText: "ok", Success: true},
+	}
+	runner := Runner{SubAgentRunner: subRunner}
+	state := newRunState(RunInput{Message: "delegate"}, runner)
+
+	tasks := []DecomposedTask{{
+		TaskID:   "discover-1",
+		AgentID:  "default",
+		Message:  "read and search the workspace for migration notes",
+		Priority: 1,
+	}}
+
+	if err := runner.executeDelegatedTasks(context.Background(), state, tasks, RunInput{Message: "delegate"}); err != nil {
+		t.Fatalf("executeDelegatedTasks() error = %v", err)
+	}
+
+	if len(subRunner.calls) != 1 {
+		t.Fatalf("expected 1 subagent call, got %d", len(subRunner.calls))
+	}
+
+	call := subRunner.calls[0]
+	if call.AssignedRole != "scout" {
+		t.Fatalf("assigned role = %q, want scout", call.AssignedRole)
+	}
+	if strings.TrimSpace(call.RoutingRationale) == "" {
+		t.Fatal("expected routing rationale to be populated")
+	}
+	if call.RoutingConfidence <= 0 {
+		t.Fatalf("routing confidence = %f, want > 0", call.RoutingConfidence)
+	}
+	if len(call.RoleAllowedTools) == 0 {
+		t.Fatal("expected role allowed tools to be applied")
+	}
+	if call.RoleMaxToolIterations <= 0 {
+		t.Fatalf("role max iterations = %d, want > 0", call.RoleMaxToolIterations)
+	}
+	if call.RoleTimeoutMS <= 0 {
+		t.Fatalf("role timeout = %d, want > 0", call.RoleTimeoutMS)
+	}
+}
+
 func TestDelegationDirectivesEmphasizeFocusedExecution(t *testing.T) {
 	trigger := &DelegationTrigger{
 		Reason:       "stuck in failure loop",
