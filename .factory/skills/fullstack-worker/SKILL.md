@@ -74,7 +74,8 @@ Verify frontend:
 4. Verify end-to-end: UI → API → backend logic → response → UI update
 5. Check console for errors, network tab for correct calls
 6. Record each integration check as an `interactiveChecks` entry
-7. Run full test suites: `go test ./...` and `cd internal/channels/dashboard/ui && npx playwright test`
+7. Run full test suites: `go test ./...` and `cd internal/channels/dashboard/ui && npx playwright test`.
+   - If mission guidance documents known unrelated full-suite Playwright failures, run the scoped spec(s) covering your feature and explicitly cite the known unrelated failures in handoff evidence.
 
 ### 6. Cleanup
 
