@@ -2,8 +2,10 @@ package dashboard
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -122,14 +124,22 @@ func readDecisionAuditFile(path string, recordsByRun map[string][]agent.Decision
 	}
 	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
+	reader := bufio.NewReader(file)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return readErr
+		}
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
 			continue
 		}
+
 		var event decisionAuditEvent
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
+		if err := json.Unmarshal(line, &event); err != nil {
 			continue
 		}
 		if strings.TrimSpace(event.Type) != audit.EventDecisionRecord {
@@ -170,9 +180,13 @@ func readDecisionAuditFile(path string, recordsByRun map[string][]agent.Decision
 		if runID != "" && agentID != "" {
 			agentByRun[runID] = agentID
 		}
+
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
 	}
 
-	return scanner.Err()
+	return nil
 }
 
 func buildRunDecisionTree(rootRunID string, recordsByRun map[string][]agent.DecisionRecord, parentByRun map[string]string, agentByRun map[string]string) runDecisionNode {

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,6 +131,79 @@ func TestRunDecisionsEndpointReturns404ForUnknownRun(t *testing.T) {
 
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("expected %d, got %d", http.StatusNotFound, rr.Code)
+	}
+}
+
+func TestRunDecisionsEndpointHandlesLargeAuditJSONLine(t *testing.T) {
+	root := t.TempDir()
+	store := httpchannel.NewInMemoryRunStore()
+	_, err := store.Create(context.Background(), httpchannel.Run{
+		ID:        "run-large",
+		AgentID:   "default",
+		Message:   "large",
+		Status:    "completed",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	now := time.Now().UTC()
+	writeDecisionAuditEvent(t, root, "default", decisionAuditEvent{
+		Timestamp: now,
+		Type:      "decision.record",
+		RunID:     "run-large",
+		AgentID:   "default",
+		Payload: map[string]any{
+			"record_type":   "goal_interpretation",
+			"human_summary": "small line",
+			"payload":       map[string]any{"goal": "start"},
+		},
+	})
+	writeDecisionAuditEvent(t, root, "default", decisionAuditEvent{
+		Timestamp: now.Add(time.Second),
+		Type:      "decision.record",
+		RunID:     "run-large",
+		AgentID:   "default",
+		Payload: map[string]any{
+			"record_type":   "strategy_selection",
+			"human_summary": "large line",
+			"payload": map[string]any{
+				"details": strings.Repeat("x", 256*1024),
+			},
+		},
+	})
+
+	h := New(root, store)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/runs/run-large/decisions", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusOK, rr.Code, rr.Body.String())
+	}
+
+	var payload struct {
+		RunID   string `json:"run_id"`
+		Records []struct {
+			RecordType string `json:"record_type"`
+		} `json:"records"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.RunID != "run-large" {
+		t.Fatalf("expected run-large, got %q", payload.RunID)
+	}
+	if len(payload.Records) != 2 {
+		t.Fatalf("expected 2 records, got %#v", payload.Records)
+	}
+	if payload.Records[0].RecordType != "goal_interpretation" || payload.Records[1].RecordType != "strategy_selection" {
+		t.Fatalf("expected chronological records with large line parsed, got %#v", payload.Records)
 	}
 }
 
