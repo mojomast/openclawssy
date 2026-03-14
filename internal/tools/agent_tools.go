@@ -26,6 +26,7 @@ const (
 type AgentRunInput struct {
 	CallerAgentID     string
 	TargetAgentID     string
+	ParentRunID       string
 	Message           string
 	TaskID            string
 	Source            string
@@ -652,6 +653,7 @@ func agentRun(configPath string, runner AgentRunner) Handler {
 		out, err := runner.ExecuteSubAgent(ctx, AgentRunInput{
 			CallerAgentID:     caller,
 			TargetAgentID:     targetAgentID,
+			ParentRunID:       strings.TrimSpace(valueString(req.Args, "parent_run_id")),
 			Message:           msg,
 			TaskID:            strings.TrimSpace(valueString(req.Args, "task_id")),
 			Source:            "subagent/" + caller,

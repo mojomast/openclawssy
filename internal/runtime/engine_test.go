@@ -177,6 +177,61 @@ func TestExecuteWithInputLogsTaskIDInAuditRunStart(t *testing.T) {
 	}
 }
 
+func TestExecuteWithInputWritesDecisionRecordsToAudit(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ZAI_API_KEY", "test-key")
+	e, err := NewEngine(root)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	if err := e.Init("default", false); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	_, err = e.ExecuteWithInput(context.Background(), ExecuteInput{
+		AgentID: "default",
+		Message: `/tool fs.list {"path":"."}`,
+		Source:  "dashboard",
+	})
+	if err != nil {
+		t.Fatalf("execute with decisions: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(root, ".openclawssy", "agents", "default", "audit", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read audit log: %v", err)
+	}
+
+	decisionTypes := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var evt struct {
+			Type    string         `json:"type"`
+			Payload map[string]any `json:"payload"`
+		}
+		if err := json.Unmarshal([]byte(line), &evt); err != nil {
+			t.Fatalf("decode audit event: %v", err)
+		}
+		if evt.Type != "decision.record" {
+			continue
+		}
+		recordType, _ := evt.Payload["record_type"].(string)
+		decisionTypes[recordType] = true
+	}
+
+	if !decisionTypes[agent.DecisionRecordTypeGoalInterpretation] {
+		t.Fatalf("expected goal interpretation decision record, got %v", decisionTypes)
+	}
+	if !decisionTypes[agent.DecisionRecordTypeToolDecision] {
+		t.Fatalf("expected tool decision record, got %v", decisionTypes)
+	}
+	if !decisionTypes[agent.DecisionRecordTypeTermination] {
+		t.Fatalf("expected termination decision record, got %v", decisionTypes)
+	}
+}
+
 func TestExecuteWithInputWritesClawDefuckifierCheckpoint(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("ZAI_API_KEY", "test-key")

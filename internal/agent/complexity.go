@@ -57,6 +57,7 @@ type DelegationTrigger struct {
 
 type DecomposedTask struct {
 	TaskID                string   `json:"task_id"`
+	ParentRunID           string   `json:"parent_run_id,omitempty"`
 	AgentID               string   `json:"agent_id"`
 	Message               string   `json:"message"`
 	AcceptanceCrit        []string `json:"acceptance_criteria,omitempty"`

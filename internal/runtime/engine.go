@@ -72,6 +72,7 @@ func (e *Engine) RunTracker() *RunTracker {
 
 type ExecuteInput struct {
 	RunID              string
+	ParentRunID        string
 	AgentID            string
 	Message            string
 	TaskID             string
@@ -273,6 +274,9 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	if source != "" {
 		startEvent["source"] = source
 	}
+	if strings.TrimSpace(in.ParentRunID) != "" {
+		startEvent["parent_run_id"] = strings.TrimSpace(in.ParentRunID)
+	}
 	if strings.TrimSpace(in.TaskID) != "" {
 		startEvent["task_id"] = strings.TrimSpace(in.TaskID)
 	}
@@ -461,10 +465,32 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		}
 	}
 
+	decisionLedger := agent.NewDecisionLedger(func(ctx context.Context, record agent.DecisionRecord) error {
+		recordPayload := make(map[string]any, len(record.Payload))
+		for key, value := range record.Payload {
+			recordPayload[key] = value
+		}
+		fields := map[string]any{
+			"run_id":        record.RunID,
+			"agent_id":      record.AgentID,
+			"record_type":   record.RecordType,
+			"human_summary": record.HumanSummary,
+			"payload":       recordPayload,
+		}
+		if strings.TrimSpace(in.ParentRunID) != "" {
+			fields["parent_run_id"] = strings.TrimSpace(in.ParentRunID)
+		}
+		if source != "" {
+			fields["source"] = source
+		}
+		return aud.LogEvent(ctx, audit.EventDecisionRecord, fields)
+	})
+
 	start := time.Now().UTC()
 	out, runErr := runner.Run(runCtx, agent.RunInput{
 		AgentID:            agentID,
 		RunID:              runID,
+		ParentRunID:        strings.TrimSpace(in.ParentRunID),
 		Message:            runMessage,
 		Messages:           modelMessages,
 		ArtifactDocs:       docs,
@@ -476,6 +502,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		AutoDelegate:       cfg.Agents.AutoDelegate,
 		DelegationMode:     strings.TrimSpace(cfg.Agents.DelegationMode),
 		DelegationApproved: in.DelegationApproved,
+		DecisionLedger:     decisionLedger,
 		OnToolCall:         onToolCall,
 		SystemPromptExt:    e.memoryPromptExtender(cfg, agentID, runID),
 		OnTextDelta:        onTextDelta,
@@ -596,6 +623,9 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	fields := map[string]any{"run_id": runID, "agent_id": agentID}
 	if source != "" {
 		fields["source"] = source
+	}
+	if strings.TrimSpace(in.ParentRunID) != "" {
+		fields["parent_run_id"] = strings.TrimSpace(in.ParentRunID)
 	}
 	if sessionID != "" {
 		fields["session_id"] = sessionID
@@ -1952,6 +1982,7 @@ func (s *subAgentRunner) ExecuteSubAgent(ctx context.Context, input tools.AgentR
 	sandboxAgentID := strings.TrimSpace(input.CallerAgentID)
 	result, err := s.engine.ExecuteWithInput(ctx, ExecuteInput{
 		AgentID:           strings.TrimSpace(input.TargetAgentID),
+		ParentRunID:       strings.TrimSpace(input.ParentRunID),
 		Message:           input.Message,
 		TaskID:            strings.TrimSpace(input.TaskID),
 		Source:            strings.TrimSpace(input.Source),
@@ -2033,6 +2064,7 @@ func (a *agentSubAgentRunnerAdapter) ExecuteSubAgent(ctx context.Context, task a
 	result, err := a.runner.ExecuteSubAgent(execCtx, tools.AgentRunInput{
 		CallerAgentID:     a.parentAgentID,
 		TargetAgentID:     task.AgentID,
+		ParentRunID:       strings.TrimSpace(task.ParentRunID),
 		Message:           task.Message,
 		TaskID:            task.TaskID,
 		Source:            "subagent/delegation",

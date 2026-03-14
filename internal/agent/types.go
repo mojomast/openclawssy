@@ -18,6 +18,7 @@ type ArtifactDoc struct {
 type RunInput struct {
 	AgentID            string                     `json:"agent_id"`
 	RunID              string                     `json:"run_id"`
+	ParentRunID        string                     `json:"parent_run_id,omitempty"`
 	Message            string                     `json:"message"`
 	Messages           []ChatMessage              `json:"messages,omitempty"`
 	ArtifactDocs       []ArtifactDoc              `json:"artifact_docs"`
@@ -29,6 +30,7 @@ type RunInput struct {
 	AutoDelegate       bool                       `json:"auto_delegate,omitempty"`
 	DelegationMode     string                     `json:"delegation_mode,omitempty"`
 	DelegationApproved bool                       `json:"delegation_approved,omitempty"`
+	DecisionLedger     *DecisionLedger            `json:"-"`
 	OnToolCall         func(ToolCallRecord) error `json:"-"`
 	SystemPromptExt    SystemPromptExtender       `json:"-"`
 	OnTextDelta        func(delta string) error   `json:"-"`

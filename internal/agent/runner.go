@@ -488,6 +488,24 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 		if strings.TrimSpace(routedTask.AssignedRole) == "" {
 			routedTask = applyRoleRouting(task, router)
 		}
+		if strings.TrimSpace(routedTask.ParentRunID) == "" {
+			routedTask.ParentRunID = strings.TrimSpace(input.RunID)
+		}
+		if strings.TrimSpace(routedTask.AssignedRole) != "" {
+			s.emitDecision(ctx, DecisionRecordTypeRoleSelection, map[string]any{
+				"task_id":        strings.TrimSpace(routedTask.TaskID),
+				"role":           strings.TrimSpace(routedTask.AssignedRole),
+				"confidence":     routedTask.RoutingConfidence,
+				"role_rationale": strings.TrimSpace(routedTask.RoutingRationale),
+			}, fmt.Sprintf("Delegation selected role %s for task %s.", strings.TrimSpace(routedTask.AssignedRole), strings.TrimSpace(routedTask.TaskID)))
+			s.emitDecision(ctx, DecisionRecordTypeConstraintActive, map[string]any{
+				"task_id":             strings.TrimSpace(routedTask.TaskID),
+				"role":                strings.TrimSpace(routedTask.AssignedRole),
+				"role_allowed_tools":  append([]string(nil), routedTask.RoleAllowedTools...),
+				"role_max_iterations": routedTask.RoleMaxToolIterations,
+				"role_timeout_ms":     routedTask.RoleTimeoutMS,
+			}, fmt.Sprintf("Activated role constraints for task %s.", strings.TrimSpace(routedTask.TaskID)))
+		}
 		slog.Debug(
 			"delegation: starting subtask",
 			"task_id", routedTask.TaskID,

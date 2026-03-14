@@ -184,6 +184,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/chat/sessions/", h.chatSessionMessages)
 	mux.HandleFunc("/api/admin/monitor/runs", h.handleMonitorRuns)
 	mux.HandleFunc("/api/admin/monitor/runs/control", h.handleMonitorRunControl)
+	mux.HandleFunc("/api/admin/runs/", h.handleRunDecisions)
 	mux.HandleFunc("/api/admin/roles", h.handleRoles)
 	mux.HandleFunc("/api/admin/roles/", h.handleRoleByName)
 	mux.HandleFunc("/api/admin/agents", h.handleAgents)

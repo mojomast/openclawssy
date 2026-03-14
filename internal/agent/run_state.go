@@ -42,6 +42,10 @@ const (
 // runState encapsulates the mutable state of a single agent run loop.
 type runState struct {
 	out                     RunOutput
+	runID                   string
+	agentID                 string
+	parentRunID             string
+	decisionLedger          *DecisionLedger
 	messages                []ChatMessage
 	toolResults             []ToolCallResult
 	toolIterations          int
@@ -123,6 +127,10 @@ func newRunState(input RunInput, r Runner) *runState {
 
 	return &runState{
 		out:                     out,
+		runID:                   strings.TrimSpace(input.RunID),
+		agentID:                 strings.TrimSpace(input.AgentID),
+		parentRunID:             strings.TrimSpace(input.ParentRunID),
+		decisionLedger:          input.DecisionLedger,
 		messages:                messages,
 		toolResults:             make([]ToolCallResult, 0),
 		usedToolCallIDs:         make(map[string]struct{}),
@@ -226,6 +234,98 @@ func (s *runState) notifyToolCall(record *ToolCallRecord, onToolCall func(ToolCa
 	}
 }
 
+func (s *runState) emitDecision(ctx context.Context, recordType string, payload map[string]any, summary string) {
+	if s == nil || s.decisionLedger == nil {
+		return
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	if strings.TrimSpace(s.parentRunID) != "" {
+		if _, ok := payload["parent_run_id"]; !ok {
+			payload["parent_run_id"] = s.parentRunID
+		}
+	}
+	_ = s.decisionLedger.Record(ctx, DecisionRecord{
+		Timestamp:    time.Now().UTC(),
+		RunID:        strings.TrimSpace(s.runID),
+		AgentID:      strings.TrimSpace(s.agentID),
+		RecordType:   strings.TrimSpace(recordType),
+		Payload:      payload,
+		HumanSummary: firstN(strings.TrimSpace(summary), 280),
+	})
+}
+
+func (s *runState) emitToolDecision(ctx context.Context, call ToolCallRequest, result ToolCallResult) {
+	decision := "allowed"
+	policyReference := "policy.capability_allowlist"
+	reason := ""
+	errText := strings.TrimSpace(result.Error)
+	if errText != "" {
+		lowerErr := strings.ToLower(errText)
+		if strings.Contains(lowerErr, "policy.denied") || strings.Contains(lowerErr, "capability denied") {
+			decision = "denied"
+			reason = errText
+		}
+	}
+
+	payload := map[string]any{
+		"tool":             strings.TrimSpace(call.Name),
+		"tool_call_id":     strings.TrimSpace(call.ID),
+		"decision":         decision,
+		"policy_reference": policyReference,
+	}
+	if reason != "" {
+		payload["reason"] = reason
+	}
+	if errText != "" && decision == "allowed" {
+		payload["execution_error"] = errText
+	}
+
+	summary := fmt.Sprintf("Tool decision: %s was %s under %s.", strings.TrimSpace(call.Name), decision, policyReference)
+	if reason != "" {
+		summary = fmt.Sprintf("Tool decision: %s was denied (%s).", strings.TrimSpace(call.Name), firstN(reason, 120))
+	}
+	s.emitDecision(ctx, DecisionRecordTypeToolDecision, payload, summary)
+}
+
+func (s *runState) emitTerminationDecision(ctx context.Context, out RunOutput, runErr error) {
+	cause := runTerminationCause(runErr)
+	payload := map[string]any{"cause": cause}
+	if runErr != nil {
+		payload["error"] = strings.TrimSpace(runErr.Error())
+	}
+	if strings.TrimSpace(out.FinalText) != "" {
+		payload["final_text_preview"] = firstN(strings.TrimSpace(out.FinalText), 160)
+	}
+	summary := "Run terminated."
+	if cause == "completed" {
+		summary = "Run completed successfully."
+	} else {
+		summary = fmt.Sprintf("Run terminated with cause: %s.", cause)
+	}
+	s.emitDecision(ctx, DecisionRecordTypeTermination, payload, summary)
+}
+
+func runTerminationCause(runErr error) string {
+	if runErr == nil {
+		return "completed"
+	}
+	if errors.Is(runErr, context.Canceled) {
+		return "canceled"
+	}
+	if errors.Is(runErr, ErrToolIterationCapExceeded) {
+		return "tool_iteration_cap_exceeded"
+	}
+	if errors.Is(runErr, ErrToolExecutorRequired) {
+		return "tool_executor_missing"
+	}
+	if errors.Is(runErr, ErrModelRequired) {
+		return "model_missing"
+	}
+	return "error"
+}
+
 func (s *runState) prepareSystemPrompt(ctx context.Context, input RunInput) string {
 	systemPrompt := s.out.Prompt
 	if s.lastIterationMixed {
@@ -288,6 +388,7 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 				s.out.ToolCalls = append(s.out.ToolCalls, record)
 				s.toolResults = append(s.toolResults, result)
 				s.registerToolOutcome(result.Error)
+				s.emitToolDecision(ctx, call, result)
 				continue
 			}
 		}
@@ -302,6 +403,7 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 				s.out.ToolCalls = append(s.out.ToolCalls, record)
 				s.toolResults = append(s.toolResults, record.Result)
 				s.registerToolOutcome(record.Result.Error)
+				s.emitToolDecision(ctx, call, record.Result)
 				continue
 			}
 			if cached, ok := s.cachedFailedToolResults[callKey]; ok {
@@ -312,6 +414,7 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 				s.out.ToolCalls = append(s.out.ToolCalls, record)
 				s.toolResults = append(s.toolResults, record.Result)
 				s.registerToolOutcome(record.Result.Error)
+				s.emitToolDecision(ctx, call, record.Result)
 				continue
 			}
 		}
@@ -339,6 +442,7 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 					s.out.ToolCalls = append(s.out.ToolCalls, record)
 					s.toolResults = append(s.toolResults, result)
 					s.registerToolOutcome(result.Error)
+					s.emitToolDecision(ctx, call, result)
 					continue
 				}
 			}
@@ -361,6 +465,7 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 				s.out.ToolCalls = append(s.out.ToolCalls, record)
 				s.toolResults = append(s.toolResults, result)
 				s.registerToolOutcome(result.Error)
+				s.emitToolDecision(ctx, call, result)
 				continue
 			}
 		}
@@ -411,11 +516,44 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 		s.notifyToolCall(&record, input.OnToolCall)
 		s.out.ToolCalls = append(s.out.ToolCalls, record)
 		s.toolResults = append(s.toolResults, result)
+		s.emitToolDecision(ctx, call, result)
 	}
 	return hadFreshExecution
 }
 
-func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOutput, error) {
+func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (finalOut RunOutput, finalErr error) {
+	defer func() {
+		s.emitTerminationDecision(ctx, finalOut, finalErr)
+	}()
+
+	goalText := strings.TrimSpace(input.Message)
+	if goalText == "" && len(input.Messages) > 0 {
+		goalText = strings.TrimSpace(input.Messages[len(input.Messages)-1].Content)
+	}
+	if goalText == "" {
+		goalText = "Run without explicit user message"
+	}
+	s.emitDecision(ctx, DecisionRecordTypeGoalInterpretation, map[string]any{
+		"goal":          goalText,
+		"message_count": len(input.Messages),
+	}, fmt.Sprintf("Interpreted run goal: %s", firstN(goalText, 160)))
+
+	strategy := "direct_execution"
+	if mode := normalizeDelegationMode(input.DelegationMode); mode != "" {
+		strategy = fmt.Sprintf("delegation_mode:%s", mode)
+	}
+	s.emitDecision(ctx, DecisionRecordTypeStrategySelection, map[string]any{
+		"strategy":        strategy,
+		"delegation_mode": strings.TrimSpace(input.DelegationMode),
+		"auto_delegate":   input.AutoDelegate,
+	}, fmt.Sprintf("Selected strategy %s for this run.", strategy))
+
+	s.emitDecision(ctx, DecisionRecordTypeConstraintActive, map[string]any{
+		"allowed_tools":       append([]string(nil), input.AllowedTools...),
+		"max_tool_iterations": s.toolCap,
+		"tool_timeout_ms":     int(s.toolTimeout / time.Millisecond),
+	}, "Activated run constraints (tool allowlist, iteration cap, timeout).")
+
 	for {
 		systemPrompt := s.prepareSystemPrompt(ctx, input)
 
@@ -435,6 +573,16 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 		if !s.delegationLocked {
 			if trigger := s.computeDelegationTrigger(promptTokens, contextWindow, snapshot); trigger != nil {
 				s.delegationReason = strings.TrimSpace(trigger.Reason)
+				s.emitDecision(ctx, DecisionRecordTypeDelegationTrigger, map[string]any{
+					"reason":          strings.TrimSpace(trigger.Reason),
+					"mode":            string(trigger.Mode),
+					"cooldown_for":    trigger.CooldownFor,
+					"context_tokens":  promptTokens,
+					"context_window":  contextWindow,
+					"subtask_count":   len(trigger.Subtasks),
+					"snapshot_tool":   strings.TrimSpace(snapshot.LastToolAttempted),
+					"snapshot_errors": append([]string(nil), snapshot.LastErrorTypes...),
+				}, fmt.Sprintf("Delegation trigger fired (%s): %s", strings.TrimSpace(string(trigger.Mode)), firstN(strings.TrimSpace(trigger.Reason), 140)))
 
 				configuredMode := normalizeDelegationMode(input.DelegationMode)
 				if isPlannerDelegationMode(configuredMode) {
@@ -451,6 +599,20 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 					s.pendingSubtasks = plannedTasks
 					s.delegationActive = true
 					s.appendPlannedDelegationEvents(plan)
+					s.emitDecision(ctx, DecisionRecordTypeConstraintActive, map[string]any{
+						"delegation_mode": string(configuredMode),
+						"subtask_count":   len(plannedTasks),
+						"auto_delegate":   input.AutoDelegate,
+					}, fmt.Sprintf("Activated planner-led delegation constraints for %d subtasks.", len(plannedTasks)))
+					for _, task := range plan.Tasks {
+						s.emitDecision(ctx, DecisionRecordTypeRoleSelection, map[string]any{
+							"task_id":        strings.TrimSpace(task.TaskID),
+							"role":           strings.TrimSpace(task.AssignedRole),
+							"confidence":     task.Confidence,
+							"task":           strings.TrimSpace(task.Description),
+							"role_rationale": strings.TrimSpace(task.Rationale),
+						}, fmt.Sprintf("Selected role %s for task %s.", strings.TrimSpace(task.AssignedRole), strings.TrimSpace(task.TaskID)))
+					}
 
 					autoExecute, decisionSummary := shouldAutoExecutePlan(configuredMode, plan, input.DelegationApproved)
 					if autoExecute && r.SubAgentRunner == nil {
@@ -494,6 +656,11 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 				s.delegationCooldown = trigger.CooldownFor
 				s.pendingSubtasks = trigger.Subtasks
 				s.delegationActive = true
+				s.emitDecision(ctx, DecisionRecordTypeConstraintActive, map[string]any{
+					"delegation_mode": string(trigger.Mode),
+					"allowed_tools":   append([]string(nil), trigger.AllowedTools...),
+					"cooldown_for":    trigger.CooldownFor,
+				}, fmt.Sprintf("Activated delegation mode constraints (%s).", strings.TrimSpace(string(trigger.Mode))))
 
 				// Lock delegation mode once we enter forced or critical mode
 				if trigger.Mode == DelegationModeToolGated || trigger.Mode == DelegationModeAutoExecute {
@@ -689,6 +856,13 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 				if s.isToolAllowedInDelegationMode(call.Name) {
 					filteredCalls = append(filteredCalls, call)
 				} else {
+					s.emitDecision(ctx, DecisionRecordTypeToolDecision, map[string]any{
+						"tool":             strings.TrimSpace(call.Name),
+						"tool_call_id":     strings.TrimSpace(call.ID),
+						"decision":         "denied",
+						"policy_reference": "policy.delegation_mode",
+						"reason":           fmt.Sprintf("tool %s is blocked while delegation mode is %s", strings.TrimSpace(call.Name), strings.TrimSpace(string(s.delegationMode))),
+					}, fmt.Sprintf("Denied tool %s due to delegation mode constraints.", strings.TrimSpace(call.Name)))
 					// Check rewrite budget to prevent infinite loops
 					if s.toolRewriteCount >= maxToolRewriteBudget {
 						// Execute pending subtasks directly if we have them
