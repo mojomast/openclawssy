@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
+import { DecisionTimeline } from "@/components/DecisionTimeline"
 import { JSONViewer } from "@/components/JSONViewer"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { flattenDecisionRecords, parseRunDecisionNode, type FlattenedDecisionRecord } from "@/lib/decisions"
 import { ApiError, api } from "@/lib/api"
 
 const STATUS_FILTERS = [
@@ -394,6 +397,10 @@ export function RunsPage() {
   const [traceSourceNote, setTraceSourceNote] = useState("")
   const [traceFetchError, setTraceFetchError] = useState("")
   const [selectedTool, setSelectedTool] = useState<ToolExecutionItem | null>(null)
+  const [decisionDrawerOpen, setDecisionDrawerOpen] = useState(false)
+  const [decisionLoading, setDecisionLoading] = useState(false)
+  const [decisionError, setDecisionError] = useState("")
+  const [decisionRecords, setDecisionRecords] = useState<FlattenedDecisionRecord[]>([])
 
   const modelSteps = useMemo(() => normalizeModelSteps(selectedTrace), [selectedTrace])
   const toolEntries = useMemo(() => normalizeToolExecutionResults(selectedTrace), [selectedTrace])
@@ -432,6 +439,9 @@ export function RunsPage() {
     setSelectedTool(null)
     setTraceSourceNote("")
     setTraceFetchError("")
+    setDecisionDrawerOpen(false)
+    setDecisionError("")
+    setDecisionRecords([])
 
     try {
       const runPayload = await api.get<unknown>(`/v1/runs/${encodeURIComponent(runID)}`)
@@ -477,6 +487,34 @@ export function RunsPage() {
     }
   }, [])
 
+  const loadRunDecisions = useCallback(async (runID: string) => {
+    const targetRunID = runID.trim()
+    if (!targetRunID) {
+      setDecisionError("Select a run before opening the decision ledger.")
+      setDecisionRecords([])
+      return
+    }
+
+    setDecisionLoading(true)
+    setDecisionError("")
+
+    try {
+      const payload = await api.get<unknown>(`/api/admin/runs/${encodeURIComponent(targetRunID)}/decisions`)
+      const root = parseRunDecisionNode(payload)
+      if (!root) {
+        setDecisionRecords([])
+        setDecisionError("No decision records were returned for this run.")
+        return
+      }
+      setDecisionRecords(flattenDecisionRecords(root))
+    } catch (error) {
+      setDecisionRecords([])
+      setDecisionError(extractErrorMessage(error))
+    } finally {
+      setDecisionLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     void loadRuns()
   }, [loadRuns, listReloadToken])
@@ -490,6 +528,9 @@ export function RunsPage() {
       setSelectedTool(null)
       setTraceSourceNote("")
       setTraceFetchError("")
+      setDecisionDrawerOpen(false)
+      setDecisionError("")
+      setDecisionRecords([])
       return
     }
     void loadRunDetail(selectedRunID)
@@ -714,6 +755,19 @@ export function RunsPage() {
                   type="button"
                   variant="outline"
                   size="sm"
+                  data-testid="run-why-button"
+                  disabled={detailLoading}
+                  onClick={() => {
+                    setDecisionDrawerOpen(true)
+                    void loadRunDecisions(selectedRunID)
+                  }}
+                >
+                  Why this happened
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => setDetailReloadToken((current) => current + 1)}
                   disabled={detailLoading}
                 >
@@ -921,6 +975,29 @@ export function RunsPage() {
           ) : null}
         </CardContent>
       </Card>
+
+      <Sheet open={decisionDrawerOpen} onOpenChange={setDecisionDrawerOpen}>
+        <SheetContent data-testid="decision-drawer" className="overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>Why this happened</SheetTitle>
+            <SheetDescription>
+              Chronological decision ledger records for run {selectedRunID || "-"}.
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="mt-4 space-y-3">
+            {decisionLoading ? <p className="text-sm text-muted-foreground">Loading decision ledger...</p> : null}
+            {decisionError ? <p className="text-sm text-destructive">{decisionError}</p> : null}
+            {!decisionLoading && !decisionError ? (
+              <DecisionTimeline
+                records={decisionRecords}
+                emptyLabel="No decision ledger records found for this run."
+                testID="decision-drawer-timeline"
+              />
+            ) : null}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }
