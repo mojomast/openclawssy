@@ -293,7 +293,7 @@ test("provider test and model discovery actions render connectivity and discover
   await expect(page.locator("label.settings-field:has-text('Model name') select")).toHaveValue("glm-4.7")
 })
 
-test("agents category renders profile editor and subagent defaults with editable values", async ({ page }) => {
+test("agents category renders profile editor model override controls and subagent defaults", async ({ page }) => {
   const state = createState()
   await routeSettingsApi(page, state)
 
@@ -301,8 +301,30 @@ test("agents category renders profile editor and subagent defaults with editable
 
   await expect(page.getByText("Agent profile summary")).toBeVisible()
   await expect(page.getByText("Agent Profile Editor")).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Profile model override" })).toBeVisible()
   await expect(page.getByText("Subagent defaults")).toBeVisible()
   await expect(page.locator("label.settings-field:has-text('Profile agent') select")).toHaveValue("reviewer")
+  await expect(page.locator("label.settings-field:has-text('Profile model provider') select")).toHaveValue("openai")
+  await expect(page.locator("label.settings-field:has-text('Profile model name') input")).toHaveValue("gpt-4o-mini")
+
+  await page.locator("label.settings-field:has-text('Profile model provider') select").selectOption("hatz")
+  await expect(page.locator(".settings-diff-table code", { hasText: "agents.profiles.reviewer.model.provider" })).toBeVisible()
+
+  await page.locator("label.settings-field:has-text('Profile model name') input").fill("glm-4.7")
+  await expect(page.locator(".settings-diff-table code", { hasText: "agents.profiles.reviewer.model.name" })).toBeVisible()
+
+  await page.locator("label.settings-field:has-text('Profile model max tokens') input").fill("8192")
+  await expect(page.locator(".settings-diff-table code", { hasText: "agents.profiles.reviewer.model.max_tokens" })).toBeVisible()
+
+  await page.locator("label.settings-field:has-text('Profile temperature') input").fill("0.3")
+  await expect(page.locator(".settings-diff-table code", { hasText: "agents.profiles.reviewer.model.temperature" })).toBeVisible()
+
+  await page.locator("label.settings-field:has-text('Profile provider timeout (ms)') input").fill("120000")
+  await expect(page.locator(".settings-diff-table code", { hasText: "agents.profiles.reviewer.model.timeout_ms" })).toBeVisible()
+
+  await page.getByRole("button", { name: "Clear profile model overrides" }).click()
+  await expect(page.locator(".settings-diff-table code", { hasText: "agents.profiles.reviewer.model" })).toBeVisible()
+
   await expect(page.locator("label.settings-field:has-text('Subagent thinking mode') select")).toHaveValue("on_error")
   await expect(page.locator("label.settings-field:has-text('Subagent allowed tools (comma separated)') input")).toHaveValue("fs.read")
 

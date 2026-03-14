@@ -96,6 +96,22 @@ function writePath(record: JsonRecord, path: string, nextValue: unknown): JsonRe
   return cloned
 }
 
+function deletePath(record: JsonRecord, path: string): JsonRecord {
+  const cloned = deepClone(record)
+  const parts = path.split(".")
+  let current: JsonRecord = cloned
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    const part = parts[index]
+    const existing = current[part]
+    if (!isRecord(existing)) {
+      return cloned
+    }
+    current = existing
+  }
+  delete current[parts[parts.length - 1]]
+  return cloned
+}
+
 function collectDiffRows(beforeValue: unknown, afterValue: unknown, prefix = ""): DiffRow[] {
   if (beforeValue === afterValue) {
     return []
@@ -313,11 +329,28 @@ export function SettingsPage() {
     setSaveError("")
   }, [])
 
+  const deleteDraftPath = useCallback((path: string) => {
+    dirtyRef.current = true
+    setDraft((previous) => {
+      const baseline = isRecord(previous) ? previous : {}
+      return deletePath(baseline, path)
+    })
+    setSaveNotice("")
+    setSaveError("")
+  }, [])
+
   const withDraftRecord = draft || {}
   const providers = (readPath(withDraftRecord, "providers", {}) || {}) as JsonRecord
   const profileMap = (readPath(withDraftRecord, "agents.profiles", {}) || {}) as JsonRecord
   const profileKeys = Object.keys(profileMap)
   const selectedProfileSafe = profileKeys.includes(selectedProfile) ? selectedProfile : profileKeys[0] || "default"
+  const selectedProfileModel = (readPath(profileMap, `${selectedProfileSafe}.model`, {}) || {}) as JsonRecord
+  const profileModelOverrideEnabled =
+    String(readPath(profileMap, `${selectedProfileSafe}.model.provider`, "") || "").trim().length > 0 ||
+    String(readPath(profileMap, `${selectedProfileSafe}.model.name`, "") || "").trim().length > 0 ||
+    Number(readPath(profileMap, `${selectedProfileSafe}.model.max_tokens`, 0) || 0) > 0 ||
+    Number(readPath(profileMap, `${selectedProfileSafe}.model.timeout_ms`, 0) || 0) > 0 ||
+    Number(readPath(profileMap, `${selectedProfileSafe}.model.temperature`, 0) || 0) > 0
   const selectedProvider = String(readPath(withDraftRecord, "model.provider", "hatz") || "hatz").trim() || "hatz"
   const selectedModelValue = String(readPath(withDraftRecord, "model.name", "") || "")
   const selectableModels = Array.from(new Set([selectedModelValue, ...(providerModels[selectedProvider] || [])].filter(Boolean)))
@@ -837,6 +870,75 @@ export function SettingsPage() {
                     onChange={(event) => setDraftPath(`agents.profiles.${selectedProfileSafe}.self_improvement`, event.target.checked)}
                   />
                 </label>
+
+                <h4 className="settings-subheading">Profile model override</h4>
+                <p className="settings-help">
+                  {profileModelOverrideEnabled
+                    ? "This profile overrides one or more global model fields."
+                    : "This profile currently inherits global model values."}
+                </p>
+                <label className="settings-field">
+                  <span className="settings-field-title">Profile model provider</span>
+                  <select
+                    className="settings-select"
+                    value={String(readPath(selectedProfileModel, "provider", "") || "")}
+                    onChange={(event) => setDraftPath(`agents.profiles.${selectedProfileSafe}.model.provider`, event.target.value)}
+                  >
+                    <option value="">(inherit global)</option>
+                    {MODEL_PROVIDERS.map((provider) => (
+                      <option key={provider} value={provider}>
+                        {provider}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="settings-field">
+                  <span className="settings-field-title">Profile model name</span>
+                  <input
+                    className="settings-input"
+                    placeholder="(inherit global)"
+                    value={String(readPath(selectedProfileModel, "name", "") || "")}
+                    onChange={(event) => setDraftPath(`agents.profiles.${selectedProfileSafe}.model.name`, event.target.value)}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span className="settings-field-title">Profile model max tokens</span>
+                  <input
+                    className="settings-input"
+                    placeholder="0"
+                    value={String(readPath(selectedProfileModel, "max_tokens", "") || "")}
+                    onChange={(event) => setDraftPath(`agents.profiles.${selectedProfileSafe}.model.max_tokens`, parseNumber(event.target.value, 0))}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span className="settings-field-title">Profile temperature</span>
+                  <input
+                    className="settings-input"
+                    placeholder="(inherit global)"
+                    value={String(readPath(selectedProfileModel, "temperature", "") || "")}
+                    onChange={(event) =>
+                      setDraftPath(`agents.profiles.${selectedProfileSafe}.model.temperature`, parseFloatValue(event.target.value, 0))
+                    }
+                  />
+                </label>
+                <label className="settings-field">
+                  <span className="settings-field-title">Profile provider timeout (ms)</span>
+                  <input
+                    className="settings-input"
+                    placeholder="0"
+                    value={String(readPath(selectedProfileModel, "timeout_ms", "") || "")}
+                    onChange={(event) => setDraftPath(`agents.profiles.${selectedProfileSafe}.model.timeout_ms`, parseNumber(event.target.value, 0))}
+                  />
+                </label>
+                <div className="settings-toolbar-actions">
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => deleteDraftPath(`agents.profiles.${selectedProfileSafe}.model`)}
+                  >
+                    Clear profile model overrides
+                  </button>
+                </div>
 
                 <h4 className="settings-subheading">Subagent defaults</h4>
                 <label className="settings-field">
