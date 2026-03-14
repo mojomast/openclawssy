@@ -25,6 +25,9 @@ Architectural decisions, patterns, and conventions for the openclawssy operator-
 Global config → agent profile (zero-value fallback) → subagent restrictions (override + defaults merge).
 `agentSubAgentRunnerAdapter.resolveRestrictions()` in engine.go handles the merge.
 
+Model overrides are additionally gated by `agents.allow_agent_model_overrides` at runtime (`internal/runtime/engine.go`).
+When this gate is `false`, agent profile model settings should not override global model policy.
+
 ### Agent Delegation (Existing)
 Complexity-driven: `ComputeComplexity()` scores → triggers at thresholds → modes: prompt_only (≥2), tool_gated (≥4), auto_execute (≥6). `DecomposeTask()` does pattern + signal based decomposition. Topological sort execution via `executeDelegatedTasks()`.
 
@@ -33,6 +36,10 @@ UI assets compiled by Vite → output to dist/ → Go embeds dashboard assets vi
 
 ### API Authentication
 Bearer token via middleware. Token from config (`OPENCLAWSSY_TOKEN` env or config file).
+
+### Config API Redaction Behavior
+`GET /api/admin/config` returns `cfg.Redacted()` from `internal/channels/dashboard/handler.go`, which strips API keys and chat tokens.
+Do not use this response as a full-fidelity snapshot for rollback/round-trip restore flows.
 
 ## New Subsystems (This Mission)
 
