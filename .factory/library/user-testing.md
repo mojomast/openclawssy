@@ -17,6 +17,7 @@ Testing surface, validation approach, and resource cost classification.
 
 #### Browser Runtime Notes
 - If `agent-browser` startup fails with missing shared library errors (for example `libnspr4.so`), run with an isolated `AGENT_BROWSER_HOME` and prepend Playwright bundled libs to `LD_LIBRARY_PATH`.
+- If agent-browser startup fails due to stale session/daemon state, run `agent-browser session list`, close stale sessions, and retry with a fresh session id.
 - For `/dashboard-legacy` verification, if browser network capture misses the request, use `curl -i http://localhost:8081/dashboard-legacy` as supplemental status evidence.
 - If agent-browser request tracking returns no captured requests for dashboard flows, collect supplemental network evidence using `curl -i` against the same local API endpoints exercised by the UI flow.
 

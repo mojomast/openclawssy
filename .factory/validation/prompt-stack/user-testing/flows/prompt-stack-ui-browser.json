@@ -1,0 +1,138 @@
+{
+  "groupId": "prompt-stack-ui-browser",
+  "testedAt": "2026-03-14T16:44:41.223214Z",
+  "isolation": {
+    "surface": "browser-dashboard",
+    "url": "http://localhost:8081/dashboard",
+    "authToken": "change-me",
+    "browserSession": "prompt-stack-ui-browser-ussyflow_tester-v2",
+    "assignedAgent": "ussyflow_tester"
+  },
+  "toolsUsed": [
+    "agent-browser",
+    "curl"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-PROMPT-007",
+      "title": "UI layer editor",
+      "status": "pass",
+      "reason": "Prompt Stack page rendered all 5 layer editors, and saving Session Overlay persisted via API then refreshed merged preview/version history.",
+      "evidence": {
+        "screenshots": [
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-007-layer-editors.png",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-007-save-layer.png"
+        ],
+        "console": [
+          "prompt-stack/prompt-stack-ui-browser/browser-console-errors.txt"
+        ],
+        "network": [
+          "prompt-stack/prompt-stack-ui-browser/browser-network-requests.txt",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-007-put-restore.headers.txt",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-007-put-restore.body.json",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-007-preview-after-restore.headers.txt",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-007-preview-after-restore.body.json"
+        ]
+      }
+    },
+    {
+      "id": "VAL-PROMPT-008",
+      "title": "UI merged preview panel",
+      "status": "pass",
+      "reason": "Merged preview panel showed assembled prompt and token breakdown (per-layer + total) and updated after layer edits.",
+      "evidence": {
+        "screenshots": [
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-008-preview-panel-with-tokens.png"
+        ],
+        "console": [
+          "prompt-stack/prompt-stack-ui-browser/browser-console-errors.txt"
+        ],
+        "network": [
+          "prompt-stack/prompt-stack-ui-browser/browser-network-requests.txt",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-008-preview-overflow.headers.txt",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-008-preview-overflow.body.json"
+        ]
+      }
+    },
+    {
+      "id": "VAL-PROMPT-009",
+      "title": "UI version history with diff and rollback",
+      "status": "pass",
+      "reason": "Version history listed timestamped versions; selecting two versions loaded visual diff; rollback restored earlier Session Overlay content.",
+      "evidence": {
+        "screenshots": [
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-009-diff-view.png",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-009-rollback-action.png"
+        ],
+        "console": [
+          "prompt-stack/prompt-stack-ui-browser/browser-console-errors.txt"
+        ],
+        "network": [
+          "prompt-stack/prompt-stack-ui-browser/browser-network-requests.txt",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-009-history.headers.txt",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-009-history.body.json",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-009-diff.headers.txt",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-009-diff.body.json"
+        ]
+      }
+    },
+    {
+      "id": "VAL-PROMPT-010",
+      "title": "UI lint results and test trigger",
+      "status": "pass",
+      "reason": "Run lint produced issue cards with severity/layer/suggested fix; Run tests produced structural pass/fail check results.",
+      "evidence": {
+        "screenshots": [
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-010-lint-results.png",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-010-test-results.png"
+        ],
+        "console": [
+          "prompt-stack/prompt-stack-ui-browser/browser-console-errors.txt"
+        ],
+        "network": [
+          "prompt-stack/prompt-stack-ui-browser/browser-network-requests.txt",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-010-lint.headers.txt",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-010-lint.body.json",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-010-test.headers.txt",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-010-test.body.json"
+        ]
+      }
+    },
+    {
+      "id": "VAL-PROMPT-011",
+      "title": "Token budget overflow warning",
+      "status": "pass",
+      "reason": "After loading large Session Overlay content, UI showed overflow state with total tokens above context window and highlighted top contributing layers.",
+      "evidence": {
+        "screenshots": [
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-011-token-overflow-warning-confirmed.png"
+        ],
+        "console": [
+          "prompt-stack/prompt-stack-ui-browser/browser-console-errors.txt"
+        ],
+        "network": [
+          "prompt-stack/prompt-stack-ui-browser/browser-network-requests.txt",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-008-preview-overflow.headers.txt",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-008-preview-overflow.body.json",
+          "prompt-stack/prompt-stack-ui-browser/VAL-PROMPT-011-warning-context.json"
+        ]
+      }
+    }
+  ],
+  "frictions": [
+    {
+      "description": "agent-browser initially failed due missing runtime libnspr4 and stale daemon session startup failures.",
+      "resolved": true,
+      "resolution": "Used isolated AGENT_BROWSER_HOME, prefixed LD_LIBRARY_PATH with /home/mojo/.cache/playwright-libs/root/usr/lib/x86_64-linux-gnu, and restarted the session daemon.",
+      "affectedAssertions": [
+        "VAL-PROMPT-007",
+        "VAL-PROMPT-008",
+        "VAL-PROMPT-009",
+        "VAL-PROMPT-010",
+        "VAL-PROMPT-011"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 5 assertions: 5 passed, 0 failed, 0 blocked."
+}

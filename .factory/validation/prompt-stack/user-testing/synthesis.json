@@ -1,0 +1,34 @@
+{
+  "milestone": "prompt-stack",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 11,
+    "passed": 11,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-PROMPT-001",
+    "VAL-PROMPT-002",
+    "VAL-PROMPT-003",
+    "VAL-PROMPT-004",
+    "VAL-PROMPT-005",
+    "VAL-PROMPT-006",
+    "VAL-PROMPT-007",
+    "VAL-PROMPT-008",
+    "VAL-PROMPT-009",
+    "VAL-PROMPT-010",
+    "VAL-PROMPT-011"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added agent-browser stale session recovery note (list/close stale sessions and retry with a fresh session id) from prompt-stack browser flow friction.",
+      "source": "flow-report"
+    }
+  ],
+  "previousRound": null
+}
