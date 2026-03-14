@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Link, useParams, useSearchParams } from "react-router-dom"
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -70,15 +70,15 @@ function asText(value: unknown): string {
 }
 
 function normalizeDeepLinkID(rawValue: string | null | undefined): string {
-	const raw = asText(rawValue).trim()
-	if (!raw) {
-		return ""
-	}
-	try {
-		return decodeURIComponent(raw).trim()
-	} catch {
-		return raw
-	}
+  const raw = asText(rawValue).trim()
+  if (!raw) {
+    return ""
+  }
+  try {
+    return decodeURIComponent(raw).trim()
+  } catch {
+    return raw
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -352,6 +352,11 @@ function buildSessionMessagesQuery(sessionID: string, limit: number): string {
   return `/api/admin/chat/sessions/${encodeURIComponent(sessionID)}/messages?limit=${encodeURIComponent(String(limit))}`
 }
 
+function buildSessionRoute(sessionID: string): string {
+  const encoded = encodeURIComponent(sessionID)
+  return `/sessions/${encoded}?session=${encoded}`
+}
+
 function metaRange(offset: number, total: number, count: number): { start: number; end: number } {
   if (total === 0) {
     return { start: 0, end: 0 }
@@ -363,8 +368,9 @@ function metaRange(offset: number, total: number, count: number): { start: numbe
 }
 
 export function SessionsPage() {
-	const params = useParams<{ sessionId?: string }>()
-	const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const params = useParams<{ sessionId?: string }>()
+  const [searchParams] = useSearchParams()
 
   const [searchQuery, setSearchQuery] = useState("")
   const [sortMode, setSortMode] = useState<SortMode>("recent")
@@ -386,13 +392,15 @@ export function SessionsPage() {
   const [messagesError, setMessagesError] = useState("")
   const [messagesReloadToken, setMessagesReloadToken] = useState(0)
 
-	const deepLinkedSessionID = useMemo(() => {
-		const byPath = normalizeDeepLinkID(params.sessionId)
-		if (byPath) {
-			return byPath
-		}
-		return normalizeDeepLinkID(searchParams.get("session"))
-	}, [params.sessionId, searchParams])
+  const pathSessionID = useMemo(() => normalizeDeepLinkID(params.sessionId), [params.sessionId])
+  const querySessionID = useMemo(() => normalizeDeepLinkID(searchParams.get("session")), [searchParams])
+
+  const deepLinkedSessionID = useMemo(() => {
+    if (querySessionID) {
+      return querySessionID
+    }
+    return pathSessionID
+  }, [pathSessionID, querySessionID])
 
   const visibleSessions = useMemo(() => {
     const query = normalizeSearch(searchQuery)
@@ -402,12 +410,8 @@ export function SessionsPage() {
 
   const pageRange = useMemo(() => metaRange(offset, total, sessions.length), [offset, sessions.length, total])
 
-	const openSession = useCallback((session: SessionItem) => {
-		setSearchParams((previous) => {
-			const next = new URLSearchParams(previous)
-			next.set("session", session.sessionID)
-			return next
-		})
+  const openSession = useCallback((session: SessionItem) => {
+    navigate(buildSessionRoute(session.sessionID))
 
     setSelectedSession((current) => {
       if (current?.sessionID === session.sessionID) {
@@ -423,7 +427,7 @@ export function SessionsPage() {
       }
       return session.sessionID
     })
-	}, [setSearchParams])
+  }, [navigate])
 
   const loadSessions = useCallback(async () => {
     setListLoading(true)
@@ -488,16 +492,26 @@ export function SessionsPage() {
     void loadSessions()
   }, [listReloadToken, loadSessions])
 
-	useEffect(() => {
-		if (!deepLinkedSessionID) {
-			return
-		}
-		setSelectedSessionID((current) => (current === deepLinkedSessionID ? current : deepLinkedSessionID))
-		const matched = sessions.find((session) => session.sessionID === deepLinkedSessionID) || null
-		if (matched) {
-			setSelectedSession(matched)
-		}
-	}, [deepLinkedSessionID, sessions])
+  useEffect(() => {
+    if (!deepLinkedSessionID) {
+      return
+    }
+
+    if (pathSessionID !== deepLinkedSessionID || querySessionID !== deepLinkedSessionID) {
+      navigate(buildSessionRoute(deepLinkedSessionID), { replace: true })
+    }
+  }, [deepLinkedSessionID, navigate, pathSessionID, querySessionID])
+
+  useEffect(() => {
+    if (!deepLinkedSessionID) {
+      return
+    }
+    setSelectedSessionID((current) => (current === deepLinkedSessionID ? current : deepLinkedSessionID))
+    const matched = sessions.find((session) => session.sessionID === deepLinkedSessionID) || null
+    if (matched) {
+      setSelectedSession(matched)
+    }
+  }, [deepLinkedSessionID, sessions])
 
   useEffect(() => {
     void loadMessages()

@@ -332,3 +332,56 @@ test("deep link /#/sessions?session={id} opens selected session", async ({ page 
   await expect(page.getByTestId("sessions-message-stream")).toContainText("Loaded by deep link")
   await expect.poll(() => state.messageQueries.at(-1)?.sessionID).toBe("session_deep")
 })
+
+test("path deep-link /#/sessions/:sessionId stays synchronized and allows switching sessions", async ({ page }) => {
+  const state = await installSessionsMocks(page, {
+    sessions: [
+      {
+        session_id: "session_path",
+        title: "Opened From Path",
+        user_id: "alice",
+        room_id: "ops",
+        updated_at: "2026-03-14T17:00:00Z",
+        created_at: "2026-03-14T16:00:00Z",
+      },
+      {
+        session_id: "session_next",
+        title: "Second Session",
+        user_id: "bob",
+        room_id: "qa",
+        updated_at: "2026-03-14T17:01:00Z",
+        created_at: "2026-03-14T16:01:00Z",
+      },
+    ],
+    messagesBySessionID: {
+      session_path: [
+        {
+          role: "assistant",
+          content: "Loaded from path deep link",
+          ts: "2026-03-14T17:00:01Z",
+        },
+      ],
+      session_next: [
+        {
+          role: "assistant",
+          content: "Switched to second session",
+          ts: "2026-03-14T17:01:01Z",
+        },
+      ],
+    },
+  })
+
+  await page.goto("/dashboard#/sessions/session_path")
+
+  await expect(page.getByText("Session session_path", { exact: false })).toBeVisible()
+  await expect(page.getByTestId("sessions-message-stream")).toContainText("Loaded from path deep link")
+  await expect.poll(() => state.messageQueries.at(-1)?.sessionID).toBe("session_path")
+
+  const nextSessionRow = page.locator("[data-testid='sessions-table'] tbody tr").filter({ hasText: "session_next" })
+  await nextSessionRow.getByRole("button", { name: "Open" }).click()
+
+  await expect(page.getByText("Session session_next", { exact: false })).toBeVisible()
+  await expect(page.getByTestId("sessions-message-stream")).toContainText("Switched to second session")
+  await expect(page).toHaveURL(/#\/sessions\/session_next\?session=session_next/)
+  await expect.poll(() => state.messageQueries.at(-1)?.sessionID).toBe("session_next")
+})
