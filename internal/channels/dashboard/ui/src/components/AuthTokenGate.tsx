@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input'
 import {
   clearAuthTokenGateError,
   getAuthTokenGateState,
+  resolveBearerToken,
   submitAuthToken,
   subscribeAuthTokenGate,
 } from '@/lib/api'
@@ -14,6 +15,12 @@ export function AuthTokenGate() {
 
   useEffect(() => {
     return subscribeAuthTokenGate(setGateState)
+  }, [])
+
+  useEffect(() => {
+    void resolveBearerToken().catch(() => {
+      // Request will remain pending until the user submits a token via the gate.
+    })
   }, [])
 
   if (!gateState.open) {

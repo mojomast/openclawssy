@@ -472,7 +472,7 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 		mode := normalizeDelegationMode(input.DelegationMode)
 		if plan, plannedTasks, planErr := GenerateDecompositionPlan(s.delegationReason, mode, tasks, router); planErr == nil {
 			s.out.DecompositionPlan = &plan
-			s.appendPlannedDelegationEvents(plan)
+			s.appendPlannedDelegationEvents(ctx, plan)
 			tasks = plannedTasks
 		}
 	}
@@ -530,7 +530,7 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 		if failedDependency != "" {
 			failureMessage := fmt.Sprintf("FAILED: dependency %s failed", failedDependency)
 			s.completedSubtasks[routedTask.TaskID] = failureMessage
-			s.appendDelegationEvent(DelegationEvent{
+			s.recordDelegationEvent(ctx, DelegationEvent{
 				Timestamp:      time.Now().UTC(),
 				TaskID:         routedTask.TaskID,
 				TriggerReason:  strings.TrimSpace(s.delegationReason),
@@ -564,7 +564,7 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 			if execErr == nil && result.Success {
 				slog.Debug("delegation: subtask completed", "task_id", routedTask.TaskID, "success", result.Success, "output_len", len(result.FinalText))
 				s.completedSubtasks[routedTask.TaskID] = result.FinalText
-				s.appendDelegationEvent(DelegationEvent{
+				s.recordDelegationEvent(ctx, DelegationEvent{
 					Timestamp:      time.Now().UTC(),
 					TaskID:         routedTask.TaskID,
 					TriggerReason:  strings.TrimSpace(s.delegationReason),
@@ -593,7 +593,7 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 
 			slog.Debug("delegation: subtask failed", "task_id", routedTask.TaskID, "attempt", attempt, "error", failureReason)
 			if attempt < maxAttempts {
-				s.appendDelegationEvent(DelegationEvent{
+				s.recordDelegationEvent(ctx, DelegationEvent{
 					Timestamp:      time.Now().UTC(),
 					TaskID:         routedTask.TaskID,
 					TriggerReason:  strings.TrimSpace(s.delegationReason),
@@ -608,7 +608,7 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 
 			if routedTask.RoutingConfidence < 0.5 {
 				s.completedSubtasks[routedTask.TaskID] = "FAILED: escalated after retry - " + failureReason
-				s.appendDelegationEvent(DelegationEvent{
+				s.recordDelegationEvent(ctx, DelegationEvent{
 					Timestamp:      time.Now().UTC(),
 					TaskID:         routedTask.TaskID,
 					TriggerReason:  strings.TrimSpace(s.delegationReason),
@@ -620,7 +620,7 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 				})
 			} else {
 				s.completedSubtasks[routedTask.TaskID] = "FAILED: " + failureReason
-				s.appendDelegationEvent(DelegationEvent{
+				s.recordDelegationEvent(ctx, DelegationEvent{
 					Timestamp:      time.Now().UTC(),
 					TaskID:         routedTask.TaskID,
 					TriggerReason:  strings.TrimSpace(s.delegationReason),

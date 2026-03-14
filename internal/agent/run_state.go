@@ -598,7 +598,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 					s.out.DecompositionPlan = &plan
 					s.pendingSubtasks = plannedTasks
 					s.delegationActive = true
-					s.appendPlannedDelegationEvents(plan)
+					s.appendPlannedDelegationEvents(ctx, plan)
 					s.emitDecision(ctx, DecisionRecordTypeConstraintActive, map[string]any{
 						"delegation_mode": string(configuredMode),
 						"subtask_count":   len(plannedTasks),
@@ -1545,9 +1545,9 @@ func (s *runState) setLastModelOutput(output string) {
 	}
 }
 
-func (s *runState) appendPlannedDelegationEvents(plan DecompositionPlan) {
+func (s *runState) appendPlannedDelegationEvents(ctx context.Context, plan DecompositionPlan) {
 	for _, task := range plan.Tasks {
-		s.appendDelegationEvent(DelegationEvent{
+		s.recordDelegationEvent(ctx, DelegationEvent{
 			Timestamp:      time.Now().UTC(),
 			TaskID:         task.TaskID,
 			TriggerReason:  strings.TrimSpace(plan.TriggerReason),
@@ -1570,4 +1570,28 @@ func (s *runState) appendDelegationEvent(event DelegationEvent) {
 	event.Rationale = strings.TrimSpace(event.Rationale)
 	event.Outcome = strings.TrimSpace(event.Outcome)
 	s.out.DelegationEvents = append(s.out.DelegationEvents, event)
+}
+
+func (s *runState) recordDelegationEvent(ctx context.Context, event DelegationEvent) {
+	s.appendDelegationEvent(event)
+
+	payload := map[string]any{
+		"task_id":           strings.TrimSpace(event.TaskID),
+		"trigger_reason":    strings.TrimSpace(event.TriggerReason),
+		"selected_role":     strings.TrimSpace(event.SelectedRole),
+		"confidence":        event.Confidence,
+		"task_assignment":   strings.TrimSpace(event.TaskAssignment),
+		"role_rationale":    strings.TrimSpace(event.Rationale),
+		"outcome":           strings.TrimSpace(event.Outcome),
+		"parent_run_id":     strings.TrimSpace(s.runID),
+		"event_timestamp":   event.Timestamp.UTC().Format(time.RFC3339Nano),
+		"delegation_active": s.delegationActive,
+	}
+
+	summary := fmt.Sprintf("Delegation task %s assigned to %s (%s).",
+		firstN(strings.TrimSpace(event.TaskID), 48),
+		firstN(strings.TrimSpace(event.SelectedRole), 48),
+		firstN(strings.TrimSpace(event.Outcome), 24),
+	)
+	s.emitDecision(ctx, DecisionRecordTypeDelegationTrigger, payload, summary)
 }

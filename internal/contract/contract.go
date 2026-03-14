@@ -80,12 +80,25 @@ type ToolPolicy struct {
 }
 
 type DelegationPolicy struct {
-	Mode         string `json:"mode"`
-	Threshold    int    `json:"threshold"`
-	Cooldown     int    `json:"cooldown"`
-	AutoDelegate bool   `json:"auto_delegate"`
-	AgentID      string `json:"agent_id"`
-	MaxDepth     int    `json:"max_depth"`
+	Mode          string                   `json:"mode"`
+	Threshold     int                      `json:"threshold"`
+	Cooldown      int                      `json:"cooldown"`
+	AutoDelegate  bool                     `json:"auto_delegate"`
+	AgentID       string                   `json:"agent_id"`
+	MaxDepth      int                      `json:"max_depth"`
+	RoleTemplates []DelegationRoleTemplate `json:"role_templates,omitempty"`
+	RoleOverrides map[string]any           `json:"role_overrides,omitempty"`
+}
+
+type DelegationRoleTemplate struct {
+	Name              string   `json:"name"`
+	Description       string   `json:"description,omitempty"`
+	AllowedTools      []string `json:"allowed_tools,omitempty"`
+	MaxToolIterations int      `json:"max_tool_iterations,omitempty"`
+	TimeoutMS         int      `json:"timeout_ms,omitempty"`
+	ThinkingMode      string   `json:"thinking_mode,omitempty"`
+	DelegationMode    string   `json:"delegation_mode,omitempty"`
+	IsBuiltIn         bool     `json:"is_built_in"`
 }
 
 type MemoryPolicy struct {

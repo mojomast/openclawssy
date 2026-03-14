@@ -152,3 +152,106 @@ func TestLedgerToolDeniedDecisionIncludesPolicyReference(t *testing.T) {
 		t.Fatalf("expected denied tool decision with policy reference, got %+v", records)
 	}
 }
+
+type integrationSubAgentRunner struct {
+	outputs map[string]SubAgentOutput
+}
+
+func (r integrationSubAgentRunner) ExecuteSubAgent(_ context.Context, input DecomposedTask) (SubAgentOutput, error) {
+	if out, ok := r.outputs[strings.TrimSpace(input.TaskID)]; ok {
+		return out, nil
+	}
+	return SubAgentOutput{RunID: "subagent-default", FinalText: "ok", Success: true}, nil
+}
+
+func TestIntegrationDelegationEventsEmitLedgerRecordsWithRoutingContext(t *testing.T) {
+	tasks := []DecomposedTask{
+		{
+			TaskID:                "task-1",
+			AgentID:               "worker",
+			Message:               "Read repository state and summarize",
+			AssignedRole:          "scout",
+			RoutingConfidence:     0.93,
+			RoutingRationale:      "Read-only reconnaissance task",
+			RoleAllowedTools:      []string{"fs.read", "fs.search"},
+			RoleMaxToolIterations: 12,
+			RoleTimeoutMS:         120000,
+			DependsOn:             nil,
+			Produces:              []string{"scan_summary"},
+		},
+	}
+
+	ledger := NewDecisionLedger(nil)
+	runner := Runner{
+		SubAgentRunner: integrationSubAgentRunner{
+			outputs: map[string]SubAgentOutput{
+				"task-1": {RunID: "sub-run-1", FinalText: "scan complete", Success: true},
+			},
+		},
+	}
+	input := RunInput{
+		RunID:          "run-integration-ledger",
+		AgentID:        "default",
+		DecisionLedger: ledger,
+	}
+	state := newRunState(input, runner)
+	state.delegationReason = "task requires decomposition"
+
+	if err := runner.executeDelegatedTasks(context.Background(), state, tasks, input); err != nil {
+		t.Fatalf("executeDelegatedTasks() error = %v", err)
+	}
+
+	if len(state.out.DelegationEvents) == 0 {
+		t.Fatal("expected delegation events to be recorded in run output")
+	}
+
+	records := ledger.Records("run-integration-ledger")
+	if len(records) == 0 {
+		t.Fatal("expected decision ledger records for run")
+	}
+
+	delegationRecords := make([]DecisionRecord, 0)
+	for _, record := range records {
+		if record.RecordType == DecisionRecordTypeDelegationTrigger {
+			delegationRecords = append(delegationRecords, record)
+		}
+	}
+	if len(delegationRecords) == 0 {
+		t.Fatalf("expected delegation-trigger ledger records, got %+v", records)
+	}
+
+	for _, event := range state.out.DelegationEvents {
+		matched := false
+		for _, record := range delegationRecords {
+			taskID, _ := record.Payload["task_id"].(string)
+			outcome, _ := record.Payload["outcome"].(string)
+			if strings.TrimSpace(taskID) != strings.TrimSpace(event.TaskID) || strings.TrimSpace(outcome) != strings.TrimSpace(event.Outcome) {
+				continue
+			}
+
+			triggerReason, _ := record.Payload["trigger_reason"].(string)
+			selectedRole, _ := record.Payload["selected_role"].(string)
+			taskAssignment, _ := record.Payload["task_assignment"].(string)
+			parentRunID, _ := record.Payload["parent_run_id"].(string)
+
+			if strings.TrimSpace(triggerReason) == "" {
+				t.Fatalf("expected trigger_reason in payload, got %+v", record.Payload)
+			}
+			if strings.TrimSpace(selectedRole) == "" {
+				t.Fatalf("expected selected_role in payload, got %+v", record.Payload)
+			}
+			if strings.TrimSpace(taskAssignment) == "" {
+				t.Fatalf("expected task_assignment in payload, got %+v", record.Payload)
+			}
+			if parentRunID != "run-integration-ledger" {
+				t.Fatalf("expected parent_run_id run-integration-ledger, got %q", parentRunID)
+			}
+
+			matched = true
+			break
+		}
+		if !matched {
+			t.Fatalf("missing delegation ledger record for event %+v", event)
+		}
+	}
+}

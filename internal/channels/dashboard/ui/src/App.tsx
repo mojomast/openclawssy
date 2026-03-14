@@ -43,6 +43,7 @@ function App() {
           <Route path="runs" element={<RunsPage />} />
           <Route path="runs/:runId" element={<RunsPage />} />
           <Route path="sessions" element={<SessionsPage />} />
+          <Route path="sessions/:sessionId" element={<SessionsPage />} />
           <Route path="monitor" element={<AgentMonitorPage />} />
           <Route path="scheduler" element={<SchedulerPage />} />
           <Route path="sandbox" element={<SandboxPage />} />

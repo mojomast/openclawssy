@@ -356,3 +356,41 @@ test("deep link /#/runs/{id} loads run detail and shows loading states", async (
   await expect.poll(() => state.detailRequests).toContain("run_deep")
   await expect.poll(() => state.traceRequests).toContain("run_deep")
 })
+
+test("deep link /#/runs?run={id} loads run detail from hash params", async ({ page }) => {
+  const state = await installRunsMocks(page, {
+    runs: [
+      {
+        id: "run_query",
+        agent_id: "default",
+        source: "chat",
+        status: "completed",
+        updated_at: "2026-03-14T13:30:00Z",
+      },
+    ],
+    detailsByID: {
+      run_query: {
+        id: "run_query",
+        agent_id: "default",
+        source: "chat",
+        status: "completed",
+        updated_at: "2026-03-14T13:30:00Z",
+      },
+    },
+    traceByID: {
+      run_query: {
+        trace: {
+          run_id: "run_query",
+          model_inputs: [],
+          tool_execution_results: [],
+        },
+      },
+    },
+  })
+
+  await page.goto("/dashboard#/runs?run=run_query")
+
+	await expect(page.locator("[data-testid='run-detail-panel']")).toContainText("run_query")
+  await expect.poll(() => state.detailRequests).toContain("run_query")
+  await expect.poll(() => state.traceRequests).toContain("run_query")
+})

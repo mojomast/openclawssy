@@ -12,8 +12,8 @@ func TestBuiltInSuitesContainExpectedSuites(t *testing.T) {
 	t.Parallel()
 
 	suites := BuiltInSuites()
-	if len(suites) < 3 {
-		t.Fatalf("built-in suites count = %d, want at least 3", len(suites))
+	if len(suites) < 4 {
+		t.Fatalf("built-in suites count = %d, want at least 4", len(suites))
 	}
 
 	byName := map[string]Suite{}
@@ -21,7 +21,7 @@ func TestBuiltInSuitesContainExpectedSuites(t *testing.T) {
 		byName[suite.Name] = suite
 	}
 
-	for _, name := range []string{"basic", "tool_choice", "delegation"} {
+	for _, name := range []string{"basic", "tool_choice", "delegation", "delegation_correctness"} {
 		suite, ok := byName[name]
 		if !ok {
 			t.Fatalf("missing built-in suite %q", name)
@@ -128,4 +128,36 @@ func TestLoadSuitesIncludesBuiltInAndCustom(t *testing.T) {
 	if !foundBuiltIn {
 		t.Fatal("expected built-in suite " + `"basic"` + " in combined suite list")
 	}
+}
+
+func TestIntegrationBuiltInSuitesIncludeDelegationCorrectness(t *testing.T) {
+	t.Parallel()
+
+	suites := BuiltInSuites()
+	for _, suite := range suites {
+		if suite.Name != "delegation_correctness" {
+			continue
+		}
+		if len(suite.TestCases) == 0 {
+			t.Fatal("delegation_correctness suite has no test cases")
+		}
+		requiredCases := map[string]bool{
+			"scout_read_task":        false,
+			"implementer_write_task": false,
+			"analyst_reasoning_task": false,
+		}
+		for _, testCase := range suite.TestCases {
+			if _, ok := requiredCases[testCase.Name]; ok {
+				requiredCases[testCase.Name] = true
+			}
+		}
+		for caseName, seen := range requiredCases {
+			if !seen {
+				t.Fatalf("delegation_correctness missing case %q", caseName)
+			}
+		}
+		return
+	}
+
+	t.Fatal("delegation_correctness suite not found in built-in suites")
 }

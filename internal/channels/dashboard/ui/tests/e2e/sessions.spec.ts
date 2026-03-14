@@ -302,3 +302,33 @@ test("shows loading and empty states for sessions list and message detail", asyn
   await page.getByLabel("Search").fill("does-not-exist")
   await expect(page.getByText("No sessions match the current search/filter.")).toBeVisible()
 })
+
+test("deep link /#/sessions?session={id} opens selected session", async ({ page }) => {
+  const state = await installSessionsMocks(page, {
+    sessions: [
+      {
+        session_id: "session_deep",
+        title: "Deep Link Session",
+        user_id: "alice",
+        room_id: "ops",
+        updated_at: "2026-03-14T16:00:00Z",
+        created_at: "2026-03-14T15:00:00Z",
+      },
+    ],
+    messagesBySessionID: {
+      session_deep: [
+        {
+          role: "assistant",
+          content: "Loaded by deep link",
+          ts: "2026-03-14T16:00:01Z",
+        },
+      ],
+    },
+  })
+
+  await page.goto("/dashboard#/sessions?session=session_deep")
+
+  await expect(page.getByText("Session session_deep", { exact: false })).toBeVisible()
+  await expect(page.getByTestId("sessions-message-stream")).toContainText("Loaded by deep link")
+  await expect.poll(() => state.messageQueries.at(-1)?.sessionID).toBe("session_deep")
+})

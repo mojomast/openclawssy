@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	httpchannel "openclawssy/internal/channels/http"
 	"openclawssy/internal/config"
 	agentcontract "openclawssy/internal/contract"
+	"openclawssy/internal/roles"
 )
 
 func TestContractResolvedEndpointReturnsResolvedContract(t *testing.T) {
@@ -52,6 +55,139 @@ func TestContractResolvedEndpointReturnsResolvedContract(t *testing.T) {
 	}
 	if payload.Inheritance.Source["model_policy.provider"] != agentcontract.InheritanceSourceAgentProfile {
 		t.Fatalf("expected model_policy.provider source %q, got %q", agentcontract.InheritanceSourceAgentProfile, payload.Inheritance.Source["model_policy.provider"])
+	}
+}
+
+func TestIntegrationResolvedContractIncludesPromptStackAndRoleReferences(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Agents.Profiles["alpha"] = config.AgentProfile{
+		Model: config.ModelConfig{Provider: "openrouter", Name: "moonshot/test"},
+	}
+	cfg.Agents.CustomRoleTemplates = []roles.RoleTemplate{
+		{
+			Name:          "db_admin",
+			Description:   "Database migration specialist",
+			AllowedTools:  []string{"fs.read", "shell.exec"},
+			MaxIterations: 8,
+			TimeoutMS:     45000,
+		},
+	}
+	cfg.Agents.SubAgentOverrides = map[string]config.SubAgentRestrictions{
+		"alpha": {
+			AllowedTools:      []string{"fs.read", "web.get"},
+			MaxToolIterations: 6,
+			TimeoutMS:         20000,
+			ThinkingMode:      "always",
+			DelegationMode:    "suggest_only",
+		},
+	}
+	writeContractDashboardConfig(t, root, cfg)
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	stackText := "Prompt stack integration marker"
+	updateReq := httptest.NewRequest(
+		http.MethodPut,
+		"/api/admin/agents/alpha/prompt-stack/agent_identity",
+		bytes.NewBufferString(`{"content":"`+stackText+`"}`),
+	)
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateRR := httptest.NewRecorder()
+	mux.ServeHTTP(updateRR, updateReq)
+	if updateRR.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusOK, updateRR.Code, updateRR.Body.String())
+	}
+
+	payload := getResolvedContractForAgent(t, mux, "alpha")
+	if !strings.Contains(payload.SystemPrompt.Content, stackText) {
+		t.Fatalf("expected system_prompt.content to include prompt stack text %q, got %q", stackText, payload.SystemPrompt.Content)
+	}
+	if payload.SystemPrompt.Source != "prompt_stack" {
+		t.Fatalf("expected system_prompt.source prompt_stack, got %q", payload.SystemPrompt.Source)
+	}
+	if err := payload.Validate(); err != nil {
+		t.Fatalf("resolved contract must validate: %v", err)
+	}
+
+	foundCustomRole := false
+	for _, template := range payload.DelegationPolicy.RoleTemplates {
+		if template.Name == "db_admin" {
+			foundCustomRole = true
+			if template.IsBuiltIn {
+				t.Fatalf("expected custom role template to be marked as non built-in")
+			}
+		}
+	}
+	if !foundCustomRole {
+		t.Fatalf("expected delegation_policy.role_templates to include custom role db_admin")
+	}
+
+	if got := payload.DelegationPolicy.RoleOverrides["max_tool_iterations"]; got != float64(6) {
+		t.Fatalf("expected max_tool_iterations role override 6, got %#v", got)
+	}
+	if got := payload.DelegationPolicy.RoleOverrides["delegation_mode"]; got != "suggest_only" {
+		t.Fatalf("expected delegation_mode override suggest_only, got %#v", got)
+	}
+	if payload.Inheritance.Source["delegation_policy.role_templates"] != agentcontract.InheritanceSourceGlobal {
+		t.Fatalf("expected role template source global, got %q", payload.Inheritance.Source["delegation_policy.role_templates"])
+	}
+	if payload.Inheritance.Source["delegation_policy.role_overrides"] != agentcontract.InheritanceSourceSubagentOverride {
+		t.Fatalf("expected role override source subagent-override, got %q", payload.Inheritance.Source["delegation_policy.role_overrides"])
+	}
+}
+
+func TestIntegrationResolvedContractReloadsAfterConfigChange(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Agents.Profiles["alpha"] = config.AgentProfile{
+		Model: config.ModelConfig{Provider: "openrouter", Name: "moonshot/test"},
+	}
+	cfg.Agents.CustomRoleTemplates = []roles.RoleTemplate{{
+		Name:          "db_admin",
+		Description:   "Database migration specialist",
+		AllowedTools:  []string{"fs.read"},
+		MaxIterations: 4,
+		TimeoutMS:     15000,
+	}}
+	writeContractDashboardConfig(t, root, cfg)
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	first := getResolvedContractForAgent(t, mux, "alpha")
+	if first.ModelPolicy.Provider != "openrouter" {
+		t.Fatalf("expected first provider openrouter, got %q", first.ModelPolicy.Provider)
+	}
+	if !contractHasRoleTemplate(first, "db_admin") {
+		t.Fatalf("expected first contract role templates to include db_admin")
+	}
+
+	mutated := cfg
+	mutated.Agents.Profiles["alpha"] = config.AgentProfile{
+		Model: config.ModelConfig{Provider: "openai", Name: "gpt-5"},
+	}
+	mutated.Agents.CustomRoleTemplates = []roles.RoleTemplate{{
+		Name:          "qa_bot",
+		Description:   "Regression verifier",
+		AllowedTools:  []string{"fs.read", "test.run"},
+		MaxIterations: 7,
+		TimeoutMS:     22000,
+	}}
+	writeContractDashboardConfig(t, root, mutated)
+
+	second := getResolvedContractForAgent(t, mux, "alpha")
+	if second.ModelPolicy.Provider != "openai" {
+		t.Fatalf("expected second provider openai after config change, got %q", second.ModelPolicy.Provider)
+	}
+	if contractHasRoleTemplate(second, "db_admin") {
+		t.Fatalf("did not expect stale role template db_admin after config update")
+	}
+	if !contractHasRoleTemplate(second, "qa_bot") {
+		t.Fatalf("expected updated role template qa_bot after config update")
 	}
 }
 
@@ -311,8 +447,38 @@ func contractErrorCode(t *testing.T, body []byte) string {
 	return payload.Error.Code
 }
 
+func getResolvedContractForAgent(t *testing.T, mux *http.ServeMux, agentID string) agentcontract.AgentContract {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/agents/"+agentID+"/resolved", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusOK, rr.Code, rr.Body.String())
+	}
+
+	var payload agentcontract.AgentContract
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	return payload
+}
+
+func contractHasRoleTemplate(contract agentcontract.AgentContract, roleName string) bool {
+	target := strings.ToLower(strings.TrimSpace(roleName))
+	for _, template := range contract.DelegationPolicy.RoleTemplates {
+		if strings.ToLower(strings.TrimSpace(template.Name)) == target {
+			return true
+		}
+	}
+	return false
+}
+
 func writeContractDashboardConfig(t *testing.T, root string, cfg config.Config) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, ".openclawssy"), 0o755); err != nil {
+		t.Fatalf("mkdir .openclawssy: %v", err)
+	}
 	if err := config.Save(filepath.Join(root, ".openclawssy", "config.json"), cfg); err != nil {
 		t.Fatalf("save config: %v", err)
 	}

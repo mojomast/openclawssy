@@ -12,6 +12,8 @@ import (
 
 	"openclawssy/internal/config"
 	agentcontract "openclawssy/internal/contract"
+	"openclawssy/internal/promptstack"
+	"openclawssy/internal/roles"
 )
 
 const maxRollbackSnapshotsPerAgent = 10
@@ -214,12 +216,109 @@ func (h *Handler) getAgentResolvedContract(w http.ResponseWriter, agentID string
 		writeDashboardError(w, http.StatusInternalServerError, "config.load_failed", err.Error(), nil)
 		return
 	}
-	resolved, err := agentcontract.Resolve(cfg, agentID, nil)
+	resolved, err := h.resolveAgentContractWithIntegrations(cfg, agentID)
 	if err != nil {
 		writeDashboardError(w, http.StatusInternalServerError, "contract.resolve_failed", err.Error(), nil)
 		return
 	}
 	writeJSON(w, resolved)
+}
+
+func (h *Handler) resolveAgentContractWithIntegrations(cfg config.Config, agentID string) (agentcontract.AgentContract, error) {
+	resolved, err := agentcontract.Resolve(cfg, agentID, nil)
+	if err != nil {
+		return agentcontract.AgentContract{}, err
+	}
+
+	if err := h.applyPromptStackToContract(agentID, &resolved); err != nil {
+		return agentcontract.AgentContract{}, err
+	}
+	if err := applyDelegationRoleReferences(cfg, agentID, &resolved); err != nil {
+		return agentcontract.AgentContract{}, err
+	}
+
+	return resolved, nil
+}
+
+func (h *Handler) applyPromptStackToContract(agentID string, resolved *agentcontract.AgentContract) error {
+	store, err := h.promptStackStore()
+	if err != nil {
+		return err
+	}
+	stack, err := h.ensurePromptStackInitialized(agentID, store)
+	if err != nil {
+		return err
+	}
+
+	resolved.SystemPrompt.Content = promptstack.Assemble(stack)
+	resolved.SystemPrompt.Source = "prompt_stack"
+
+	if resolved.Inheritance.Source == nil {
+		resolved.Inheritance.Source = map[string]string{}
+	}
+	resolved.Inheritance.Source["system_prompt"] = agentcontract.InheritanceSourceAgentProfile
+	resolved.Inheritance.Source["system_prompt.content"] = agentcontract.InheritanceSourceAgentProfile
+
+	return nil
+}
+
+func applyDelegationRoleReferences(cfg config.Config, agentID string, resolved *agentcontract.AgentContract) error {
+	store, err := roles.NewRoleStore(cfg.Agents.CustomRoleTemplates)
+	if err != nil {
+		return err
+	}
+
+	templates := store.List()
+	resolvedTemplates := make([]agentcontract.DelegationRoleTemplate, 0, len(templates))
+	for _, template := range templates {
+		resolvedTemplates = append(resolvedTemplates, agentcontract.DelegationRoleTemplate{
+			Name:              template.Name,
+			Description:       template.Description,
+			AllowedTools:      append([]string(nil), template.AllowedTools...),
+			MaxToolIterations: template.MaxIterations,
+			TimeoutMS:         template.TimeoutMS,
+			IsBuiltIn:         template.IsBuiltin,
+		})
+	}
+	resolved.DelegationPolicy.RoleTemplates = resolvedTemplates
+
+	override := cfg.Agents.SubAgentOverrides[agentID]
+	resolved.DelegationPolicy.RoleOverrides = mapSubAgentRestrictionsToRoleOverrides(override)
+
+	if resolved.Inheritance.Source == nil {
+		resolved.Inheritance.Source = map[string]string{}
+	}
+	resolved.Inheritance.Source["delegation_policy.role_templates"] = agentcontract.InheritanceSourceGlobal
+	if len(resolved.DelegationPolicy.RoleOverrides) > 0 {
+		resolved.Inheritance.Source["delegation_policy.role_overrides"] = agentcontract.InheritanceSourceSubagentOverride
+	} else {
+		resolved.Inheritance.Source["delegation_policy.role_overrides"] = agentcontract.InheritanceSourceGlobal
+	}
+
+	return nil
+}
+
+func mapSubAgentRestrictionsToRoleOverrides(restrictions config.SubAgentRestrictions) map[string]any {
+	overrides := make(map[string]any)
+	if len(restrictions.AllowedTools) > 0 {
+		overrides["allowed_tools"] = append([]string(nil), restrictions.AllowedTools...)
+	}
+	if restrictions.MaxToolIterations > 0 {
+		overrides["max_tool_iterations"] = restrictions.MaxToolIterations
+	}
+	if restrictions.TimeoutMS > 0 {
+		overrides["timeout_ms"] = restrictions.TimeoutMS
+	}
+	if strings.TrimSpace(restrictions.ThinkingMode) != "" {
+		overrides["thinking_mode"] = restrictions.ThinkingMode
+	}
+	if strings.TrimSpace(restrictions.DelegationMode) != "" {
+		overrides["delegation_mode"] = restrictions.DelegationMode
+	}
+	if len(overrides) == 0 {
+		return nil
+	}
+	return overrides
 }
 
 func (h *Handler) validateAgentContract(w http.ResponseWriter, r *http.Request, agentID string) {
@@ -300,7 +399,7 @@ func (h *Handler) getAgentContractDiff(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 
-	target, err := agentcontract.Resolve(cfg, agentID, nil)
+	target, err := h.resolveAgentContractWithIntegrations(cfg, agentID)
 	if err != nil {
 		writeDashboardError(w, http.StatusInternalServerError, "contract.resolve_failed", err.Error(), nil)
 		return
@@ -319,7 +418,7 @@ func (h *Handler) getAgentContractDiff(w http.ResponseWriter, r *http.Request, a
 	if strings.EqualFold(base, agentcontract.InheritanceSourceGlobal) {
 		baseLabel = agentcontract.InheritanceSourceGlobal
 		globalCfg := cloneConfigForGlobalDiff(cfg, agentID)
-		baseContract, err = agentcontract.Resolve(globalCfg, agentID, nil)
+		baseContract, err = h.resolveAgentContractWithIntegrations(globalCfg, agentID)
 		if err != nil {
 			writeDashboardError(w, http.StatusInternalServerError, "contract.resolve_failed", err.Error(), nil)
 			return
@@ -335,7 +434,7 @@ func (h *Handler) getAgentContractDiff(w http.ResponseWriter, r *http.Request, a
 			return
 		}
 		baseLabel = otherID
-		baseContract, err = agentcontract.Resolve(cfg, otherID, nil)
+		baseContract, err = h.resolveAgentContractWithIntegrations(cfg, otherID)
 		if err != nil {
 			writeDashboardError(w, http.StatusInternalServerError, "contract.resolve_failed", err.Error(), nil)
 			return

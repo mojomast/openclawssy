@@ -409,7 +409,7 @@ test("stop current run shows cancel progress and reaches canceled terminal state
   await expect(page.getByText("Status: running")).toBeVisible()
   await page.getByRole("button", { name: "Stop current run" }).click()
 
-  await expect(page.getByText("Stopping run run_chat_1...")).toBeVisible()
+	await expect(page.getByTestId("chat-page").getByText("Stopping run run_chat_1...")).toBeVisible()
   await expect.poll(() => state.cancelCalls.length).toBe(1)
   await expect(page.getByText("Status: canceled")).toBeVisible({ timeout: 8000 })
 

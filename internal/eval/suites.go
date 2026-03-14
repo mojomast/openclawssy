@@ -37,6 +37,15 @@ func BuiltInSuites() []Suite {
 				newStaticTestCase("multi_step", "multi-step task should delegate", TestResult{Passed: true, Expected: "delegate:yes", Actual: "delegate:yes tokens=19", DurationMS: 30}),
 			},
 		},
+		{
+			Name:        "delegation_correctness",
+			Description: "Role-routing and delegation policy correctness checks",
+			TestCases: []TestCase{
+				newStaticTestCase("scout_read_task", "read-heavy task should route to scout role", TestResult{Passed: true, Expected: "role:scout", Actual: "role:scout tokens=21", DurationMS: 27}),
+				newStaticTestCase("implementer_write_task", "write-heavy task should route to implementer role", TestResult{Passed: true, Expected: "role:implementer", Actual: "role:implementer tokens=23", DurationMS: 29}),
+				newStaticTestCase("analyst_reasoning_task", "analysis task should route to analyst role", TestResult{Passed: true, Expected: "role:analyst", Actual: "role:analyst tokens=24", DurationMS: 31}),
+			},
+		},
 	}
 }
 

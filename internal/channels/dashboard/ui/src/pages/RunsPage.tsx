@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { useNavigate, useParams } from "react-router-dom"
+import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { DecisionTimeline } from "@/components/DecisionTimeline"
 import { JSONViewer } from "@/components/JSONViewer"
 import { Badge } from "@/components/ui/badge"
@@ -370,7 +370,14 @@ function badgeVariantForStatus(status: string): "default" | "secondary" | "destr
 export function RunsPage() {
   const navigate = useNavigate()
   const params = useParams<{ runId?: string }>()
-  const selectedRunID = useMemo(() => decodeRunID(params.runId), [params.runId])
+  const [searchParams] = useSearchParams()
+  const selectedRunID = useMemo(() => {
+    const fromPath = decodeRunID(params.runId)
+    if (fromPath) {
+      return fromPath
+    }
+    return decodeRunID(searchParams.get("run") ?? undefined)
+  }, [params.runId, searchParams])
 
   const [statusInput, setStatusInput] = useState("")
   const [agentInput, setAgentInput] = useState("")

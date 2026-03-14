@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Link } from "react-router-dom"
+import { Link, useParams, useSearchParams } from "react-router-dom"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -67,6 +67,18 @@ function asText(value: unknown): string {
     return ""
   }
   return String(value)
+}
+
+function normalizeDeepLinkID(rawValue: string | null | undefined): string {
+	const raw = asText(rawValue).trim()
+	if (!raw) {
+		return ""
+	}
+	try {
+		return decodeURIComponent(raw).trim()
+	} catch {
+		return raw
+	}
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -351,6 +363,9 @@ function metaRange(offset: number, total: number, count: number): { start: numbe
 }
 
 export function SessionsPage() {
+	const params = useParams<{ sessionId?: string }>()
+	const [searchParams, setSearchParams] = useSearchParams()
+
   const [searchQuery, setSearchQuery] = useState("")
   const [sortMode, setSortMode] = useState<SortMode>("recent")
 
@@ -371,6 +386,14 @@ export function SessionsPage() {
   const [messagesError, setMessagesError] = useState("")
   const [messagesReloadToken, setMessagesReloadToken] = useState(0)
 
+	const deepLinkedSessionID = useMemo(() => {
+		const byPath = normalizeDeepLinkID(params.sessionId)
+		if (byPath) {
+			return byPath
+		}
+		return normalizeDeepLinkID(searchParams.get("session"))
+	}, [params.sessionId, searchParams])
+
   const visibleSessions = useMemo(() => {
     const query = normalizeSearch(searchQuery)
     const filtered = query ? sessions.filter((session) => sessionSearchBlob(session).includes(query)) : sessions.slice()
@@ -379,7 +402,13 @@ export function SessionsPage() {
 
   const pageRange = useMemo(() => metaRange(offset, total, sessions.length), [offset, sessions.length, total])
 
-  const openSession = useCallback((session: SessionItem) => {
+	const openSession = useCallback((session: SessionItem) => {
+		setSearchParams((previous) => {
+			const next = new URLSearchParams(previous)
+			next.set("session", session.sessionID)
+			return next
+		})
+
     setSelectedSession((current) => {
       if (current?.sessionID === session.sessionID) {
         return current
@@ -394,7 +423,7 @@ export function SessionsPage() {
       }
       return session.sessionID
     })
-  }, [])
+	}, [setSearchParams])
 
   const loadSessions = useCallback(async () => {
     setListLoading(true)
@@ -458,6 +487,17 @@ export function SessionsPage() {
   useEffect(() => {
     void loadSessions()
   }, [listReloadToken, loadSessions])
+
+	useEffect(() => {
+		if (!deepLinkedSessionID) {
+			return
+		}
+		setSelectedSessionID((current) => (current === deepLinkedSessionID ? current : deepLinkedSessionID))
+		const matched = sessions.find((session) => session.sessionID === deepLinkedSessionID) || null
+		if (matched) {
+			setSelectedSession(matched)
+		}
+	}, [deepLinkedSessionID, sessions])
 
   useEffect(() => {
     void loadMessages()
