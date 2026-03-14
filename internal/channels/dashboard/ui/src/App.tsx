@@ -41,6 +41,7 @@ function App() {
           <Route path="chat" element={<ChatPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="runs" element={<RunsPage />} />
+          <Route path="runs/:runId" element={<RunsPage />} />
           <Route path="sessions" element={<SessionsPage />} />
           <Route path="monitor" element={<AgentMonitorPage />} />
           <Route path="scheduler" element={<SchedulerPage />} />
