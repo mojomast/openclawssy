@@ -1,0 +1,73 @@
+{
+  "groupId": "ui-contract",
+  "surface": "browser-dashboard",
+  "toolsUsed": ["agent-browser", "curl"],
+  "assertions": [
+    {
+      "id": "VAL-CONTRACT-005",
+      "status": "fail",
+      "reason": "Agent Contract route loads, but the page only shows a placeholder '(New page)' message and does not render an agent list/selector or structured contract sections.",
+      "evidence": [
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/ui-contract/VAL-CONTRACT-005-agent-contract-page.png",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/ui-contract/agent-contract-page-text.txt",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/ui-contract/VAL-CONTRACT-005-resolved-headers.txt",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/ui-contract/VAL-CONTRACT-005-resolved-body.json"
+      ]
+    },
+    {
+      "id": "VAL-CONTRACT-006",
+      "status": "fail",
+      "reason": "No raw/resolved toggle is rendered on the Agent Contract page; only the placeholder content is visible.",
+      "evidence": [
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/ui-contract/VAL-CONTRACT-006-raw-resolved-toggle-missing.png",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/ui-contract/agent-contract-page-text.txt"
+      ]
+    },
+    {
+      "id": "VAL-CONTRACT-007",
+      "status": "fail",
+      "reason": "No contract fields are rendered in UI, so inheritance source annotations (global/agent-profile/subagent-override labels) are not visible.",
+      "evidence": [
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/ui-contract/VAL-CONTRACT-007-source-annotations-missing.png",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/ui-contract/agent-contract-page-text.txt",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/ui-contract/VAL-CONTRACT-005-resolved-body.json"
+      ]
+    },
+    {
+      "id": "VAL-CONTRACT-008",
+      "status": "fail",
+      "reason": "No UI diff or rollback controls are present, no success confirmation is possible, browser-captured network requests are empty, and supplemental rollback endpoint checks returned 404.",
+      "evidence": [
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/ui-contract/VAL-CONTRACT-008-diff-rollback-missing.png",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/ui-contract/browser-network-requests.txt",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/ui-contract/VAL-CONTRACT-008-diff-headers.txt",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/ui-contract/VAL-CONTRACT-008-diff-body.json",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/ui-contract/VAL-CONTRACT-008-rollback-snapshot-headers.txt",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/ui-contract/VAL-CONTRACT-008-rollback-snapshot-body.txt",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/ui-contract/VAL-CONTRACT-008-rollback-restore-headers.txt",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/ui-contract/VAL-CONTRACT-008-rollback-restore-body.txt"
+      ]
+    }
+  ],
+  "frictions": [
+    {
+      "description": "agent-browser initially failed to launch due missing libnspr4.so in runtime linker path.",
+      "resolved": true,
+      "resolution": "Set LD_LIBRARY_PATH to /home/mojo/.cache/playwright-libs/root/usr/lib/x86_64-linux-gnu and used isolated AGENT_BROWSER_HOME for this session.",
+      "affectedAssertions": ["VAL-CONTRACT-005", "VAL-CONTRACT-006", "VAL-CONTRACT-007", "VAL-CONTRACT-008"]
+    },
+    {
+      "description": "agent-browser network capture reported 'No requests captured' on this flow.",
+      "resolved": true,
+      "resolution": "Captured supplemental API evidence via curl against Agent Contract endpoints as allowed by flow guidance.",
+      "affectedAssertions": ["VAL-CONTRACT-008"]
+    }
+  ],
+  "blockers": [
+    {
+      "description": "Running dashboard build exposes Agent Contract as placeholder-only UI; required controls for agent list, raw/resolved toggle, annotations, diff, and rollback are absent.",
+      "affectedAssertions": ["VAL-CONTRACT-005", "VAL-CONTRACT-006", "VAL-CONTRACT-007", "VAL-CONTRACT-008"],
+      "quickFixAttempted": "Confirmed route text via browser capture and checked related contract API endpoints directly for supplemental evidence."
+    }
+  ]
+}

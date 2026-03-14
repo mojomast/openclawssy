@@ -1,0 +1,58 @@
+{
+  "groupId": "api-contract",
+  "surface": "api",
+  "assertions": [
+    {
+      "id": "VAL-CONTRACT-001",
+      "status": "pass",
+      "reason": "GET /api/admin/agents/default/resolved returned 200 and included all required contract sections with resolved values.",
+      "evidence": [
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/api-contract/VAL-CONTRACT-001-resolved-default.headers.txt",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/api-contract/VAL-CONTRACT-001-resolved-default.body.json",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/api-contract/VAL-CONTRACT-001-complete-sections-check.json"
+      ]
+    },
+    {
+      "id": "VAL-CONTRACT-002",
+      "status": "pass",
+      "reason": "Resolved contract for ussyflow_architect shows model field overrides from agent-profile (model/temperature) while timeout_ms remains inherited from global, demonstrating override + inheritance merge behavior.",
+      "evidence": [
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/api-contract/VAL-CONTRACT-002-resolved-ussyflow_architect.headers.txt",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/api-contract/VAL-CONTRACT-002-resolved-ussyflow_architect.body.json",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/api-contract/VAL-CONTRACT-002-override-vs-inherited-snippet.json"
+      ]
+    },
+    {
+      "id": "VAL-CONTRACT-003",
+      "status": "pass",
+      "reason": "POST /api/admin/agents/default/validate with invalid policy values returned 400 responses and field_errors for invalid timeout and invalid delegation mode.",
+      "evidence": [
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/api-contract/VAL-CONTRACT-003-validate-negative-timeout.headers.txt",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/api-contract/VAL-CONTRACT-003-validate-negative-timeout.body.json",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/api-contract/VAL-CONTRACT-003-validate-invalid-mode.headers.txt",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/api-contract/VAL-CONTRACT-003-validate-invalid-mode.body.json"
+      ]
+    },
+    {
+      "id": "VAL-CONTRACT-004",
+      "status": "pass",
+      "reason": "GET /diff with base=global and base=ussyflow_builder both returned 200 and field-level differences including target/base values and inheritance sources.",
+      "evidence": [
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/api-contract/VAL-CONTRACT-004-diff-base-global.headers.txt",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/api-contract/VAL-CONTRACT-004-diff-base-global.body.json",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/api-contract/VAL-CONTRACT-004-diff-base-global-snippet.json",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/api-contract/VAL-CONTRACT-004-diff-base-ussyflow_builder.headers.txt",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/api-contract/VAL-CONTRACT-004-diff-base-ussyflow_builder.body.json",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/agent-contract/api-contract/VAL-CONTRACT-004-diff-base-ussyflow_builder-snippet.json"
+      ]
+    }
+  ],
+  "toolsUsed": [
+    "curl",
+    "jq"
+  ],
+  "frictions": [
+    "The /resolved endpoint does not expose a subagent-resolution toggle; inheritance merge validation was completed via agent-profile override + global fallback fields available in API responses."
+  ],
+  "blockers": []
+}

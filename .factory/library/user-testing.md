@@ -55,3 +55,11 @@ Testing surface, validation approach, and resource cost classification.
 - Use isolated browser context/session per validator and do not share local storage state across validators.
 - Do not modify global runtime settings, scheduler jobs, secrets, or sandbox resources unless explicitly required by an assigned assertion.
 - Save all screenshots/network evidence under the assigned evidence directory only.
+
+## Flow Validator Guidance: API Contract Endpoints
+
+- Assigned surface: local authenticated admin HTTP API at `http://localhost:8081`.
+- Use only assertion-scoped endpoints needed for the assigned contract checks.
+- Always include `Authorization: Bearer change-me`; do not mutate auth configuration.
+- Avoid writes to unrelated global state; if an assertion requires mutation (for example rollback), keep it minimal and restore/verify post-condition in the same flow.
+- Save request/response evidence under the assigned evidence directory and include status code plus response body excerpts.
