@@ -120,30 +120,31 @@ export function Layout() {
     <div className="min-h-screen flex flex-col bg-background">
       {/* Header */}
       <header className="border-b bg-card px-4 py-3 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           {isMobile && (
             <>
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={() => setShowMobileNav(true)}
-                className="lg:hidden"
+                className="lg:hidden shrink-0"
                 aria-label="Open navigation menu"
               >
                 <Menu className="h-5 w-5" />
               </Button>
               <Button
-                variant="ghost"
-                size="icon"
+                variant="secondary"
+                size="sm"
                 onClick={() => setShowMobileInspector(true)}
-                className="lg:hidden"
+                className="lg:hidden shrink-0 gap-1 px-2"
                 aria-label="Open inspector drawer"
               >
-                <PanelRightOpen className="h-5 w-5" />
+                <PanelRightOpen className="h-4 w-4" />
+                <span className="text-xs font-medium">Inspector</span>
               </Button>
             </>
           )}
-          <h1 className="text-lg font-semibold">Openclawssy Dashboard</h1>
+          <h1 className="text-lg font-semibold truncate">Openclawssy Dashboard</h1>
           <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded">
             React
           </span>
@@ -394,8 +395,15 @@ export function Layout() {
           <div className="absolute right-0 top-0 bottom-0 w-72 bg-card border-l p-4 overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold">Inspector</h2>
-              <Button variant="ghost" size="icon" aria-label="Close inspector drawer" onClick={() => setShowMobileInspector(false)}>
-                <X className="h-5 w-5" />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1"
+                aria-label="Close inspector drawer"
+                onClick={() => setShowMobileInspector(false)}
+              >
+                <X className="h-4 w-4" />
+                <span className="text-xs">Close</span>
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">

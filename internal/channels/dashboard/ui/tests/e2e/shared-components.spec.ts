@@ -161,6 +161,17 @@ test.describe('Shared Components', () => {
     await page.getByRole('button', { name: 'Close navigation drawer', exact: true }).click()
   })
 
+  test('Mobile inspector trigger is visible in header and close control dismisses drawer', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 667 })
+
+    await expect(page.locator('header').getByText('Inspector', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Open inspector drawer', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Inspector' })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Close inspector drawer', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Inspector' })).toBeHidden()
+  })
+
   test('Mobile inspector drawer can be opened and closed via backdrop', async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 667 })
 
