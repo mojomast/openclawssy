@@ -256,6 +256,35 @@ func TestResolve(t *testing.T) {
 				if got.ModelPolicy.TimeoutMS != 60000 {
 					t.Fatalf("ModelPolicy.TimeoutMS = %d, want %d", got.ModelPolicy.TimeoutMS, 60000)
 				}
+				assertInheritanceSource(t, got, "model_policy", InheritanceSourceGlobal)
+				assertInheritanceSource(t, got, "model_policy.timeout_ms", InheritanceSourceGlobal)
+			},
+		},
+		{
+			name:    "section inheritance keeps upgraded source when other resolved leaves still override",
+			agentID: "builder-mixed",
+			opts:    &ResolveOptions{SubAgent: true},
+			configure: func(cfg *config.Config) {
+				cfg.Agents.Profiles["builder-mixed"] = config.AgentProfile{
+					Model: config.ModelConfig{
+						Provider:  "openrouter",
+						TimeoutMS: 25000,
+					},
+				}
+				cfg.Agents.SubAgentDefaults.TimeoutMS = 60000
+			},
+			assert: func(t *testing.T, _ config.Config, got AgentContract) {
+				t.Helper()
+
+				if got.ModelPolicy.Provider != "openrouter" {
+					t.Fatalf("ModelPolicy.Provider = %q, want %q", got.ModelPolicy.Provider, "openrouter")
+				}
+				if got.ModelPolicy.TimeoutMS != 60000 {
+					t.Fatalf("ModelPolicy.TimeoutMS = %d, want %d", got.ModelPolicy.TimeoutMS, 60000)
+				}
+
+				assertInheritanceSource(t, got, "model_policy", InheritanceSourceAgentProfile)
+				assertInheritanceSource(t, got, "model_policy.provider", InheritanceSourceAgentProfile)
 				assertInheritanceSource(t, got, "model_policy.timeout_ms", InheritanceSourceGlobal)
 			},
 		},

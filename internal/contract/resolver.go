@@ -241,13 +241,44 @@ func setInheritanceSource(sourceMap map[string]string, key, source string) {
 	if idx := strings.IndexByte(key, '.'); idx > 0 {
 		sourceMap[key] = source
 		section := key[:idx]
-		if current, ok := sourceMap[section]; !ok || sourcePrecedence(source) >= sourcePrecedence(current) {
-			sourceMap[section] = source
-		}
+		sourceMap[section] = resolvedSectionSource(sourceMap, section)
 		return
 	}
 
 	sourceMap[key] = source
+}
+
+func resolvedSectionSource(sourceMap map[string]string, section string) string {
+	if sourceMap == nil {
+		return InheritanceSourceGlobal
+	}
+
+	prefix := strings.TrimSpace(section)
+	if prefix == "" {
+		return InheritanceSourceGlobal
+	}
+	prefix += "."
+
+	bestSource := ""
+	bestPrecedence := -1
+	for key, source := range sourceMap {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		precedence := sourcePrecedence(source)
+		if precedence > bestPrecedence {
+			bestPrecedence = precedence
+			bestSource = source
+		}
+	}
+
+	if strings.TrimSpace(bestSource) != "" {
+		return bestSource
+	}
+	if existing, ok := sourceMap[section]; ok && strings.TrimSpace(existing) != "" {
+		return existing
+	}
+	return InheritanceSourceGlobal
 }
 
 func sourcePrecedence(source string) int {
