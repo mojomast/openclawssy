@@ -811,6 +811,7 @@ export function PromptStackPage() {
               className="w-full"
               language="markdown"
               textareaTestId="prompt-stack-editor"
+              highlightTestId="prompt-stack-editor-highlight"
               value={draftByLayerID[activeLayer.id] || ""}
               placeholder="Enter layer prompt instructions..."
               minHeight="260px"
@@ -904,6 +905,7 @@ export function PromptStackPage() {
               <CodeEditor
                 language="markdown"
                 readOnly
+                highlightTestId="prompt-stack-preview-highlight"
                 value={preview?.assembledPrompt || ""}
                 minHeight="260px"
                 maxHeight="460px"

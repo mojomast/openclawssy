@@ -400,6 +400,10 @@ test("renders all prompt layers with merged preview and overflow warning", async
     await expect(page.getByTestId(`prompt-stack-tab-${layerID}`)).toBeVisible()
   }
 
+  await expect(page.getByTestId("prompt-stack-editor-highlight")).toBeVisible()
+  await expect(page.getByTestId("prompt-stack-preview-highlight")).toBeVisible()
+  await expect(page.locator('[data-testid="prompt-stack-preview-highlight"] [data-syntax-line="heading"]').first()).toBeVisible()
+
   await expect(page.getByTestId("prompt-stack-editor")).toContainText("Operate safely and keep all actions auditable.")
   await expect(page.getByTestId("prompt-stack-preview")).toContainText("## global_operator_policy")
   await expect(page.getByTestId("prompt-stack-total-tokens")).toContainText("Total tokens")
