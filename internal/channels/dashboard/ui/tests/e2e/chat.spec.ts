@@ -8,6 +8,8 @@ type RouteState = {
   chatPosts: Array<Record<string, unknown>>
   cancelCalls: string[]
   streamRequests: Record<string, number>
+  runPolls: Record<string, number>
+  runStatuses: Record<string, string>
 }
 
 function sseFrame(event: { id?: number; event?: string; data: unknown }): string {
@@ -27,6 +29,7 @@ async function installChatRoutes(
   options: {
     initialMessages?: Array<Record<string, unknown>>
     onStreamRequest?: (runID: string, attempt: number) => { status: number; body?: string }
+    onRunPoll?: (runID: string, attempt: number, state: RouteState) => Record<string, unknown> | null
   } = {}
 ): Promise<RouteState> {
   const state: RouteState = {
@@ -34,6 +37,8 @@ async function installChatRoutes(
     chatPosts: [],
     cancelCalls: [],
     streamRequests: {},
+    runPolls: {},
+    runStatuses: {},
   }
 
   const sessionID = "sess_chat_1"
@@ -130,14 +135,28 @@ async function installChatRoutes(
     if (pathname === "/v1/chat/messages" && method === "POST") {
       const payload = JSON.parse(request.postData() || "{}")
       state.chatPosts.push(payload)
+      state.runStatuses.run_chat_1 = "running"
+      state.runPolls.run_chat_1 = 0
       await json({ id: "run_chat_1", status: "running", session_id: sessionID })
       return
     }
 
     if (pathname === "/v1/runs/run_chat_1" && method === "GET") {
+      state.runPolls.run_chat_1 = (state.runPolls.run_chat_1 || 0) + 1
+      const attempt = state.runPolls.run_chat_1
+      const customRun = options.onRunPoll?.("run_chat_1", attempt, state)
+      if (customRun) {
+        await json(customRun)
+        return
+      }
+
+      if (state.runStatuses.run_chat_1 === "canceling" && attempt >= 1) {
+        state.runStatuses.run_chat_1 = "canceled"
+      }
+
       await json({
         id: "run_chat_1",
-        status: "running",
+        status: state.runStatuses.run_chat_1 || "running",
         session_id: sessionID,
         updated_at: "2026-03-14T00:00:01Z",
       })
@@ -146,6 +165,7 @@ async function installChatRoutes(
 
     if (pathname === "/v1/runs/run_chat_1/cancel" && method === "POST") {
       state.cancelCalls.push("run_chat_1")
+      state.runStatuses.run_chat_1 = "canceling"
       await json({ id: "run_chat_1", status: "canceling", cancelled: true })
       return
     }
@@ -350,6 +370,93 @@ test("agent picker switches active agent and subsequent send uses the selected a
 
   expect(state.chatPosts).toHaveLength(1)
   expect(state.chatPosts[0]?.agent_id).toBe("research")
+})
+
+test("stop current run shows cancel progress and reaches canceled terminal state", async ({ page }) => {
+  const state = await installChatRoutes(page, {
+    onStreamRequest: () =>
+      ({
+        status: 200,
+        body: sseFrame({
+          id: 1,
+          event: "status",
+          data: {
+            id: 1,
+            type: "status",
+            run_id: "run_chat_1",
+            ts: "2026-03-14T00:00:01Z",
+            data: { status: "running", session_id: "sess_chat_1" },
+          },
+        }),
+      }) satisfies { status: number; body?: string },
+    onRunPoll: (_runID, attempt, routeState) => {
+      const currentStatus = routeState.runStatuses.run_chat_1 || "running"
+      const status = currentStatus === "canceling" && attempt >= 3 ? "canceled" : currentStatus
+      routeState.runStatuses.run_chat_1 = status
+      return {
+        id: "run_chat_1",
+        status,
+        session_id: "sess_chat_1",
+        updated_at: "2026-03-14T00:00:01Z",
+      }
+    },
+  })
+
+  await page.goto("/dashboard#/chat")
+  await page.getByLabel("Message composer").fill("cancel this run")
+  await page.getByRole("button", { name: "Send" }).click()
+
+  await expect(page.getByText("Status: running")).toBeVisible()
+  await page.getByRole("button", { name: "Stop current run" }).click()
+
+  await expect(page.getByText("Stopping run run_chat_1...")).toBeVisible()
+  await expect.poll(() => state.cancelCalls.length).toBe(1)
+  await expect(page.getByText("Status: canceled")).toBeVisible({ timeout: 8000 })
+})
+
+test("resume interrupted run enables from interrupted failure state even without continue phrase", async ({ page }) => {
+  const state = await installChatRoutes(page, {
+    onStreamRequest: () => ({ status: 500, body: "stream unavailable" }),
+    onRunPoll: () => ({
+      id: "run_chat_1",
+      status: "failed",
+      session_id: "sess_chat_1",
+      updated_at: "2026-03-14T00:00:04Z",
+      error: "provider stream interrupted after partial output: context deadline exceeded",
+    }),
+  })
+
+  await page.goto("/dashboard#/chat")
+  await page.getByLabel("Message composer").fill("trigger interruption state")
+  await page.getByRole("button", { name: "Send" }).click()
+
+  const resumeButton = page.getByRole("button", { name: "Resume interrupted run" }).first()
+  await expect(resumeButton).toBeEnabled({ timeout: 6000 })
+  await resumeButton.click()
+
+  await expect.poll(() => state.chatPosts.length).toBe(2)
+  expect(state.chatPosts.at(-1)?.message).toBe(RESUME_INTERRUPTED_RUN_MESSAGE)
+})
+
+test("copy debug bundle uses fallback clipboard path when clipboard permissions are denied", async ({ page }) => {
+  await page.addInitScript(() => {
+    ;(window as Window & { __openclawssyDebugBundleFallback?: string }).__openclawssyDebugBundleFallback = ""
+
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: () => Promise.reject(new Error("NotAllowedError: clipboard denied")),
+      },
+    })
+  })
+
+  await installChatRoutes(page)
+  await page.goto("/dashboard#/chat")
+
+  await page.getByRole("button", { name: "Copy debug bundle" }).click()
+  await expect(
+    page.getByTestId("chat-page").getByText("Debug bundle copied (clipboard fallback).")
+  ).toBeVisible({ timeout: 6000 })
 })
 
 test("shows SSE connection error indicator with retry and resume button for interrupted responses", async ({ page }) => {

@@ -26,7 +26,8 @@ const CHAT_ACTIVITY_WIDTH_DEFAULT = 368
 const CHAT_TOOL_TIMELINE_DEFAULT = true
 const RESUME_INTERRUPTED_RUN_MESSAGE =
   "Resume your previous response from the exact interruption point. Continue from the cutoff without repeating already-completed text unless needed for coherence."
-const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "canceled"])
+const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "canceled", "cancelled"])
+const CANCELING_RUN_STATUSES = new Set(["canceling", "cancelling"])
 
 type ToolStatus = "ok" | "failed"
 
@@ -132,6 +133,10 @@ type ChatSessionMessagesPayload = {
   messages?: unknown
 }
 
+type ClipboardCopyResult = {
+  usedFallback: boolean
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
@@ -152,6 +157,51 @@ function firstNonEmpty(...values: unknown[]): string {
 
 function isTerminalStatus(status: unknown): boolean {
   return TERMINAL_RUN_STATUSES.has(safeText(status).toLowerCase())
+}
+
+function isCancelingStatus(status: unknown): boolean {
+  return CANCELING_RUN_STATUSES.has(safeText(status).toLowerCase())
+}
+
+function hasInterruptionSignal(value: unknown): boolean {
+  const text = safeText(value).toLowerCase()
+  if (!text) {
+    return false
+  }
+  return (
+    text.includes("send `continue`") ||
+    text.includes("send 'continue'") ||
+    text.includes('send "continue"') ||
+    text.includes("send continue") ||
+    text.includes("resume from the cutoff point") ||
+    text.includes("stream interrupted") ||
+    text.includes("response stream was interrupted") ||
+    text.includes("provider stream interrupted") ||
+    text.includes("stream disconnected") ||
+    text.includes("connection dropped")
+  )
+}
+
+function normalizeRunStatus(status: unknown): string {
+  const normalized = safeText(status).toLowerCase()
+  if (normalized === "cancelled") {
+    return "canceled"
+  }
+  if (normalized === "cancelling") {
+    return "canceling"
+  }
+  return isCancelingStatus(normalized) ? "canceling" : normalized
+}
+
+function resolveCancelRunStatus(status: unknown, cancelled: unknown): string {
+  const normalizedStatus = normalizeRunStatus(status)
+  if (normalizedStatus && (isTerminalStatus(normalizedStatus) || isCancelingStatus(normalizedStatus))) {
+    return normalizedStatus
+  }
+  if (typeof cancelled === "boolean" && cancelled) {
+    return "canceling"
+  }
+  return normalizedStatus || "canceling"
 }
 
 function formatDateTime(value: unknown): string {
@@ -356,18 +406,33 @@ function messageSupportsContinue(value: unknown): boolean {
 
 function buildResumableInterruption(
   message: unknown,
-  meta: { runID?: unknown; sessionID?: unknown; updatedAt?: unknown; source?: unknown }
+  meta: {
+    runID?: unknown
+    sessionID?: unknown
+    updatedAt?: unknown
+    source?: unknown
+    status?: unknown
+    error?: unknown
+    streamError?: unknown
+    interrupted?: unknown
+  }
 ): ResumableInterruption | null {
   const summary = safeText(message)
-  if (!messageSupportsContinue(summary)) {
+  const status = safeText(meta.status).toLowerCase()
+  const interruptedStatus = status === "failed"
+  const interruptedSignal =
+    hasInterruptionSignal(summary) || hasInterruptionSignal(meta.error) || hasInterruptionSignal(meta.streamError)
+  if (!(messageSupportsContinue(summary) || Boolean(meta.interrupted) || (interruptedStatus && interruptedSignal))) {
     return null
   }
+
+  const resolvedMessage = summary || firstNonEmpty(meta.error, "Run was interrupted before completion.")
   return {
     runID: safeText(meta.runID),
     sessionID: safeText(meta.sessionID),
     updatedAt: safeText(meta.updatedAt) || new Date().toISOString(),
     source: safeText(meta.source) || "assistant_output",
-    message: summary,
+    message: resolvedMessage,
   }
 }
 
@@ -506,35 +571,63 @@ function parseObservedSubagent(event: ToolEvent): {
   }
 }
 
-function copyToClipboardWithFallback(text: string): Promise<void> {
+function copyToClipboardWithFallback(text: string): Promise<ClipboardCopyResult> {
   const value = String(text || "")
   if (!value) {
     return Promise.reject(new Error("Nothing to copy"))
   }
-  if (navigator?.clipboard?.writeText) {
-    return navigator.clipboard.writeText(value)
-  }
-  return new Promise((resolve, reject) => {
+
+  const persistDeterministicFallback = (): ClipboardCopyResult => {
+    const storageKey = "dashboard.chat.debug_bundle.fallback_copy"
     try {
-      const textarea = document.createElement("textarea")
-      textarea.value = value
-      textarea.setAttribute("readonly", "readonly")
-      textarea.style.position = "fixed"
-      textarea.style.opacity = "0"
-      document.body.append(textarea)
-      textarea.focus()
-      textarea.select()
-      const copied = document.execCommand("copy")
-      textarea.remove()
-      if (!copied) {
-        reject(new Error("Copy command failed"))
-        return
-      }
-      resolve()
-    } catch (error) {
-      reject(error instanceof Error ? error : new Error(String(error)))
+      window.localStorage.setItem(storageKey, value)
+    } catch {
+      // ignore storage errors
     }
-  })
+    try {
+      ;(window as Window & { __openclawssyDebugBundleFallback?: string }).__openclawssyDebugBundleFallback =
+        value
+    } catch {
+      // ignore assignment errors
+    }
+    return { usedFallback: true }
+  }
+
+  const fallbackCopy = () =>
+    new Promise<ClipboardCopyResult>((resolve, reject) => {
+      try {
+        const textarea = document.createElement("textarea")
+        textarea.value = value
+        textarea.setAttribute("readonly", "readonly")
+        textarea.style.position = "fixed"
+        textarea.style.opacity = "0"
+        document.body.append(textarea)
+        textarea.focus()
+        textarea.select()
+        const copied = document.execCommand("copy")
+        textarea.remove()
+        if (copied) {
+          resolve({ usedFallback: true })
+          return
+        }
+
+        resolve(persistDeterministicFallback())
+      } catch (error) {
+        try {
+          resolve(persistDeterministicFallback())
+        } catch {
+          reject(error instanceof Error ? error : new Error(String(error)))
+        }
+      }
+    })
+
+  if (navigator?.clipboard?.writeText) {
+    return navigator.clipboard
+      .writeText(value)
+      .then(() => ({ usedFallback: false }))
+      .catch(() => fallbackCopy())
+  }
+  return fallbackCopy()
 }
 
 function normalizeToolEventFromMessage(message: SessionMessage, index: number): ToolEvent {
@@ -722,15 +815,33 @@ export function ChatPage() {
   }, [])
 
   const shouldOfferContinueAction = useMemo(() => {
-    if (!state.resumableInterruption) {
+    const latestAssistant = state.transcript
+      .slice()
+      .reverse()
+      .find((item) => item.role === "assistant")
+    const hasInterruptionFallbackSignal =
+      normalizeRunStatus(state.currentRunStatus) === "failed" &&
+      (hasInterruptionSignal(state.lastErrorSummary) ||
+        hasInterruptionSignal(state.streamError) ||
+        hasInterruptionSignal(state.currentRunLastOutput) ||
+        hasInterruptionSignal(latestAssistant?.content))
+
+    if (!state.resumableInterruption && !hasInterruptionFallbackSignal) {
       return false
     }
-    const status = safeText(state.currentRunStatus).toLowerCase()
+    const status = normalizeRunStatus(state.currentRunStatus)
     if (!status || status === "idle" || status === "paused") {
       return true
     }
     return isTerminalStatus(status)
-  }, [state.currentRunStatus, state.resumableInterruption])
+  }, [
+    state.currentRunLastOutput,
+    state.currentRunStatus,
+    state.lastErrorSummary,
+    state.resumableInterruption,
+    state.streamError,
+    state.transcript,
+  ])
 
   const observedSubagentRuns = useMemo(() => {
     const seen = new Set<string>()
@@ -869,12 +980,12 @@ export function ChatPage() {
           : failedEvents[0] || null
         if (latestFailed) {
           lastErrorSummary = compactText(latestFailed.errorText, 280)
-        } else if (currentRunID && safeText(prev.currentRunStatus) !== "failed") {
+        } else if (currentRunID && normalizeRunStatus(prev.currentRunStatus) !== "failed") {
           lastErrorSummary = ""
         }
 
         let resumableInterruption = prev.resumableInterruption
-        const status = safeText(prev.currentRunStatus).toLowerCase()
+        const status = normalizeRunStatus(prev.currentRunStatus)
         if (!status || status === "idle" || status === "paused" || isTerminalStatus(status)) {
           const latestAssistant = nextTranscript
             .slice()
@@ -886,6 +997,9 @@ export function ChatPage() {
               sessionID: safeText(payload?.session_id) || prev.currentSessionID,
               updatedAt: prev.currentRunLastUpdatedAt,
               source: "session.transcript",
+              status,
+              error: prev.lastErrorSummary,
+              streamError: prev.streamError,
             })
             resumableInterruption = resumable
           } else if (!currentRunID || safeText(resumableInterruption?.runID) === currentRunID) {
@@ -997,17 +1111,17 @@ export function ChatPage() {
       eventEnvelope.data && typeof eventEnvelope.data === "object"
         ? (eventEnvelope.data as Record<string, unknown>)
         : {}
-    const status = safeText(data.status || eventEnvelope.status).toLowerCase()
+    const status = normalizeRunStatus(data.status || eventEnvelope.status)
     const sessionID = safeText(data.session_id)
     const ts = safeText(eventEnvelope.ts)
 
     setState((prev) => ({
       ...prev,
-      currentRunStatus: status || prev.currentRunStatus,
+      currentRunStatus: status || normalizeRunStatus(prev.currentRunStatus),
       currentSessionID: sessionID || prev.currentSessionID,
       currentRunLastUpdatedAt: ts || new Date().toISOString(),
       currentRunStartedAtMs:
-        prev.currentRunStartedAtMs <= 0 && status && !isTerminalStatus(status)
+        prev.currentRunStartedAtMs <= 0 && status && !isTerminalStatus(status) && !isCancelingStatus(status)
           ? Date.now()
           : prev.currentRunStartedAtMs,
     }))
@@ -1122,6 +1236,7 @@ export function ChatPage() {
           sessionID: prev.currentSessionID,
           updatedAt,
           source: "stream.completed",
+          status: "completed",
         })
         return {
           ...prev,
@@ -1157,6 +1272,9 @@ export function ChatPage() {
           sessionID: prev.currentSessionID,
           updatedAt,
           source: "stream.canceled",
+          status: "canceled",
+          error: firstNonEmpty(payload.error, payload.message),
+          streamError: prev.streamError,
         })
         return {
           ...prev,
@@ -1191,6 +1309,10 @@ export function ChatPage() {
           sessionID: prev.currentSessionID,
           updatedAt,
           source: "stream.failed",
+          status: "failed",
+          error: message,
+          streamError: prev.streamError,
+          interrupted: payload.interrupted,
         })
         return {
           ...prev,
@@ -1458,7 +1580,7 @@ export function ChatPage() {
     runPollInFlightRef.current = true
     try {
       const run = await api.get<Record<string, unknown>>(`/v1/runs/${encodeURIComponent(runID)}`)
-      const status = safeText(run.status).toLowerCase() || "unknown"
+      const status = normalizeRunStatus(run.status) || "unknown"
       const discoveredSessionID = safeText(run.session_id)
       const updatedAt = safeText(run.updated_at)
       const output = String(run.output || "")
@@ -1481,6 +1603,7 @@ export function ChatPage() {
               sessionID: discoveredSessionID || prev.currentSessionID,
               updatedAt,
               source: "poll.completed",
+              status,
             })
             if (!errorText) {
               lastErrorSummary = ""
@@ -1493,6 +1616,10 @@ export function ChatPage() {
               sessionID: discoveredSessionID || prev.currentSessionID,
               updatedAt,
               source: "poll.failed",
+              status,
+              error: message,
+              streamError: prev.streamError,
+              interrupted: run.interrupted,
             })
             lastErrorSummary = compactText(message, 280)
           } else if (status === "canceled") {
@@ -1502,6 +1629,10 @@ export function ChatPage() {
               sessionID: discoveredSessionID || prev.currentSessionID,
               updatedAt,
               source: "poll.canceled",
+              status,
+              error: errorText,
+              streamError: prev.streamError,
+              interrupted: run.interrupted,
             })
           }
           polling = false
@@ -1645,11 +1776,12 @@ export function ChatPage() {
 
         const runID = safeText(payload.id)
         const sessionID = safeText(payload.session_id)
+        const runStatus = normalizeRunStatus(payload.status) || "queued"
         if (runID) {
           setState((prev) => ({
             ...prev,
             currentRunID: runID,
-            currentRunStatus: safeText(payload.status).toLowerCase() || "queued",
+            currentRunStatus: runStatus,
             currentRunLastUpdatedAt: "",
             currentRunLastOutput: "",
             currentRunStartedAtMs: Date.now(),
@@ -1668,8 +1800,7 @@ export function ChatPage() {
               ...prev,
               transcript: upsertPendingAssistantInTranscript(
                 prev.transcript,
-                safeText(payload.response) ||
-                  `Working on it now. Run ${runID} is ${safeText(payload.status).toLowerCase() || "queued"}.`
+                safeText(payload.response) || `Working on it now. Run ${runID} is ${runStatus}.`
               ),
             }))
           }
@@ -1754,12 +1885,15 @@ export function ChatPage() {
         transcript_tail: stateRef.current.transcript.slice(-10),
         timestamp: new Date().toISOString(),
       }
-      await copyToClipboardWithFallback(`${JSON.stringify(payload, null, 2)}\n`)
+      const copied = await copyToClipboardWithFallback(`${JSON.stringify(payload, null, 2)}\n`)
+      const statusMessage = copied.usedFallback
+        ? "Debug bundle copied (clipboard fallback)."
+        : "Debug bundle copied."
       setState((prev) => ({
         ...prev,
-        debugCopyStatus: "Debug bundle copied.",
+        debugCopyStatus: statusMessage,
       }))
-      toast({ description: "Debug bundle copied." })
+      toast({ description: statusMessage })
     } catch (error) {
       setState((prev) => ({
         ...prev,
@@ -1770,23 +1904,55 @@ export function ChatPage() {
 
   const cancelCurrentChatRun = useCallback(async () => {
     const runID = safeText(stateRef.current.currentRunID)
-    if (!runID || isTerminalStatus(stateRef.current.currentRunStatus)) {
+    const runStatus = normalizeRunStatus(stateRef.current.currentRunStatus)
+    if (!runID || isTerminalStatus(runStatus) || isCancelingStatus(runStatus)) {
       return
     }
+
+    setState((prev) => ({
+      ...prev,
+      currentRunStatus: "canceling",
+      polling: true,
+      runPollingEnabled: true,
+      sessionPollIntervalMS: SESSION_POLL_MS,
+      sendError: "",
+      debugCopyStatus: `Stopping run ${runID}...`,
+    }))
+
     try {
-      await api.post(`/v1/runs/${encodeURIComponent(runID)}/cancel`, {})
+      const response = await api.post<Record<string, unknown>>(`/v1/runs/${encodeURIComponent(runID)}/cancel`, {})
+      const nextStatus = resolveCancelRunStatus(response?.status, response?.cancelled)
+      const statusMessage =
+        nextStatus === "canceled"
+          ? `Run ${runID} canceled.`
+          : nextStatus === "failed"
+          ? `Run ${runID} failed while canceling.`
+          : nextStatus === "completed"
+          ? `Run ${runID} completed before cancellation finished.`
+          : `Stopping run ${runID}...`
+
       setState((prev) => ({
         ...prev,
-        debugCopyStatus: `Cancellation requested for ${runID}.`,
+        currentRunStatus: nextStatus,
+        currentRunLastUpdatedAt: new Date().toISOString(),
+        polling: !isTerminalStatus(nextStatus),
+        runPollingEnabled: true,
+        sessionPollIntervalMS: SESSION_POLL_MS,
+        currentStreamingText: isTerminalStatus(nextStatus) ? "" : prev.currentStreamingText,
+        debugCopyStatus: statusMessage,
+        sendError: "",
       }))
-      toast({ description: `Cancellation requested for ${runID}.` })
+      toast({ description: statusMessage })
+      if (isTerminalStatus(nextStatus)) {
+        clearResumableInterruption(runID)
+      }
     } catch (error) {
       setState((prev) => ({
         ...prev,
         sendError: (error as Error)?.message || String(error),
       }))
     }
-  }, [toast])
+  }, [clearResumableInterruption, toast])
 
   const cancelObservedSubagentRun = useCallback(async (runID: string) => {
     const targetRunID = safeText(runID)
@@ -2095,7 +2261,10 @@ export function ChatPage() {
     }
   }, [])
 
-  const stopButtonDisabled = !safeText(state.currentRunID) || isTerminalStatus(state.currentRunStatus)
+  const runStatus = normalizeRunStatus(state.currentRunStatus)
+  const cancelInFlight = isCancelingStatus(runStatus)
+  const stopButtonDisabled = !safeText(state.currentRunID) || isTerminalStatus(runStatus) || cancelInFlight
+  const stopButtonLabel = cancelInFlight ? "Stopping..." : "Stop current run"
   const sendDisabled = state.sendPending || safeText(state.draft).length === 0
   const failedToolEvents = state.streamToolEvents.filter((event) => event.status === "failed").slice().reverse()
 
@@ -2337,7 +2506,7 @@ export function ChatPage() {
                 disabled={stopButtonDisabled}
                 onClick={() => void cancelCurrentChatRun()}
               >
-                Stop current run
+                {stopButtonLabel}
               </Button>
 
               <Button type="submit" size="sm" disabled={sendDisabled}>
