@@ -38,6 +38,8 @@ Before writing any component code:
 4. Tests should verify: page renders, navigation works, forms submit, data displays correctly, error states show
 5. Run the tests to confirm they fail (red phase): `cd internal/channels/dashboard/ui && npx playwright test tests/e2e/<file>.spec.js`
 
+If the feature is resumed with pre-implemented staged UI changes from a prior interrupted run, treat strict red-phase ordering as best-effort: add/adjust regression coverage first where feasible, then run focused validators and explicitly note the ordering deviation in handoff.
+
 ### 3. Implement the React Components
 
 Build the feature following these conventions:

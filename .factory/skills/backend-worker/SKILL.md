@@ -39,6 +39,8 @@ Before writing implementation code:
 4. For HTTP endpoints: use `httptest.NewServer` or `httptest.NewRecorder`
 5. Run tests to confirm they fail (red phase): `go test ./internal/<package> -run TestName -count=1`
 
+If the feature arrives with pre-implemented staged changes from a prior interrupted run, treat strict red-phase ordering as best-effort: add/adjust regression tests first where practical, then run focused + full validators and clearly document this deviation in handoff.
+
 **Test coverage requirements:**
 - Happy path for each expected behavior
 - Error/validation cases
