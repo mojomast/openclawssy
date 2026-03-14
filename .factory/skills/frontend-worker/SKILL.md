@@ -83,6 +83,7 @@ internal/channels/dashboard/ui/
 1. Run your Playwright tests: `cd internal/channels/dashboard/ui && npx playwright test tests/e2e/<file>.spec.js`
 2. All tests must pass
 3. Run the full e2e suite to check for regressions: `cd internal/channels/dashboard/ui && npx playwright test`
+   - If mission guidance documents known unrelated full-suite failures, run scoped specs for your feature and explicitly cite the known unrelated failures in handoff evidence.
 
 ### 6. Manual Verification
 
@@ -92,6 +93,8 @@ For each key interaction in the feature:
 3. Check browser console for errors
 4. Check network tab for correct API calls
 5. Record each check as an `interactiveChecks` entry
+
+If mission guidance explicitly allows non-interactive/manual-skip validation for the current feature, perform equivalent evidence-backed checks (targeted automated flow + logs/screenshots/network artifacts) and document the substitution in `interactiveChecks`.
 
 ### 7. Cleanup
 
