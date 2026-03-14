@@ -82,6 +82,7 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 	publishQueueRunEvent(opts.EventBus, run.ID, RunEventStatus, map[string]any{"status": "running"})
 
 	input := ExecutionInput{
+		RunID:        run.ID,
 		AgentID:      run.AgentID,
 		Message:      run.Message,
 		Source:       run.Source,

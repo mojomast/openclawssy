@@ -3,6 +3,7 @@ package dashboard
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -37,6 +39,8 @@ type Handler struct {
 	store          httpchannel.RunStore
 	schedulerStore *scheduler.Store
 	runCanceller   dashboardRunCanceller
+	monitorRunMu   sync.Mutex
+	monitorRuns    map[string]monitorRunState
 }
 
 type dashboardRunCanceller interface {
@@ -67,6 +71,13 @@ type monitorRunRecord struct {
 	StartedAt      string `json:"started_at,omitempty"`
 	CompletedAt    string `json:"completed_at,omitempty"`
 }
+
+type monitorRunState struct {
+	Status    string
+	UpdatedAt time.Time
+}
+
+const monitorRunStateTTL = 15 * time.Minute
 
 type dashboardLayoutRecord struct {
 	ID        string                  `json:"id"`
@@ -133,7 +144,13 @@ func New(rootDir string, store httpchannel.RunStore, schedulerStore ...*schedule
 }
 
 func NewWithOptions(rootDir string, store httpchannel.RunStore, opts Options) *Handler {
-	return &Handler{rootDir: rootDir, store: store, schedulerStore: opts.SchedulerStore, runCanceller: opts.RunCanceller}
+	return &Handler{
+		rootDir:        rootDir,
+		store:          store,
+		schedulerStore: opts.SchedulerStore,
+		runCanceller:   opts.RunCanceller,
+		monitorRuns:    make(map[string]monitorRunState),
+	}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -1507,7 +1524,7 @@ func (h *Handler) handleMonitorRuns(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 	agentFilter := strings.TrimSpace(r.URL.Query().Get("agent_id"))
-	runs, err := h.collectMonitorRuns(limit, agentFilter)
+	runs, err := h.collectMonitorRuns(r.Context(), limit, agentFilter)
 	if err != nil {
 		http.Error(w, "failed to load monitor runs", http.StatusInternalServerError)
 		return
@@ -1544,21 +1561,26 @@ func (h *Handler) handleMonitorRunControl(w http.ResponseWriter, r *http.Request
 		http.Error(w, "run canceller not configured", http.StatusNotImplemented)
 		return
 	}
+	tracked := h.runCanceller.IsTracked(runID)
 	if err := h.runCanceller.Cancel(runID); err != nil {
-		writeJSON(w, map[string]any{"run_id": runID, "cancelled": false, "tracked": false})
+		if status, ok := h.monitorRunStatusFromStore(r.Context(), runID); ok && isTerminalMonitorRunStatus(status) {
+			h.noteMonitorRunState(runID, status)
+		}
+		writeJSON(w, map[string]any{"run_id": runID, "cancelled": false, "tracked": tracked})
 		return
 	}
+	h.noteMonitorRunState(runID, "canceled")
 	writeJSON(w, map[string]any{"run_id": runID, "cancelled": true, "tracked": true})
 }
 
-func (h *Handler) collectMonitorRuns(limit int, agentFilter string) ([]monitorRunRecord, error) {
+func (h *Handler) collectMonitorRuns(ctx context.Context, limit int, agentFilter string) ([]monitorRunRecord, error) {
 	agentsDir := filepath.Join(h.rootDir, ".openclawssy", "agents")
 	entries, err := os.ReadDir(agentsDir)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
 		}
-		return nil, err
+		entries = nil
 	}
 	byRunID := map[string]monitorRunRecord{}
 	for _, entry := range entries {
@@ -1576,6 +1598,7 @@ func (h *Handler) collectMonitorRuns(limit int, agentFilter string) ([]monitorRu
 			continue
 		}
 	}
+	h.reconcileMonitorRunRecords(ctx, byRunID)
 	runs := make([]monitorRunRecord, 0, len(byRunID))
 	for _, record := range byRunID {
 		runs = append(runs, record)
@@ -1645,7 +1668,11 @@ func (h *Handler) collectMonitorRunsForAgent(auditPath string, byRunID map[strin
 						record.CheckpointPath = firstStringFromMap(event.Payload, "checkpoint_path")
 						record.Error = firstStringFromMap(event.Payload, "error")
 						if record.Error != "" {
-							record.Status = "failed"
+							if isCanceledMonitorError(record.Error) {
+								record.Status = "canceled"
+							} else {
+								record.Status = "failed"
+							}
 						} else {
 							record.Status = "completed"
 						}
@@ -1666,6 +1693,249 @@ func (h *Handler) collectMonitorRunsForAgent(auditPath string, byRunID map[strin
 		}
 	}
 	return nil
+}
+
+func (h *Handler) reconcileMonitorRunRecords(ctx context.Context, byRunID map[string]monitorRunRecord) {
+	if len(byRunID) == 0 && h.store == nil {
+		return
+	}
+	now := time.Now().UTC()
+	storedRuns := h.listMonitorStoreRuns(ctx)
+	storedByID := make(map[string]httpchannel.Run, len(storedRuns))
+	for _, run := range storedRuns {
+		runID := strings.TrimSpace(run.ID)
+		if runID == "" {
+			continue
+		}
+		storedByID[runID] = run
+		if record, ok := byRunID[runID]; ok {
+			byRunID[runID] = mergeStoredRunIntoMonitorRecord(record, run)
+		}
+	}
+
+	states := h.snapshotMonitorRunStates(now)
+	for runID, state := range states {
+		overrideStatus := normalizeMonitorRunStatus(state.Status)
+		if overrideStatus == "" {
+			h.clearMonitorRunState(runID)
+			continue
+		}
+		if record, ok := byRunID[runID]; ok {
+			if isTerminalMonitorRunStatus(record.Status) {
+				h.clearMonitorRunState(runID)
+				continue
+			}
+			record.Status = overrideStatus
+			record.Tracked = false
+			if record.CompletedAt == "" {
+				record.CompletedAt = state.UpdatedAt.UTC().Format(time.RFC3339)
+			}
+			if record.Error == "" && overrideStatus == "canceled" {
+				record.Error = "run canceled"
+			}
+			byRunID[runID] = record
+			continue
+		}
+		run, ok := storedByID[runID]
+		if !ok {
+			continue
+		}
+		record := monitorRecordFromStoredRun(run)
+		record.Status = overrideStatus
+		record.Tracked = false
+		if record.CompletedAt == "" {
+			record.CompletedAt = state.UpdatedAt.UTC().Format(time.RFC3339)
+		}
+		if record.Error == "" && overrideStatus == "canceled" {
+			record.Error = "run canceled"
+		}
+		byRunID[runID] = record
+	}
+
+	for runID, record := range byRunID {
+		if isTerminalMonitorRunStatus(record.Status) {
+			h.clearMonitorRunState(runID)
+		}
+	}
+}
+
+func (h *Handler) listMonitorStoreRuns(ctx context.Context) []httpchannel.Run {
+	if h == nil || h.store == nil {
+		return nil
+	}
+	runs, err := h.store.List(ctx)
+	if err != nil {
+		return nil
+	}
+	return runs
+}
+
+func (h *Handler) monitorRunStatusFromStore(ctx context.Context, runID string) (string, bool) {
+	if h == nil || h.store == nil {
+		return "", false
+	}
+	run, err := h.store.Get(ctx, runID)
+	if err != nil {
+		return "", false
+	}
+	status := normalizeMonitorRunStatus(run.Status)
+	if status == "" {
+		return "", false
+	}
+	return status, true
+}
+
+func mergeStoredRunIntoMonitorRecord(record monitorRunRecord, run httpchannel.Run) monitorRunRecord {
+	if strings.TrimSpace(record.Source) == "" {
+		record.Source = strings.TrimSpace(run.Source)
+	}
+	if strings.TrimSpace(record.Message) == "" {
+		record.Message = strings.TrimSpace(run.Message)
+	}
+	if strings.TrimSpace(record.ModelProvider) == "" {
+		record.ModelProvider = strings.TrimSpace(run.Provider)
+	}
+	if strings.TrimSpace(record.ModelName) == "" {
+		record.ModelName = strings.TrimSpace(run.Model)
+	}
+	if strings.TrimSpace(record.SessionID) == "" {
+		record.SessionID = strings.TrimSpace(run.SessionID)
+	}
+	if strings.TrimSpace(record.StartedAt) == "" && !run.CreatedAt.IsZero() {
+		record.StartedAt = run.CreatedAt.UTC().Format(time.RFC3339)
+	}
+
+	storeStatus := normalizeMonitorRunStatus(run.Status)
+	if isTerminalMonitorRunStatus(storeStatus) {
+		record.Status = storeStatus
+		record.Tracked = false
+		if strings.TrimSpace(record.Error) == "" {
+			record.Error = strings.TrimSpace(run.Error)
+		}
+		if strings.TrimSpace(record.ArtifactPath) == "" {
+			record.ArtifactPath = strings.TrimSpace(run.ArtifactPath)
+		}
+		if strings.TrimSpace(record.CompletedAt) == "" && !run.UpdatedAt.IsZero() {
+			record.CompletedAt = run.UpdatedAt.UTC().Format(time.RFC3339)
+		}
+	}
+
+	return record
+}
+
+func monitorRecordFromStoredRun(run httpchannel.Run) monitorRunRecord {
+	record := monitorRunRecord{
+		RunID:         strings.TrimSpace(run.ID),
+		AgentID:       strings.TrimSpace(run.AgentID),
+		Source:        strings.TrimSpace(run.Source),
+		Role:          classifyMonitorRunRole(run.Source),
+		Message:       strings.TrimSpace(run.Message),
+		ModelProvider: strings.TrimSpace(run.Provider),
+		ModelName:     strings.TrimSpace(run.Model),
+		SessionID:     strings.TrimSpace(run.SessionID),
+		Status:        normalizeMonitorRunStatus(run.Status),
+		Error:         strings.TrimSpace(run.Error),
+		ArtifactPath:  strings.TrimSpace(run.ArtifactPath),
+	}
+	if record.Role == "" {
+		record.Role = "main"
+	}
+	if record.Status == "" {
+		record.Status = "running"
+	}
+	if !run.CreatedAt.IsZero() {
+		record.StartedAt = run.CreatedAt.UTC().Format(time.RFC3339)
+	}
+	if isTerminalMonitorRunStatus(record.Status) && !run.UpdatedAt.IsZero() {
+		record.CompletedAt = run.UpdatedAt.UTC().Format(time.RFC3339)
+	}
+	return record
+}
+
+func normalizeMonitorRunStatus(status string) string {
+	normalized := strings.ToLower(strings.TrimSpace(status))
+	switch normalized {
+	case "cancelled":
+		return "canceled"
+	default:
+		return normalized
+	}
+}
+
+func isTerminalMonitorRunStatus(status string) bool {
+	switch normalizeMonitorRunStatus(status) {
+	case "completed", "failed", "canceled":
+		return true
+	default:
+		return false
+	}
+}
+
+func isCanceledMonitorError(message string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(message))
+	if normalized == "" {
+		return false
+	}
+	if strings.Contains(normalized, "context canceled") || strings.Contains(normalized, "context cancelled") {
+		return true
+	}
+	if strings.Contains(normalized, "run canceled") || strings.Contains(normalized, "run cancelled") {
+		return true
+	}
+	if strings.Contains(normalized, "cancelled") || strings.Contains(normalized, "canceled") {
+		return true
+	}
+	return false
+}
+
+func (h *Handler) noteMonitorRunState(runID, status string) {
+	if h == nil {
+		return
+	}
+	runID = strings.TrimSpace(runID)
+	status = normalizeMonitorRunStatus(status)
+	if runID == "" || status == "" {
+		return
+	}
+	h.monitorRunMu.Lock()
+	defer h.monitorRunMu.Unlock()
+	if h.monitorRuns == nil {
+		h.monitorRuns = make(map[string]monitorRunState)
+	}
+	h.monitorRuns[runID] = monitorRunState{Status: status, UpdatedAt: time.Now().UTC()}
+}
+
+func (h *Handler) clearMonitorRunState(runID string) {
+	if h == nil {
+		return
+	}
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return
+	}
+	h.monitorRunMu.Lock()
+	defer h.monitorRunMu.Unlock()
+	delete(h.monitorRuns, runID)
+}
+
+func (h *Handler) snapshotMonitorRunStates(now time.Time) map[string]monitorRunState {
+	if h == nil {
+		return nil
+	}
+	h.monitorRunMu.Lock()
+	defer h.monitorRunMu.Unlock()
+	if len(h.monitorRuns) == 0 {
+		return nil
+	}
+	out := make(map[string]monitorRunState, len(h.monitorRuns))
+	for runID, state := range h.monitorRuns {
+		if now.Sub(state.UpdatedAt) > monitorRunStateTTL {
+			delete(h.monitorRuns, runID)
+			continue
+		}
+		out[runID] = state
+	}
+	return out
 }
 
 func firstStringFromMap(values map[string]any, keys ...string) string {

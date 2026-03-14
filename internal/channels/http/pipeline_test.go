@@ -24,6 +24,11 @@ type flakyRetryableExecutor struct {
 
 type progressPublishingExecutor struct{}
 
+type captureInputExecutor struct {
+	mu        sync.Mutex
+	lastInput ExecutionInput
+}
+
 func (f *flakyRetryableExecutor) Execute(_ context.Context, _ ExecutionInput) (ExecutionResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -48,6 +53,13 @@ func (p progressPublishingExecutor) Execute(_ context.Context, input ExecutionIn
 		input.OnProgress("tool_end", map[string]any{"tool": "fs.list", "summary": "listed files"})
 		input.OnProgress("model_text", map[string]any{"text": "partial", "partial": true})
 	}
+	return ExecutionResult{Output: "done"}, nil
+}
+
+func (c *captureInputExecutor) Execute(_ context.Context, input ExecutionInput) (ExecutionResult, error) {
+	c.mu.Lock()
+	c.lastInput = input
+	c.mu.Unlock()
 	return ExecutionResult{Output: "done"}, nil
 }
 
@@ -379,5 +391,36 @@ func TestQueueRunWithOptionsPublishesFailedTerminalEvent(t *testing.T) {
 	}
 	if !seenFailed {
 		t.Fatal("expected failed terminal event")
+	}
+}
+
+func TestQueueRunPassesCreatedRunIDToExecutorInput(t *testing.T) {
+	store := NewInMemoryRunStore()
+	exec := &captureInputExecutor{}
+
+	queued, err := QueueRun(context.Background(), store, exec, "agent-1", "hello", "dashboard", "chat_123", "")
+	if err != nil {
+		t.Fatalf("queue run: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		run, getErr := store.Get(context.Background(), queued.ID)
+		if getErr != nil {
+			t.Fatalf("get run: %v", getErr)
+		}
+		if run.Status == "completed" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run did not complete in time, last status=%q", run.Status)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	exec.mu.Lock()
+	defer exec.mu.Unlock()
+	if exec.lastInput.RunID != queued.ID {
+		t.Fatalf("expected executor input run id %q, got %q", queued.ID, exec.lastInput.RunID)
 	}
 }

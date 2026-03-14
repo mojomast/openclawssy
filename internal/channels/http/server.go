@@ -61,6 +61,7 @@ type ChatResponse struct {
 }
 
 type ExecutionInput struct {
+	RunID        string
 	AgentID      string
 	Message      string
 	Source       string

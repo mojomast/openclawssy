@@ -71,6 +71,7 @@ func (e *Engine) RunTracker() *RunTracker {
 }
 
 type ExecuteInput struct {
+	RunID             string
 	AgentID           string
 	Message           string
 	TaskID            string
@@ -212,7 +213,10 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		thinkingMode = config.NormalizeThinkingMode(in.ThinkingMode)
 	}
 
-	runID := fmt.Sprintf("run_%d", time.Now().UTC().UnixNano())
+	runID := strings.TrimSpace(in.RunID)
+	if runID == "" {
+		runID = fmt.Sprintf("run_%d", time.Now().UTC().UnixNano())
+	}
 	memoryManager, memoryErr := memory.NewManager(e.agentsDir, agentID, memory.Options{
 		Enabled:    cfg.Memory.Enabled,
 		BufferSize: cfg.Memory.EventBufferSize,

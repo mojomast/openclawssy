@@ -1252,12 +1252,16 @@ func TestAdminAgentsEndpointListAndSetActive(t *testing.T) {
 }
 
 type stubDashboardRunCanceller struct {
-	tracked map[string]bool
-	called  []string
+	tracked  map[string]bool
+	called   []string
+	onCancel func(runID string)
 }
 
 func (s *stubDashboardRunCanceller) Cancel(runID string) error {
 	s.called = append(s.called, runID)
+	if s.onCancel != nil {
+		s.onCancel(runID)
+	}
 	if s.tracked[runID] {
 		return nil
 	}
@@ -1266,6 +1270,167 @@ func (s *stubDashboardRunCanceller) Cancel(runID string) error {
 
 func (s *stubDashboardRunCanceller) IsTracked(runID string) bool {
 	return s.tracked[runID]
+}
+
+func TestMonitorRunControlReconcilesStaleRunningEntryAfterSuccessfulCancel(t *testing.T) {
+	root := t.TempDir()
+	auditDir := filepath.Join(root, ".openclawssy", "agents", "alpha", "audit")
+	if err := os.MkdirAll(auditDir, 0o755); err != nil {
+		t.Fatalf("mkdir audit dir: %v", err)
+	}
+	auditBody := `{"ts":"2026-03-14T12:00:00Z","type":"run.start","run_id":"run-stale","agent_id":"alpha","payload":{"source":"chat","message":"cancel me"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(auditDir, "events.jsonl"), []byte(auditBody), 0o600); err != nil {
+		t.Fatalf("write audit log: %v", err)
+	}
+
+	canceller := &stubDashboardRunCanceller{tracked: map[string]bool{"run-stale": true}}
+	h := NewWithOptions(root, httpchannel.NewInMemoryRunStore(), Options{RunCanceller: canceller})
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	cancelReq := httptest.NewRequest(http.MethodPost, "/api/admin/monitor/runs/control", bytes.NewBufferString(`{"action":"cancel","run_id":"run-stale"}`))
+	cancelReq.Header.Set("Content-Type", "application/json")
+	cancelResp := httptest.NewRecorder()
+	mux.ServeHTTP(cancelResp, cancelReq)
+	if cancelResp.Code != http.StatusOK {
+		t.Fatalf("expected cancel status 200, got %d (%s)", cancelResp.Code, cancelResp.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/monitor/runs", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Runs []monitorRunRecord `json:"runs"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload.Runs) != 1 {
+		t.Fatalf("expected one monitor run, got %+v", payload.Runs)
+	}
+	if payload.Runs[0].RunID != "run-stale" {
+		t.Fatalf("expected run-stale record, got %+v", payload.Runs[0])
+	}
+	if payload.Runs[0].Status != "canceled" {
+		t.Fatalf("expected canceled status after successful cancel reconciliation, got %+v", payload.Runs[0])
+	}
+	if payload.Runs[0].CompletedAt == "" {
+		t.Fatalf("expected completed_at to be populated after reconciliation, got %+v", payload.Runs[0])
+	}
+}
+
+func TestMonitorRunsEndpointUsesStoreTerminalStatusForMatchingRunID(t *testing.T) {
+	root := t.TempDir()
+	auditDir := filepath.Join(root, ".openclawssy", "agents", "default", "audit")
+	if err := os.MkdirAll(auditDir, 0o755); err != nil {
+		t.Fatalf("mkdir audit dir: %v", err)
+	}
+	auditBody := `{"ts":"2026-03-14T12:05:00Z","type":"run.start","run_id":"run-store","agent_id":"default","payload":{"source":"dashboard","message":"started"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(auditDir, "events.jsonl"), []byte(auditBody), 0o600); err != nil {
+		t.Fatalf("write audit log: %v", err)
+	}
+
+	store := httpchannel.NewInMemoryRunStore()
+	now := time.Now().UTC()
+	if _, err := store.Create(context.Background(), httpchannel.Run{
+		ID:        "run-store",
+		AgentID:   "default",
+		Message:   "started",
+		Source:    "dashboard",
+		Status:    "canceled",
+		Error:     "run canceled",
+		CreatedAt: now.Add(-2 * time.Second),
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	h := New(root, store)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/monitor/runs", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Runs []monitorRunRecord `json:"runs"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload.Runs) != 1 {
+		t.Fatalf("expected one monitor run, got %+v", payload.Runs)
+	}
+	if payload.Runs[0].Status != "canceled" {
+		t.Fatalf("expected monitor status to reconcile with store terminal status, got %+v", payload.Runs[0])
+	}
+}
+
+func TestMonitorRunsEndpointIncludesStoreRunAfterCancelWhenAuditMissing(t *testing.T) {
+	root := t.TempDir()
+	store := httpchannel.NewInMemoryRunStore()
+	now := time.Now().UTC()
+	if _, err := store.Create(context.Background(), httpchannel.Run{
+		ID:        "run-chat-queued",
+		AgentID:   "default",
+		Message:   "chat task",
+		Source:    "dashboard",
+		Status:    "running",
+		CreatedAt: now.Add(-3 * time.Second),
+		UpdatedAt: now.Add(-3 * time.Second),
+	}); err != nil {
+		t.Fatalf("create queued run: %v", err)
+	}
+	canceller := &stubDashboardRunCanceller{
+		tracked: map[string]bool{"run-chat-queued": true},
+		onCancel: func(_ string) {
+			run, err := store.Get(context.Background(), "run-chat-queued")
+			if err != nil {
+				return
+			}
+			run.Status = "canceled"
+			run.Error = "run canceled"
+			run.UpdatedAt = time.Now().UTC()
+			_ = store.Update(context.Background(), run)
+		},
+	}
+
+	h := NewWithOptions(root, store, Options{RunCanceller: canceller})
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	cancelReq := httptest.NewRequest(http.MethodPost, "/api/admin/monitor/runs/control", bytes.NewBufferString(`{"action":"cancel","run_id":"run-chat-queued"}`))
+	cancelReq.Header.Set("Content-Type", "application/json")
+	cancelResp := httptest.NewRecorder()
+	mux.ServeHTTP(cancelResp, cancelReq)
+	if cancelResp.Code != http.StatusOK {
+		t.Fatalf("expected cancel status 200, got %d (%s)", cancelResp.Code, cancelResp.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/monitor/runs", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Runs []monitorRunRecord `json:"runs"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload.Runs) != 1 {
+		t.Fatalf("expected one run from store reconciliation, got %+v", payload.Runs)
+	}
+	if payload.Runs[0].RunID != "run-chat-queued" || payload.Runs[0].Status != "canceled" {
+		t.Fatalf("expected canceled store-backed monitor run, got %+v", payload.Runs[0])
+	}
 }
 
 func TestMonitorRunsEndpointListsMainAndSubagentAuditRuns(t *testing.T) {
