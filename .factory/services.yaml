@@ -6,6 +6,7 @@ commands:
   typecheck-ui: cd internal/channels/dashboard/ui && npx tsc --noEmit
   build-ui: cd internal/channels/dashboard/ui && npx vite build
   test-ui: cd internal/channels/dashboard/ui && npx playwright test
+  test-ui-component: cd internal/channels/dashboard/ui && npx playwright test tests/e2e/shared-components.spec.js
   install-ui: cd internal/channels/dashboard/ui && npm install
 
 services:

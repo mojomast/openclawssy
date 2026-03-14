@@ -1,5 +1,6 @@
 import { HashRouter, Routes, Route } from 'react-router-dom'
 import { Layout } from './components/Layout'
+import { Toaster } from './components/ui/toaster'
 import {
   // Migrated pages
   HelpPage,
@@ -53,6 +54,7 @@ function App() {
           <Route path="eval" element={<EvalPage />} />
         </Route>
       </Routes>
+      <Toaster />
     </HashRouter>
   )
 }

@@ -35,6 +35,7 @@ interface UIState {
   sidebar: SidebarState
   toggleSidebar: () => void
   setSidebarOpen: (isOpen: boolean) => void
+  setSidebarWidth: (width: number) => void
   toggleSection: (section: string) => void
 
   // Inspector panel
@@ -110,6 +111,12 @@ export const useUIStore = create<UIState>()(
       setSidebarOpen: (isOpen: boolean) => {
         set((state) => ({
           sidebar: { ...state.sidebar, isOpen },
+        }))
+      },
+
+      setSidebarWidth: (width: number) => {
+        set((state) => ({
+          sidebar: { ...state.sidebar, width: Math.max(180, Math.min(400, width)) },
         }))
       },
 
