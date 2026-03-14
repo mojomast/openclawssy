@@ -15,6 +15,12 @@ Testing surface, validation approach, and resource cost classification.
 - **Auth**: Bearer token required. Default token: `change-me` (set via OPENCLAWSSY_TOKEN or config)
 - **Setup**: Dashboard is served by the openclawssy Docker container. After React changes, the container must be rebuilt (`docker compose build openclawssy && docker compose up -d openclawssy`) to serve updated assets. For development, use Vite dev server at :5175.
 
+### Playwright Runtime Bootstrap (Linux)
+- The Playwright config at `internal/channels/dashboard/ui/playwright.config.js` now bootstraps `LD_LIBRARY_PATH` at process startup.
+- If `/home/mojo/.cache/playwright-libs/root/usr/lib/x86_64-linux-gnu` exists, it is prepended to `LD_LIBRARY_PATH` before browsers launch.
+- This applies to both direct `npx playwright ...` commands and npm scripts that run Playwright tests (for example `npm run e2e:test -- tests/e2e/help.spec.ts`).
+- If the fallback directory is missing, no environment mutation is applied.
+
 ### CLI (Eval Harness)
 - **Tool**: terminal (Execute tool)
 - **Binary**: `./bin/openclawssy`
