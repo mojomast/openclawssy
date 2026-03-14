@@ -10,7 +10,6 @@ export { SkillsPage } from './SkillsPage'
 
 // Placeholder pages (8 remaining migrations)
 export { ChatPage } from './ChatPage'
-export { SettingsPage } from './SettingsPage'
 export { RunsPage } from './RunsPage'
 export { SessionsPage } from './SessionsPage'
 export { AgentMonitorPage } from './AgentMonitorPage'

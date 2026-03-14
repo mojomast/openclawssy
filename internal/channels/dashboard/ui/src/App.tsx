@@ -11,7 +11,6 @@ import {
   SkillsPage,
   // Placeholder pages (remaining migrations)
   ChatPage,
-  SettingsPage,
   RunsPage,
   SessionsPage,
   AgentMonitorPage,
@@ -25,6 +24,7 @@ import {
   DelegationPage,
   EvalPage,
 } from './pages'
+import { SettingsPage } from './pages/SettingsPage'
 
 function App() {
   return (

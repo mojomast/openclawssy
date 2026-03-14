@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs"
+import path from "node:path"
 import { expect, test, type Page, type Route } from "@playwright/test"
 
 type SettingsApiState = {
@@ -195,6 +197,20 @@ function createState(): SettingsApiState {
     patchBodies: [],
   }
 }
+
+test("settings route is hardwired to React implementation and cannot delegate to legacy wrapper code", async () => {
+  const appSource = readFileSync(path.resolve(process.cwd(), "src/App.tsx"), "utf8")
+  const settingsSource = readFileSync(path.resolve(process.cwd(), "src/pages/SettingsPage.tsx"), "utf8")
+  const legacySettingsPath = path.resolve(process.cwd(), "src/pages/settings.js")
+
+  expect(appSource).toContain("from './pages/SettingsPage'")
+  expect(appSource).toMatch(/<Route\s+path=\"settings\"\s+element=\{<SettingsPage\s*\/>\}\s*\/>/)
+  expect(existsSync(legacySettingsPath)).toBeFalsy()
+
+  expect(settingsSource).not.toMatch(/settings\.js/i)
+  expect(settingsSource).not.toMatch(/settingsPage\.render/i)
+  expect(settingsSource).not.toMatch(/disposeSettingsPage/i)
+})
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
