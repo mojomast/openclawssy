@@ -7,6 +7,7 @@ import {
   HELP_CATEGORIES,
   categoryForTopic,
   loadHelpTopics,
+  resolveHelpTopicID,
   relatedHelpTopics,
   searchHelpTopics,
   type HelpTopic,
@@ -48,6 +49,35 @@ export function HelpPage() {
   const { toast } = useToast()
 
   const topicParam = (searchParams.get("topic") || "").trim()
+  const resolvedTopicParam = useMemo(() => resolveHelpTopicID(topics, topicParam), [topicParam, topics])
+
+  const copyText = useCallback(async (value: string): Promise<boolean> => {
+    const hasClipboardAPI = typeof navigator !== "undefined" && navigator.clipboard?.writeText
+    if (hasClipboardAPI) {
+      try {
+        await navigator.clipboard.writeText(value)
+        return true
+      } catch (_error) {
+        // Fall through to execCommand fallback below.
+      }
+    }
+
+    try {
+      const area = document.createElement("textarea")
+      area.value = value
+      area.setAttribute("readonly", "true")
+      area.style.position = "fixed"
+      area.style.left = "-9999px"
+      document.body.append(area)
+      area.select()
+      area.setSelectionRange(0, area.value.length)
+      const copied = typeof document.execCommand === "function" && document.execCommand("copy")
+      document.body.removeChild(area)
+      return Boolean(copied)
+    } catch (_error) {
+      return false
+    }
+  }, [])
 
   useEffect(() => {
     let isMounted = true
@@ -83,8 +113,8 @@ export function HelpPage() {
       return
     }
 
-    if (topicParam) {
-      const topic = topics.find((item) => item.id === topicParam)
+    if (resolvedTopicParam) {
+      const topic = topics.find((item) => item.id === resolvedTopicParam)
       if (topic && topic.id !== selectedTopicID) {
         setSelectedTopicID(topic.id)
       }
@@ -96,7 +126,7 @@ export function HelpPage() {
     if (!selectedTopicID || !topics.some((item) => item.id === selectedTopicID)) {
       setSelectedTopicID(topics[0].id)
     }
-  }, [selectedTopicID, topicParam, topics])
+  }, [resolvedTopicParam, selectedTopicID, topics])
 
   const results = useMemo(() => searchHelpTopics(topics, search), [search, topics])
 
@@ -184,16 +214,15 @@ export function HelpPage() {
     }
     const url = `${window.location.origin}${window.location.pathname}#/help?topic=${encodeURIComponent(selectedTopic.id)}`
 
-    try {
-      await navigator.clipboard.writeText(url)
+    const copied = await copyText(url)
+    if (copied) {
       toast({ description: "Topic link copied." })
-    } catch (_error) {
+    } else {
       toast({
-        variant: "destructive",
-        description: "Unable to copy topic link.",
+        description: `Clipboard unavailable. Copy this link manually: ${url}`,
       })
     }
-  }, [selectedTopic, toast])
+  }, [copyText, selectedTopic, toast])
 
   if (loading) {
     return (

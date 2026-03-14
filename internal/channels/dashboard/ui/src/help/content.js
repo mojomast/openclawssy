@@ -37,7 +37,53 @@ export const HELP_ROUTE_CONTEXT = {
   "/help": ["getting-started", "discord-bot-setup", "providers-and-models", "secrets-guide", "custom-dashboards", "runs-and-debugging", "scheduler-guide", "faq"],
 };
 
+const HELP_TOPIC_ALIASES = {
+  start: "getting-started",
+  onboarding: "getting-started",
+  discord: "discord-bot-setup",
+  providers: "providers-and-models",
+  provider: "providers-and-models",
+  models: "providers-and-models",
+  agents: "agent-overrides-and-subagents",
+  "agent-overrides": "agent-overrides-and-subagents",
+  subagents: "agent-overrides-and-subagents",
+  secrets: "secrets-guide",
+  secret: "secrets-guide",
+  dashboards: "custom-dashboards",
+  dashboard: "custom-dashboards",
+  runs: "runs-and-debugging",
+  run: "runs-and-debugging",
+  debugging: "runs-and-debugging",
+  scheduler: "scheduler-guide",
+  troubleshooting: "troubleshooting-integrations",
+  integrations: "troubleshooting-integrations",
+};
+
 let topicsPromise = null;
+
+function normalizeTopicLookupKey(value) {
+  const decoded = (() => {
+    try {
+      return decodeURIComponent(String(value || ""));
+    } catch (_error) {
+      return String(value || "");
+    }
+  })();
+
+  return decoded
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function normalizeSearchText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 export function parseFrontmatter(raw) {
   const text = String(raw || "");
@@ -123,19 +169,72 @@ export function setHelpTopicInHash(topicID) {
   window.location.hash = `#/help${query}`;
 }
 
+export function resolveHelpTopicID(topics, topicID) {
+  const lookup = normalizeTopicLookupKey(topicID);
+  if (!lookup) {
+    return "";
+  }
+
+  const directIDMatch = topics.find((topic) => normalizeTopicLookupKey(topic.id) === lookup);
+  if (directIDMatch) {
+    return directIDMatch.id;
+  }
+
+  const directTitleMatch = topics.find((topic) => normalizeTopicLookupKey(topic.title) === lookup);
+  if (directTitleMatch) {
+    return directTitleMatch.id;
+  }
+
+  const idWithoutCommonSuffix = topics.find((topic) => {
+    const stripped = normalizeTopicLookupKey(topic.id.replace(/-(guide|setup)$/i, ""));
+    return stripped === lookup;
+  });
+  if (idWithoutCommonSuffix) {
+    return idWithoutCommonSuffix.id;
+  }
+
+  const aliasedID = HELP_TOPIC_ALIASES[lookup];
+  if (aliasedID && topics.some((topic) => topic.id === aliasedID)) {
+    return aliasedID;
+  }
+
+  const keywordMatches = topics.filter((topic) =>
+    topic.keywords.some((keyword) => normalizeTopicLookupKey(keyword) === lookup)
+  );
+  if (keywordMatches.length === 1) {
+    return keywordMatches[0].id;
+  }
+
+  return "";
+}
+
 export function searchHelpTopics(topics, query) {
-  const q = String(query || "").trim().toLowerCase();
-  if (!q) {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) {
     return topics;
   }
+
+  const queryTerms = normalizedQuery.split(" ").filter(Boolean);
+
   return topics
     .map((topic) => {
-      const haystack = `${topic.title} ${topic.category} ${topic.keywords.join(" ")} ${topic.plainText}`.toLowerCase();
-      const index = haystack.indexOf(q);
-      return { topic, index };
+      const searchText = normalizeSearchText(
+        `${topic.id} ${topic.title} ${topic.category} ${topic.keywords.join(" ")} ${topic.route_hints.join(" ")} ${topic.plainText}`
+      );
+      if (!queryTerms.every((term) => searchText.includes(term))) {
+        return null;
+      }
+
+      const phraseIndex = searchText.indexOf(normalizedQuery);
+      const firstTermIndex = queryTerms
+        .map((term) => searchText.indexOf(term))
+        .reduce((lowest, index) => (index >= 0 ? Math.min(lowest, index) : lowest), Number.MAX_SAFE_INTEGER);
+      const score = (phraseIndex >= 0 ? phraseIndex : firstTermIndex) + (phraseIndex >= 0 ? 0 : 1000);
+
+      return { topic, score };
     })
-    .filter((item) => item.index >= 0)
-    .sort((left, right) => left.index - right.index)
+    .filter(Boolean)
+    .sort((left, right) => left.score - right.score)
     .map((item) => item.topic);
 }
 
