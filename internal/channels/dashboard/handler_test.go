@@ -23,7 +23,28 @@ import (
 	"openclawssy/internal/secrets"
 )
 
-func TestDashboardRouteServesStaticShell(t *testing.T) {
+func extractDashboardAssetPath(indexHTML string, suffix string) string {
+	marker := "/dashboard/static/assets/"
+	searchFrom := 0
+	for {
+		start := strings.Index(indexHTML[searchFrom:], marker)
+		if start < 0 {
+			return ""
+		}
+		start += searchFrom
+		end := strings.IndexAny(indexHTML[start:], "\"'")
+		if end < 0 {
+			return ""
+		}
+		candidate := indexHTML[start : start+end]
+		if strings.Contains(candidate, suffix) {
+			return candidate
+		}
+		searchFrom = start + len(marker)
+	}
+}
+
+func TestDashboardRouteServesEmbeddedSPA(t *testing.T) {
 	h := New(t.TempDir(), httpchannel.NewInMemoryRunStore())
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -36,15 +57,15 @@ func TestDashboardRouteServesStaticShell(t *testing.T) {
 		t.Fatalf("expected %d, got %d", http.StatusOK, rr.Code)
 	}
 	body := rr.Body.String()
-	if !strings.Contains(body, "Open Legacy Dashboard") {
-		t.Fatalf("expected shell footer link in body, got %q", body)
+	if !strings.Contains(body, `<div id="root"></div>`) {
+		t.Fatalf("expected react root in html body, got %q", body)
 	}
-	if strings.Contains(body, dashboardHTML) {
-		t.Fatal("expected /dashboard to serve new shell, not legacy HTML")
+	if strings.Contains(strings.ToLower(body), "open legacy dashboard") {
+		t.Fatalf("expected no legacy dashboard link in html body, got %q", body)
 	}
 }
 
-func TestDashboardRouteWithTrailingSlashServesStaticShell(t *testing.T) {
+func TestDashboardRouteWithTrailingSlashServesEmbeddedSPA(t *testing.T) {
 	h := New(t.TempDir(), httpchannel.NewInMemoryRunStore())
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -57,15 +78,12 @@ func TestDashboardRouteWithTrailingSlashServesStaticShell(t *testing.T) {
 		t.Fatalf("expected %d, got %d", http.StatusOK, rr.Code)
 	}
 	body := rr.Body.String()
-	if !strings.Contains(body, "Open Legacy Dashboard") {
-		t.Fatalf("expected shell footer link in body, got %q", body)
-	}
-	if strings.Contains(body, dashboardHTML) {
-		t.Fatal("expected /dashboard/ to serve new shell, not legacy HTML")
+	if !strings.Contains(body, `<div id="root"></div>`) {
+		t.Fatalf("expected react root in html body, got %q", body)
 	}
 }
 
-func TestDashboardLegacyRouteServesExistingHTMLExactly(t *testing.T) {
+func TestDashboardLegacyRouteReturnsNotFound(t *testing.T) {
 	h := New(t.TempDir(), httpchannel.NewInMemoryRunStore())
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -74,80 +92,54 @@ func TestDashboardLegacyRouteServesExistingHTMLExactly(t *testing.T) {
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected %d, got %d", http.StatusOK, rr.Code)
-	}
-	if rr.Body.String() != dashboardHTML {
-		t.Fatal("expected /dashboard-legacy body to exactly match legacy dashboard HTML")
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected %d, got %d", http.StatusNotFound, rr.Code)
 	}
 }
 
-func TestDashboardStaticAssetRouteServesEmbeddedFiles(t *testing.T) {
+func TestDashboardStaticAssetRouteServesEmbeddedReactAssets(t *testing.T) {
 	h := New(t.TempDir(), httpchannel.NewInMemoryRunStore())
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/dashboard/static/styles.css", nil)
+	indexReq := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	indexResp := httptest.NewRecorder()
+	mux.ServeHTTP(indexResp, indexReq)
+	if indexResp.Code != http.StatusOK {
+		t.Fatalf("expected dashboard index status %d, got %d", http.StatusOK, indexResp.Code)
+	}
+
+	assetPath := extractDashboardAssetPath(indexResp.Body.String(), ".js")
+	if assetPath == "" {
+		t.Fatalf("expected javascript asset reference in dashboard index, got %q", indexResp.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodGet, assetPath, nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected %d, got %d", http.StatusOK, rr.Code)
 	}
-	if got := rr.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/css") {
-		t.Fatalf("expected css content type, got %q", got)
+	if got := rr.Header().Get("Content-Type"); !strings.Contains(got, "javascript") {
+		t.Fatalf("expected javascript content type, got %q", got)
 	}
-	if !strings.Contains(rr.Body.String(), ".shell-grid") {
-		t.Fatalf("expected stylesheet content, got %q", rr.Body.String())
+	if len(rr.Body.Bytes()) == 0 {
+		t.Fatal("expected non-empty javascript asset body")
 	}
 }
 
-func TestDashboardStaticAssetRouteServesToolSchemasJSON(t *testing.T) {
+func TestDashboardStaticAssetRouteMissingAssetNotFound(t *testing.T) {
 	h := New(t.TempDir(), httpchannel.NewInMemoryRunStore())
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/dashboard/static/src/data/tool_schemas.json", nil)
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/static/assets/not-a-real-asset.js", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected %d, got %d", http.StatusOK, rr.Code)
-	}
-	if got := rr.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
-		t.Fatalf("expected json content type, got %q", got)
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode schema payload: %v", err)
-	}
-	if _, ok := payload["fs.read"].(map[string]any); !ok {
-		t.Fatalf("expected fs.read schema entry, got %#v", payload["fs.read"])
-	}
-	if _, ok := payload["shell.exec"].(map[string]any); !ok {
-		t.Fatalf("expected shell.exec schema entry, got %#v", payload["shell.exec"])
-	}
-	fsRead := payload["fs.read"].(map[string]any)
-	required, ok := fsRead["required"].([]any)
-	if !ok || len(required) == 0 || required[0] != "path" {
-		t.Fatalf("expected fs.read.required to include path, got %#v", fsRead["required"])
-	}
-}
-
-func TestDashboardStaticAssetRouteServesHelpMarkdown(t *testing.T) {
-	h := New(t.TempDir(), httpchannel.NewInMemoryRunStore())
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequest(http.MethodGet, "/dashboard/static/help/getting-started.md", nil)
-	rr := httptest.NewRecorder()
-	mux.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected %d, got %d", http.StatusOK, rr.Code)
-	}
-	if !strings.Contains(rr.Body.String(), "title: Getting Started") {
-		t.Fatalf("expected help markdown body, got %q", rr.Body.String())
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected %d, got %d", http.StatusNotFound, rr.Code)
 	}
 }
 
@@ -262,12 +254,12 @@ func TestDashboardWorkspaceRootFallsBackToContainerWorkspaceWhenConfiguredAbsolu
 	}
 }
 
-func TestDashboardStaticAssetRouteMissingToolSchemasFileNotFound(t *testing.T) {
+func TestDashboardStaticAssetRouteUnknownPathReturnsNotFound(t *testing.T) {
 	h := New(t.TempDir(), httpchannel.NewInMemoryRunStore())
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/dashboard/static/src/data/tool_schemas_missing.json", nil)
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/static/unknown/missing-file.json", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 

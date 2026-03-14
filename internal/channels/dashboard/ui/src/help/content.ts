@@ -1,4 +1,13 @@
-const HELP_BASE = "/dashboard/static/help"
+import gettingStartedRaw from "../../help/getting-started.md?raw"
+import discordBotSetupRaw from "../../help/discord-bot-setup.md?raw"
+import providersAndModelsRaw from "../../help/providers-and-models.md?raw"
+import agentOverridesAndSubagentsRaw from "../../help/agent-overrides-and-subagents.md?raw"
+import secretsGuideRaw from "../../help/secrets-guide.md?raw"
+import customDashboardsRaw from "../../help/custom-dashboards.md?raw"
+import runsAndDebuggingRaw from "../../help/runs-and-debugging.md?raw"
+import schedulerGuideRaw from "../../help/scheduler-guide.md?raw"
+import faqRaw from "../../help/faq.md?raw"
+import troubleshootingIntegrationsRaw from "../../help/troubleshooting-integrations.md?raw"
 
 export interface HelpTopic {
   id: string
@@ -30,6 +39,19 @@ export const HELP_TOPIC_FILES = [
   "faq.md",
   "troubleshooting-integrations.md",
 ]
+
+const HELP_RAW_BY_FILE: Record<string, string> = {
+  "getting-started.md": gettingStartedRaw,
+  "discord-bot-setup.md": discordBotSetupRaw,
+  "providers-and-models.md": providersAndModelsRaw,
+  "agent-overrides-and-subagents.md": agentOverridesAndSubagentsRaw,
+  "secrets-guide.md": secretsGuideRaw,
+  "custom-dashboards.md": customDashboardsRaw,
+  "runs-and-debugging.md": runsAndDebuggingRaw,
+  "scheduler-guide.md": schedulerGuideRaw,
+  "faq.md": faqRaw,
+  "troubleshooting-integrations.md": troubleshootingIntegrationsRaw,
+}
 
 export const HELP_CATEGORIES: HelpCategory[] = [
   { key: "Getting Started", label: "Getting Started", icon: "🚀" },
@@ -150,12 +172,11 @@ export function stripMarkdown(text: string): string {
 }
 
 async function loadTopic(fileName: string): Promise<HelpTopic> {
-  const response = await fetch(`${HELP_BASE}/${fileName}`)
-  if (!response.ok) {
+  const raw = HELP_RAW_BY_FILE[fileName]
+  if (!raw) {
     throw new Error(`Failed to load help topic ${fileName}`)
   }
 
-  const raw = await response.text()
   const { meta, body } = parseFrontmatter(raw)
   return {
     id: meta.id || fileName.replace(/\.md$/, ""),

@@ -332,9 +332,7 @@ export function Layout() {
 
       {/* Footer */}
       <footer className="border-t bg-card px-4 py-2 text-xs text-muted-foreground flex items-center justify-between shrink-0">
-        <a href="/dashboard-legacy" className="hover:underline">
-          Open Legacy Dashboard
-        </a>
+        <span>Dashboard active</span>
         <div className="flex items-center gap-4">
           <span className="hidden sm:inline">Press ? for keyboard shortcuts</span>
           <span>18 routes configured</span>

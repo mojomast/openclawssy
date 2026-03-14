@@ -53,19 +53,18 @@ createServer(async (req, res) => {
   const pathname = decodeURIComponent(url.pathname);
 
   if (pathname === "/dashboard" || pathname === "/dashboard/") {
-    await serveFirstExisting(res, [path.join(distRoot, "index.html"), path.join(root, "index.html")]);
+    await serveFirstExisting(res, [path.join(distRoot, "index.html")]);
     return;
   }
   if (pathname.startsWith("/dashboard/static/")) {
     const relative = pathname.slice("/dashboard/static/".length);
     const distFile = safePath(distRoot, relative);
-    const rootFile = safePath(root, relative);
-    if (!distFile || !rootFile) {
+    if (!distFile) {
       res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("bad path");
       return;
     }
-    await serveFirstExisting(res, [distFile, rootFile]);
+    await serveFirstExisting(res, [distFile]);
     return;
   }
 

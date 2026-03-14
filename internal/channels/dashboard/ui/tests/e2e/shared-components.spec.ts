@@ -42,7 +42,7 @@ test.describe('Shared Components', () => {
 
     await expect(page.locator('.border-l.bg-card').getByRole('heading', { name: 'Inspector', exact: true })).toBeVisible()
 
-    await expect(page.locator('footer').getByRole('link', { name: 'Open Legacy Dashboard', exact: true })).toBeVisible()
+    await expect(page.locator('footer').getByText('Dashboard active', { exact: true })).toBeVisible()
     await expect(page.locator('footer').getByText('18 routes configured', { exact: true })).toBeVisible()
   })
 
@@ -141,8 +141,8 @@ test.describe('Shared Components', () => {
     await expect(page.locator('.border-l.bg-card').getByRole('heading', { name: 'Inspector', exact: true })).toBeVisible()
   })
 
-  test('Footer displays legacy dashboard link and route count', async ({ page }) => {
-    await expect(page.locator('footer').getByRole('link', { name: 'Open Legacy Dashboard', exact: true })).toBeVisible()
+  test('Footer displays React-only status and route count', async ({ page }) => {
+    await expect(page.locator('footer').getByText('Dashboard active', { exact: true })).toBeVisible()
     await expect(page.locator('footer').getByText('18 routes configured', { exact: true })).toBeVisible()
     await expect(page.locator('footer').getByText('Press ? for keyboard shortcuts', { exact: true })).toBeVisible()
   })
