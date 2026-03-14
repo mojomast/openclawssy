@@ -49,6 +49,8 @@ New package. `AgentContract` struct with 9 policy sections. `Resolver` merges gl
 ### Prompt Stack (`internal/promptstack/`)
 New package. 5-layer model. `Assembler` merges layers. `VersionStore` tracks history. `Linter` checks for issues. API endpoints on dashboard handler.
 
+`VersionStore` synchronization is instance-local (`sync.Mutex` on the store struct). For concurrent-safe prompt updates/history writes in HTTP handlers, reuse a shared `VersionStore` instance rather than constructing a new store per request.
+
 ### Typed Roles (`internal/roles/`)
 New package. `RoleTemplate` struct with constraints. `Router` selects roles for tasks. Built-in templates + custom via config/API.
 

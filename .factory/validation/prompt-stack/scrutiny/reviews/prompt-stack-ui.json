@@ -1,0 +1,33 @@
+{
+  "featureId": "prompt-stack-ui",
+  "reviewedAt": "2026-03-14T16:00:41Z",
+  "commitId": "acbdd964cc8d9e2123e867f7deb83fe37ecf5b7b",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The Prompt Stack page, API wiring, diff/rollback/lint/test UX, and dedicated Playwright coverage are largely implemented, but one required behavior from the feature description is missing: markdown/text syntax highlighting in the layer editor.",
+    "issues": [
+      {
+        "file": "internal/channels/dashboard/ui/src/components/CodeEditor.tsx",
+        "line": 98,
+        "severity": "blocking",
+        "description": "Feature description requires a code editor with markdown/text syntax highlighting for each layer, but the editor remains a plain <textarea> with line numbers and no tokenized/highlighted rendering path."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "frontend-worker procedure is out of sync with mission reality: it requires full Playwright suite and manual browser verification, while mission guidance explicitly directs scoped specs because full suite is known-failing for unrelated pages.",
+      "evidence": ".factory/skills/frontend-worker/SKILL.md:85 requires full `npx playwright test`; SKILL.md:87 requires manual verification. Mission AGENTS at /home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/AGENTS.md:61-63 says full suite is currently failing and scoped specs should be used. Handoff records deviations at .../handoffs/2026-03-14T15-56-16-561Z__prompt-stack-ui__e6da9e39-0dda-47a2-a699-da94bc87872d.json:69-79."
+    },
+    {
+      "area": "conventions",
+      "observation": "Mission guideline says to keep React components around ~200 lines, but PromptStackPage is 1115 lines. This suggests either enforcement is missing or the guidance needs clarification for complex control-plane pages.",
+      "evidence": "Mission AGENTS guidance at /home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/AGENTS.md:40; implemented file internal/channels/dashboard/ui/src/pages/PromptStackPage.tsx is 1115 lines (`wc -l`)."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Review result: fail. The feature is broadly implemented and tested, but it does not satisfy the explicit syntax-highlighting requirement for the layer editor."
+}
