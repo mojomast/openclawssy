@@ -1,0 +1,63 @@
+{
+  "milestone": "react-migration",
+  "round": 2,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "go test -parallel 2 ./...",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "cd internal/channels/dashboard/ui && npx tsc --noEmit",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "go vet ./...",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "failedFeatures": [
+      "react-migrate-settings"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "react-migrate-settings",
+      "severity": "blocking",
+      "description": "Prior blocking finding remains unresolved: SettingsPage.tsx is still a wrapper around legacy settings.js instead of a React-native migration, and no new react-migration fix feature was completed to address this failure in round 2."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Updated .factory/library/architecture.md to reflect current dashboard embedding (`//go:embed ui/dist`) in internal/channels/dashboard/handler.go.",
+      "sourceFeature": "fix-react-migration-remove-legacy-root-artifacts"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "Mission feature-authoring conventions",
+      "suggestion": "For frontend migration features whose Playwright harness serves prebuilt ui/dist artifacts, define verification order as typecheck/build before e2e to avoid stale-dist false negatives.",
+      "evidence": "fix-react-migration-sandbox-api-contract-parity handoff recorded an initial false failure before rebuilding dist, while Playwright server.mjs serves ui/dist.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "frontend-worker scoped-vs-full-suite Playwright guidance mismatch",
+      "reason": "already-documented"
+    },
+    {
+      "observation": "services.yaml stale shared-components.spec.js command path",
+      "reason": "already-documented"
+    }
+  ],
+  "previousRound": ".factory/validation/react-migration/scrutiny/synthesis.round1.json"
+}
