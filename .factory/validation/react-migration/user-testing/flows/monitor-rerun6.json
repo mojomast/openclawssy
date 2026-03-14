@@ -1,0 +1,86 @@
+{
+  "groupId": "monitor-rerun6",
+  "testedAt": "2026-03-14T13:08:50Z",
+  "isolation": {
+    "milestone": "react-migration",
+    "missionDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3",
+    "dashboardUrl": "http://localhost:8081/dashboard",
+    "authToken": "change-me",
+    "assignedAssertions": [
+      "VAL-MIG-MON-002"
+    ]
+  },
+  "toolsUsed": [
+    "agent-browser",
+    "curl",
+    "playwright"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-MIG-MON-002",
+      "title": "Launch and cancel runs",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Preflight GET /api/admin/monitor/runs with bearer token before UI interaction",
+          "expected": "HTTP 200 healthy payload; proceed with UI testing",
+          "observed": "HTTP/1.1 200 OK returned with monitor payload (preflight-monitor-runs-headers.txt, preflight-monitor-runs-body.json)."
+        },
+        {
+          "action": "In Agent Monitor UI, enter launch prompt, set thinking mode to 'always', click Start, wait until run is running, then click Stop Active",
+          "expected": "Run launches, thinking_mode=always, and cancel path transitions run to terminal canceled",
+          "observed": "Run run_1773493615533408346 launched via POST /v1/runs (202), reached running in monitor API and /v1/runs/{id}, Stop Active sent POST /api/admin/monitor/runs/control (200), and terminal status became canceled in both monitor API and /v1/runs/{id}."
+        },
+        {
+          "action": "In Agent Monitor UI, enter second launch prompt, set thinking mode to 'on_error', click Start, wait until run is running, then click per-row Stop on that run",
+          "expected": "Run launches, thinking_mode=on_error, and per-row cancel transitions run to terminal canceled",
+          "observed": "Run run_1773493641071066058 launched via POST /v1/runs (202), reached running in monitor API and /v1/runs/{id}, row Stop sent POST /api/admin/monitor/runs/control (200), and terminal status became canceled in both monitor API and /v1/runs/{id}."
+        },
+        {
+          "action": "Verify launch/thinking mode behavior remains correct while cancel behavior is validated",
+          "expected": "Selected thinking mode is preserved on launched runs",
+          "observed": "run_1773493615533408346 preserved thinking_mode=always; run_1773493641071066058 preserved thinking_mode=on_error (see run-*-running artifacts and VAL-MIG-MON-002-ui-flow-results.json)."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "react-migration/monitor-rerun6/VAL-MIG-MON-002-01-monitor-open.png",
+          "react-migration/monitor-rerun6/VAL-MIG-MON-002-02-stop-active-launch-filled.png",
+          "react-migration/monitor-rerun6/VAL-MIG-MON-002-03-stop-active-running.png",
+          "react-migration/monitor-rerun6/VAL-MIG-MON-002-04-stop-active-terminal.png",
+          "react-migration/monitor-rerun6/VAL-MIG-MON-002-05-row-stop-launch-filled.png",
+          "react-migration/monitor-rerun6/VAL-MIG-MON-002-06-row-stop-running.png",
+          "react-migration/monitor-rerun6/VAL-MIG-MON-002-07-row-stop-terminal.png"
+        ],
+        "consoleErrors": "none (react-migration/monitor-rerun6/VAL-MIG-MON-002-console-errors.json)",
+        "network": "Preflight GET /api/admin/monitor/runs -> 200; launch POST /v1/runs -> 202 (run_1773493615533408346 thinking_mode=always, run_1773493641071066058 thinking_mode=on_error); cancel POST /api/admin/monitor/runs/control -> 200 for both paths (react-migration/monitor-rerun6/VAL-MIG-MON-002-network-events.json).",
+        "apiArtifacts": [
+          "react-migration/monitor-rerun6/preflight-monitor-runs-headers.txt",
+          "react-migration/monitor-rerun6/preflight-monitor-runs-body.json",
+          "react-migration/monitor-rerun6/monitor-status-run_1773493615533408346-running.json",
+          "react-migration/monitor-rerun6/run-stop-active-running-run_1773493615533408346.json",
+          "react-migration/monitor-rerun6/monitor-status-run_1773493615533408346-final.json",
+          "react-migration/monitor-rerun6/run-stop-active-final-run_1773493615533408346.json",
+          "react-migration/monitor-rerun6/monitor-status-run_1773493641071066058-running.json",
+          "react-migration/monitor-rerun6/run-row-stop-running-run_1773493641071066058.json",
+          "react-migration/monitor-rerun6/monitor-status-run_1773493641071066058-final.json",
+          "react-migration/monitor-rerun6/run-row-stop-final-run_1773493641071066058.json",
+          "react-migration/monitor-rerun6/VAL-MIG-MON-002-ui-flow-results.json"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "agent-browser CLI could not launch a browser session due missing shared library (libnspr4.so) in daemon-spawned process.",
+      "resolved": true,
+      "resolution": "Used documented Playwright/LD_LIBRARY_PATH fallback (LD_LIBRARY_PATH=/home/mojo/.cache/playwright-libs/root/usr/lib/x86_64-linux-gnu) to execute the same dashboard UI flow and capture required screenshots/network/API evidence.",
+      "affectedAssertions": [
+        "VAL-MIG-MON-002"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "Validated VAL-MIG-MON-002 rerun6: preflight monitor API healthy, both cancel paths were triggered only after runs reached running, and both targeted runs ended terminally canceled on both monitor API and /v1/runs/{id} while selected thinking modes remained correct."
+}

@@ -1,0 +1,29 @@
+{
+  "milestone": "react-migration",
+  "round": 3,
+  "status": "fail",
+  "generatedAt": "2026-03-14T11:48:05Z",
+  "assertionsSummary": {
+    "total": 3,
+    "passed": 2,
+    "failed": 1,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-MIG-CHAT-004",
+    "VAL-MIG-SET-004"
+  ],
+  "failedAssertions": [
+    {
+      "id": "VAL-MIG-MON-002",
+      "reason": "Monitor cancel controls did not reconcile stale running run_1773447736380992315 despite successful launch and thinking_mode application on the new run."
+    }
+  ],
+  "blockedAssertions": [],
+  "flowReports": [
+    ".factory/validation/react-migration/user-testing/flows/settings-rerun3.json",
+    ".factory/validation/react-migration/user-testing/flows/chat-monitor-rerun3.json"
+  ],
+  "appliedUpdates": [],
+  "previousRound": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/handoffs/2026-03-14T10-54-01-855Z__user-testing-validator-react-migration__72075ece-91b5-4de0-8607-6fddd70f1c6f.json"
+}

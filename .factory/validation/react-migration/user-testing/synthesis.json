@@ -1,0 +1,22 @@
+{
+  "milestone": "react-migration",
+  "round": 6,
+  "status": "pass",
+  "generatedAt": "2026-03-14T13:08:50Z",
+  "assertionsSummary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-MIG-MON-002"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "flowReports": [
+    ".factory/validation/react-migration/user-testing/flows/monitor-rerun6.json"
+  ],
+  "appliedUpdates": [],
+  "previousRound": "/home/mojo/projects/openclawssy/.factory/validation/react-migration/user-testing/synthesis.round5.json"
+}

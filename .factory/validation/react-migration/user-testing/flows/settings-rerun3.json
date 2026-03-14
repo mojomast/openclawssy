@@ -1,0 +1,27 @@
+{
+  "groupId": "settings-rerun3",
+  "testedAt": "2026-03-14T11:44:18Z",
+  "toolsUsed": [
+    "agent-browser",
+    "curl"
+  ],
+  "assertionResults": [
+    {
+      "id": "VAL-MIG-SET-004",
+      "status": "pass",
+      "reason": "Agents category showed an agent profile summary table; selecting a profile opened edit fields including enabled, self-improvement, and model override controls; subagent defaults showed thinking mode, delegation mode, max iterations, timeout, and allowed tools.",
+      "evidence": {
+        "screenshots": [
+          "react-migration/settings-rerun3/VAL-MIG-SET-004-profile-table.png",
+          "react-migration/settings-rerun3/VAL-MIG-SET-004-profile-editor.png",
+          "react-migration/settings-rerun3/VAL-MIG-SET-004-subagent-defaults.png"
+        ],
+        "consoleErrors": "none",
+        "network": "agent-browser network capture returned no requests; supplemental GET /api/admin/config with Authorization: Bearer change-me returned 200 and included agents.profiles plus subagent_defaults keys: thinking_mode, delegation_mode, max_tool_iterations, timeout_ms, allowed_tools."
+      }
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 1 assigned assertion for react-migration (VAL-MIG-SET-004): pass."
+}

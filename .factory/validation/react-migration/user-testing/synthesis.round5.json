@@ -1,0 +1,25 @@
+{
+  "milestone": "react-migration",
+  "round": 5,
+  "status": "fail",
+  "generatedAt": "2026-03-14T12:37:24.753Z",
+  "assertionsSummary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "blocked": 0
+  },
+  "passedAssertions": [],
+  "failedAssertions": [
+    {
+      "id": "VAL-MIG-MON-002",
+      "reason": "Monitor preflight /api/admin/monitor/runs returned 200, but Stop Active and per-row Stop actions (both returning 200 while runs were running) still ended targeted runs as completed (run_1773491702174684706, run_1773491770215811582) instead of canceled."
+    }
+  ],
+  "blockedAssertions": [],
+  "flowReports": [
+    ".factory/validation/react-migration/user-testing/flows/monitor-rerun5.json"
+  ],
+  "appliedUpdates": [],
+  "previousRound": "/home/mojo/projects/openclawssy/.factory/validation/react-migration/user-testing/synthesis.round4.json"
+}
