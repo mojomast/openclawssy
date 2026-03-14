@@ -20,6 +20,7 @@ Testing surface, validation approach, and resource cost classification.
 - If agent-browser startup fails due to stale session/daemon state, run `agent-browser session list`, close stale sessions, and retry with a fresh session id.
 - For `/dashboard-legacy` verification, if browser network capture misses the request, use `curl -i http://localhost:8081/dashboard-legacy` as supplemental status evidence.
 - If agent-browser request tracking returns no captured requests for dashboard flows, collect supplemental network evidence using `curl -i` against the same local API endpoints exercised by the UI flow.
+- For decision-ledger UI checks, create a fresh run first (`POST /v1/runs`) and deep-link to `/#/runs/<run-id>` for deterministic "Why this happened" validation against known decision records.
 
 ### Playwright Runtime Bootstrap (Linux)
 - The Playwright config at `internal/channels/dashboard/ui/playwright.config.js` now bootstraps `LD_LIBRARY_PATH` at process startup.
@@ -64,3 +65,10 @@ Testing surface, validation approach, and resource cost classification.
 - Always include `Authorization: Bearer change-me`; do not mutate auth configuration.
 - Avoid writes to unrelated global state; if an assertion requires mutation (for example rollback), keep it minimal and restore/verify post-condition in the same flow.
 - Save request/response evidence under the assigned evidence directory and include status code plus response body excerpts.
+
+## Flow Validator Guidance: Terminal Backend Assertions
+
+- Assigned surface: local project workspace terminal only (`/home/mojo/projects/openclawssy`).
+- Limit execution to assertion-scoped commands (targeted `go test`, `go build`, and `openclawssy eval` invocations needed for assigned assertions).
+- Do not mutate unrelated config, services, or data stores; avoid destructive commands.
+- Capture command output snippets and exit codes in the flow report, and save raw logs under the assigned evidence directory.

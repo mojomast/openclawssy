@@ -1,0 +1,160 @@
+{
+  "groupId": "browser-ui",
+  "testedAt": "2026-03-14T18:58:31Z",
+  "isolation": {
+    "missionDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3",
+    "dashboardUrl": "http://localhost:8081/dashboard",
+    "authToken": "change-me",
+    "browserSession": "flow-ui-typedroles",
+    "boundary": "Fresh isolated browser session for this validator only; no unrelated runtime settings/jobs/secrets/sandbox changes"
+  },
+  "toolsUsed": [
+    "agent-browser",
+    "curl"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-ROLES-004",
+      "title": "Role Template Editor UI",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Open Role Templates page",
+          "expected": "Built-in and custom role list is visible",
+          "observed": "Built-in roles (implementer/operator/planner/reviewer/scout/verifier) rendered in role list"
+        },
+        {
+          "action": "Open a built-in role in editor",
+          "expected": "Built-in role fields are read-only",
+          "observed": "Implementer role fields rendered as disabled/read-only"
+        },
+        {
+          "action": "Create a custom role",
+          "expected": "New custom role can be created",
+          "observed": "Created temporary role `ui-temp-role-browser`, then deleted it after validation"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "typed-roles-delegation/browser-ui/VAL-ROLES-004-role-list-authenticated.png",
+          "typed-roles-delegation/browser-ui/VAL-ROLES-004-role-editor.png",
+          "typed-roles-delegation/browser-ui/VAL-ROLES-004-create-custom.png"
+        ],
+        "consoleErrors": "none (typed-roles-delegation/browser-ui/VAL-ROLES-004-console-errors.txt)",
+        "network": "not required"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-DELEG-005",
+      "title": "Delegation Policy Editor UI",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Open Delegation page",
+          "expected": "Policy editor shows mode, threshold, cooldown, auto-delegate toggle",
+          "observed": "All required controls rendered, including Save policy"
+        },
+        {
+          "action": "Toggle Enable auto-delegate and save policy",
+          "expected": "Policy persists via PATCH /api/admin/config",
+          "observed": "UI showed 'Delegation policy saved'; setting was toggled on then restored off"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "typed-roles-delegation/browser-ui/VAL-DELEG-005-policy-editor.png"
+        ],
+        "consoleErrors": "none (typed-roles-delegation/browser-ui/VAL-DELEG-005-console-errors.txt)",
+        "network": "Supplemental capture: PATCH /api/admin/config -> 200 (typed-roles-delegation/browser-ui/VAL-DELEG-005-network-patch.txt); agent-browser request log returned 'No requests captured' (typed-roles-delegation/browser-ui/VAL-DELEG-005-network.txt)"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-DELEG-006",
+      "title": "Task Graph Preview UI",
+      "status": "fail",
+      "steps": [
+        {
+          "action": "Open Task graph preview on Delegation page",
+          "expected": "Visual task graph with nodes/edges/confidence (and Approve button in approve mode)",
+          "observed": "UI consistently displayed 'This run does not include a decomposition plan'"
+        },
+        {
+          "action": "Switch selected runs to completed runs and reload/compare",
+          "expected": "At least one run displays planned task graph",
+          "observed": "No tested runs showed a decomposition graph"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "typed-roles-delegation/browser-ui/VAL-DELEG-006-task-graph-visualization.png"
+        ],
+        "consoleErrors": "none (typed-roles-delegation/browser-ui/VAL-DELEG-006-console-errors.txt)",
+        "network": "n/a"
+      },
+      "issues": "Task graph visualization did not render for tested runs because no decomposition plan data was available in preview"
+    },
+    {
+      "id": "VAL-DECISION-003",
+      "title": "Why-this-happened drawer",
+      "status": "fail",
+      "steps": [
+        {
+          "action": "Open run detail and click 'Why this happened'",
+          "expected": "Drawer shows structured decision records with goal/strategy/delegation/tool reasons/constraints/termination + timestamps",
+          "observed": "Drawer opened but displayed 'No decision ledger records found for this run'"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "typed-roles-delegation/browser-ui/VAL-DECISION-003-why-drawer-open.png",
+          "typed-roles-delegation/browser-ui/VAL-DECISION-003-why-drawer-after-load.png"
+        ],
+        "consoleErrors": "none (typed-roles-delegation/browser-ui/VAL-DECISION-003-console-errors.txt)",
+        "network": "n/a"
+      },
+      "issues": "Decision drawer UI exists but no structured decision records were available for the tested run"
+    },
+    {
+      "id": "VAL-DECISION-004",
+      "title": "Run comparison view",
+      "status": "fail",
+      "steps": [
+        {
+          "action": "Open Delegation run comparison and compare two completed runs",
+          "expected": "Side-by-side decision record comparison to explain divergence",
+          "observed": "Comparison rendered but showed 'No records loaded for run A' and 'No records loaded for run B'"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "typed-roles-delegation/browser-ui/VAL-DECISION-004-run-comparison.png"
+        ],
+        "consoleErrors": "none (typed-roles-delegation/browser-ui/VAL-DECISION-004-console-errors.txt)",
+        "network": "n/a"
+      },
+      "issues": "Comparison UI did not load decision data for selected completed runs"
+    }
+  ],
+  "frictions": [
+    {
+      "description": "Token prompt reappeared while validating Role Templates despite prior dashboard navigation",
+      "resolved": true,
+      "resolution": "Entered bearer token `change-me` in prompt and continued",
+      "affectedAssertions": [
+        "VAL-ROLES-004"
+      ]
+    },
+    {
+      "description": "agent-browser network request capture returned no requests for config save flow",
+      "resolved": true,
+      "resolution": "Captured supplemental network evidence via curl for PATCH /api/admin/config (HTTP 200)",
+      "affectedAssertions": [
+        "VAL-DELEG-005"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 5 assertions: 2 passed (VAL-ROLES-004, VAL-DELEG-005) and 3 failed (VAL-DELEG-006, VAL-DECISION-003, VAL-DECISION-004) due to missing decomposition plan/decision ledger data in UI views."
+}

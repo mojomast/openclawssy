@@ -1,0 +1,201 @@
+{
+  "groupId": "backend-core",
+  "testedAt": "2026-03-14T18:57:22.997711Z",
+  "isolation": {
+    "missionDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3",
+    "repoRoot": "/home/mojo/projects/openclawssy",
+    "apiBaseUrl": "http://localhost:8081",
+    "authToken": "change-me",
+    "boundary": "Local terminal commands in repo root and localhost:8081 API only"
+  },
+  "toolsUsed": [
+    "terminal",
+    "curl",
+    "python3"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-ROLES-003",
+      "title": "Role constraints enforced at runtime",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "go test ./internal/runtime -run '^(TestSubAgentAdapterAppliesRoleConstraints|TestToolNameHelpersAndAllowlist)$' -count=1 -v",
+          "expected": "Role constraints and tool allowlist enforcement tests pass",
+          "observed": "PASS; TestSubAgentAdapterAppliesRoleConstraints and TestToolNameHelpersAndAllowlist both passed"
+        },
+        {
+          "action": "go test ./internal/agent -run '^(TestPlannerGeneratesTypedDecompositionPlan|TestDelegationModeSuggestOnlyReturnsPlanWithoutExecution|TestDelegationModeApprovePlanHonorsApproval|TestDelegationModeAutoTrustedOnlyExecutesForTrustedPlan|TestDelegationFailureCascadingRetriesEscalatesAndRecordsFailure|TestExecuteDelegatedTasksAssignsRoleRoutingAndConstraints)$' -count=1 -v",
+          "expected": "Delegated task execution applies role routing and constraints",
+          "observed": "PASS; TestExecuteDelegatedTasksAssignsRoleRoutingAndConstraints passed"
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "typed-roles-delegation/backend-core/runtime-role-constraints.log",
+          "typed-roles-delegation/backend-core/agent-delegation-tests.log"
+        ],
+        "keyOutput": "ok   openclawssy/internal/runtime ... PASS; ok   openclawssy/internal/agent ... PASS"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ROLES-005",
+      "title": "Role-based routing selects correct specialist",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "go test ./internal/roles -run '^(TestRouteSelectsExpectedBuiltInRoles|TestRouteFallbackToImplementerWhenNoClearMatch|TestRouteConfidenceReflectsKeywordDensity|TestRouteRationaleReferencesMatchedKeywords)$' -count=1 -v",
+          "expected": "Routing selects scout/planner/implementer/verifier/reviewer/operator correctly with rationale/confidence",
+          "observed": "PASS; all role routing tests passed"
+        },
+        {
+          "action": "go test ./internal/agent -run '^(TestPlannerGeneratesTypedDecompositionPlan|TestDelegationModeSuggestOnlyReturnsPlanWithoutExecution|TestDelegationModeApprovePlanHonorsApproval|TestDelegationModeAutoTrustedOnlyExecutesForTrustedPlan|TestDelegationFailureCascadingRetriesEscalatesAndRecordsFailure|TestExecuteDelegatedTasksAssignsRoleRoutingAndConstraints)$' -count=1 -v",
+          "expected": "Delegation flow records role routing rationale",
+          "observed": "PASS; TestExecuteDelegatedTasksAssignsRoleRoutingAndConstraints passed"
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "typed-roles-delegation/backend-core/roles-routing.log",
+          "typed-roles-delegation/backend-core/agent-delegation-tests.log"
+        ],
+        "keyOutput": "PASS for role routing selection, fallback, confidence, and rationale tests"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-DELEG-001",
+      "title": "Pre-delegation plan generated",
+      "status": "blocked",
+      "steps": [
+        {
+          "action": "go test ./internal/agent -run '^(TestPlannerGeneratesTypedDecompositionPlan|TestDelegationModeSuggestOnlyReturnsPlanWithoutExecution|TestDelegationModeApprovePlanHonorsApproval|TestDelegationModeAutoTrustedOnlyExecutesForTrustedPlan|TestDelegationFailureCascadingRetriesEscalatesAndRecordsFailure|TestExecuteDelegatedTasksAssignsRoleRoutingAndConstraints)$' -count=1 -v",
+          "expected": "Planner generation test confirms decomposition plan fields are populated",
+          "observed": "PASS; TestPlannerGeneratesTypedDecompositionPlan and TestDelegationModeSuggestOnlyReturnsPlanWithoutExecution passed"
+        },
+        {
+          "action": "go test ./internal/runtime -run '^TestRecordDecompositionPlanPersistsPlanInTrace$' -count=1 -v",
+          "expected": "Decomposition plan persists into runtime trace",
+          "observed": "PASS; TestRecordDecompositionPlanPersistsPlanInTrace passed"
+        },
+        {
+          "action": "curl/urllib GET scan over /v1/runs and /v1/runs/{id}; POST /v1/runs to trigger a fresh run",
+          "expected": "At least one run payload includes decomposition_plan field via API",
+          "observed": "Scanned 481 runs and triggered run_1773514438261542130; no run payload contained decomposition_plan. Triggered run stayed running and was canceled."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "typed-roles-delegation/backend-core/agent-delegation-tests.log",
+          "typed-roles-delegation/backend-core/runtime-decomposition-trace.log",
+          "typed-roles-delegation/backend-core/api-runs-list.http",
+          "typed-roles-delegation/backend-core/api-decomposition-plan-search.log",
+          "typed-roles-delegation/backend-core/api-decomposition-plan-search-full.log",
+          "typed-roles-delegation/backend-core/api-trigger-run-for-decomposition.log",
+          "typed-roles-delegation/backend-core/api-triggered-run-detail.json",
+          "typed-roles-delegation/backend-core/api-cancel-triggered-run.http",
+          "typed-roles-delegation/backend-core/api-triggered-run-final-status.log"
+        ],
+        "network": "GET /v1/runs -> 200; GET /v1/runs/{id} -> 200 (no decomposition_plan found); POST /v1/runs -> 202; POST /v1/runs/{id}/cancel -> 200"
+      },
+      "issues": "Live API evidence requirement could not be completed: no observable run payload with decomposition_plan despite exhaustive scan and one triggered run attempt."
+    },
+    {
+      "id": "VAL-DELEG-002",
+      "title": "Task graph with dependencies",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "go test ./internal/agent -run '^(TestPlannerGeneratesTypedDecompositionPlan|TestDelegationModeSuggestOnlyReturnsPlanWithoutExecution|TestDelegationModeApprovePlanHonorsApproval|TestDelegationModeAutoTrustedOnlyExecutesForTrustedPlan|TestDelegationFailureCascadingRetriesEscalatesAndRecordsFailure|TestExecuteDelegatedTasksAssignsRoleRoutingAndConstraints)$' -count=1 -v",
+          "expected": "Dependency DAG edges and topological ordering are verified",
+          "observed": "PASS; TestPlannerGeneratesTypedDecompositionPlan passed dependency DAG and ordering assertions"
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "typed-roles-delegation/backend-core/agent-delegation-tests.log"
+        ],
+        "keyOutput": "TestPlannerGeneratesTypedDecompositionPlan passed"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-DELEG-003",
+      "title": "Delegation modes work",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "go test ./internal/agent -run '^(TestPlannerGeneratesTypedDecompositionPlan|TestDelegationModeSuggestOnlyReturnsPlanWithoutExecution|TestDelegationModeApprovePlanHonorsApproval|TestDelegationModeAutoTrustedOnlyExecutesForTrustedPlan|TestDelegationFailureCascadingRetriesEscalatesAndRecordsFailure|TestExecuteDelegatedTasksAssignsRoleRoutingAndConstraints)$' -count=1 -v",
+          "expected": "suggest_only, approve_plan, auto_trusted behavior is validated",
+          "observed": "PASS; mode-specific tests all passed"
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "typed-roles-delegation/backend-core/agent-delegation-tests.log"
+        ],
+        "keyOutput": "TestDelegationModeSuggestOnlyReturnsPlanWithoutExecution, TestDelegationModeApprovePlanHonorsApproval, TestDelegationModeAutoTrustedOnlyExecutesForTrustedPlan passed"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-DELEG-004",
+      "title": "Delegation rationale in events",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "go test ./internal/agent -run '^(TestPlannerGeneratesTypedDecompositionPlan|TestDelegationModeSuggestOnlyReturnsPlanWithoutExecution|TestDelegationModeApprovePlanHonorsApproval|TestDelegationModeAutoTrustedOnlyExecutesForTrustedPlan|TestDelegationFailureCascadingRetriesEscalatesAndRecordsFailure|TestExecuteDelegatedTasksAssignsRoleRoutingAndConstraints)$' -count=1 -v",
+          "expected": "Delegation events contain trigger_reason, selected_role, task_assignment, rationale",
+          "observed": "PASS; TestDelegationFailureCascadingRetriesEscalatesAndRecordsFailure passed rationale-field assertions"
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "typed-roles-delegation/backend-core/agent-delegation-tests.log"
+        ],
+        "keyOutput": "TestDelegationFailureCascadingRetriesEscalatesAndRecordsFailure passed"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-DELEG-007",
+      "title": "Delegation failure cascading",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "go test ./internal/agent -run '^(TestPlannerGeneratesTypedDecompositionPlan|TestDelegationModeSuggestOnlyReturnsPlanWithoutExecution|TestDelegationModeApprovePlanHonorsApproval|TestDelegationModeAutoTrustedOnlyExecutesForTrustedPlan|TestDelegationFailureCascadingRetriesEscalatesAndRecordsFailure|TestExecuteDelegatedTasksAssignsRoleRoutingAndConstraints)$' -count=1 -v",
+          "expected": "Failure cascade records retry/escalate/dependency-failure outcomes and parent does not hang",
+          "observed": "PASS; TestDelegationFailureCascadingRetriesEscalatesAndRecordsFailure passed"
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "typed-roles-delegation/backend-core/agent-delegation-tests.log"
+        ],
+        "keyOutput": "Outcomes retry_same_role, escalated, failed_dependency validated in test"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "Live API run payloads did not expose decomposition_plan during validation, requiring exhaustive run scanning and a manually triggered run attempt.",
+      "resolved": false,
+      "resolution": "Captured blocked evidence and canceled temporary run to restore state.",
+      "affectedAssertions": [
+        "VAL-DELEG-001"
+      ]
+    }
+  ],
+  "blockers": [
+    {
+      "description": "Could not obtain a completed/failed API run containing decomposition_plan; scanned 481 historical runs and a newly triggered run remained running until canceled.",
+      "affectedAssertions": [
+        "VAL-DELEG-001"
+      ],
+      "quickFixAttempted": "Queried /v1/runs and /v1/runs/{id} across all pages, triggered a new run via POST /v1/runs, then polled and canceled it."
+    }
+  ],
+  "summary": "Tested 7 assertions: 6 passed, 0 failed, 1 blocked (VAL-DELEG-001 blocked on missing live API run evidence for decomposition_plan despite passing unit tests and trace persistence test)."
+}
