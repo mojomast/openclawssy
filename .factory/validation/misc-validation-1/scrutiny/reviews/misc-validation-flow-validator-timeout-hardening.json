@@ -1,0 +1,28 @@
+{
+  "featureId": "misc-validation-flow-validator-timeout-hardening",
+  "reviewedAt": "2026-03-14T23:37:31Z",
+  "commitId": "8bd215c",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature improves heartbeat/progress reporting and demonstrates two successful smoke runs, but it does not fully harden startup reliability for browser flow validators. The commit’s own browser smoke artifact still records a startup failure that required a manual CDP workaround outside the new flow-validator instructions, so the expected ‘consistent completion without parent fallback’ behavior is not fully met.",
+    "issues": [
+      {
+        "file": ".factory/droids/user-testing-flow-validator.md",
+        "line": 28,
+        "severity": "blocking",
+        "description": "Startup hardening is incomplete for browser validators. The new timeout guidance adds heartbeat/retry behavior but does not codify a deterministic browser bootstrap path for known launcher/runtime-linker failures. The same commit’s browser report shows startup failed due missing libnspr4 and required an ad-hoc CDP workaround (see browser-timeout-hardening-smoke.json:70-71), which means routine browser groups still are not reliably self-sufficient under normal load."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The feature is metadata-assigned to fullstack-worker, but the work is validation/droid hardening (no backend+frontend feature implementation). This causes predictable procedure drift versus SKILL.md (tests-first backend/frontend workflow) and adds noise in execution expectations.",
+      "evidence": "Feature entry sets skillName=fullstack-worker; transcript skeleton shows fullstack-worker invocation, while commit 8bd215c changes only .factory/droids/user-testing-flow-validator.md and validation flow artifacts."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed feature misc-validation-flow-validator-timeout-hardening (commit 8bd215c) using feature metadata, handoff, transcript skeleton, skill guidance, and full diff. The change improves heartbeat/retry behavior but fails the startup-reliability objective because browser flow startup still required manual fallback not codified in the new flow-validator instructions."
+}

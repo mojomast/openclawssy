@@ -1,0 +1,53 @@
+{
+  "milestone": "misc-validation-1",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "go test -parallel 2 ./...",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "cd internal/channels/dashboard/ui && npx tsc --noEmit",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "go vet ./...",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 5,
+    "passed": 4,
+    "failed": 1,
+    "failedFeatures": [
+      "misc-validation-flow-validator-timeout-hardening"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "misc-validation-flow-validator-timeout-hardening",
+      "severity": "blocking",
+      "description": "Startup hardening for browser validators is incomplete: timeout/heartbeat guidance was improved, but deterministic bootstrap for known launcher/runtime-linker failures is still not codified in flow-validator instructions. Review evidence shows browser startup still failed on missing libnspr4 and required ad-hoc manual workaround."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add mission-planning guidance to avoid assigning validation-infrastructure-only features to fullstack-worker, or explicitly define an approved procedure for such assignments, to reduce repeated skill-procedure drift.",
+      "evidence": "Two reviewed features in this milestone (misc-validation-flow-validator-timeout-hardening and misc-agent-browser-runtime-deps-bootstrap) were assigned fullstack-worker but changed only .factory validation assets/scripts and both reviews flagged predictable procedure misalignment.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "The assigned fullstack-worker skill procedure does not fit validation-infrastructure-only features.",
+      "reason": "duplicate"
+    }
+  ],
+  "previousRound": null
+}
