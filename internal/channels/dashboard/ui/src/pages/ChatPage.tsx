@@ -1,14 +1,12 @@
-/**
- * Chat Page - Placeholder for migration
- */
+import { FoundationPlaceholderPage } from "@/components/FoundationPlaceholderPage"
+
 export function ChatPage() {
   return (
-    <div className="p-4">
-      <h1 className="text-2xl font-bold mb-4">Chat</h1>
-      <p className="text-muted-foreground">
-        Chat interface with streaming messages, tool timeline, and agent control.
-        (Page migration in progress)
-      </p>
-    </div>
+    <FoundationPlaceholderPage
+      title="Chat"
+      description="Chat interface with streaming messages, tool timeline, and agent control."
+      emptyMessage="No chat session is available in this foundation placeholder yet. The full React Chat migration is in progress."
+      testID="chat-page"
+    />
   )
 }

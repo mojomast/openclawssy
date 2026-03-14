@@ -1,14 +1,12 @@
-/**
- * Custom Dashboards Page - Placeholder for migration
- */
+import { FoundationPlaceholderPage } from "@/components/FoundationPlaceholderPage"
+
 export function DashboardsPage() {
   return (
-    <div className="p-4">
-      <h1 className="text-2xl font-bold mb-4">Custom Dashboards</h1>
-      <p className="text-muted-foreground">
-        Custom widget-based dashboards with drag/resize and persistence.
-        (Page migration in progress)
-      </p>
-    </div>
+    <FoundationPlaceholderPage
+      title="Custom Dashboards"
+      description="Custom widget-based dashboards with drag/resize and persistence."
+      emptyMessage="No custom dashboards are rendered in this foundation placeholder yet. The full React Dashboards migration is in progress."
+      testID="dashboards-page"
+    />
   )
 }

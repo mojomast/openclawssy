@@ -1,14 +1,12 @@
-/**
- * Settings Page - Placeholder for migration
- */
+import { FoundationPlaceholderPage } from "@/components/FoundationPlaceholderPage"
+
 export function SettingsPage() {
   return (
-    <div className="p-4">
-      <h1 className="text-2xl font-bold mb-4">Settings</h1>
-      <p className="text-muted-foreground">
-        Configuration editor with 10 categories, provider testing, and model discovery.
-        (Page migration in progress)
-      </p>
-    </div>
+    <FoundationPlaceholderPage
+      title="Settings"
+      description="Configuration editor with 10 categories, provider testing, and model discovery."
+      emptyMessage="No settings data is rendered in this foundation placeholder yet. The full React Settings migration is in progress."
+      testID="settings-page"
+    />
   )
 }

@@ -1,14 +1,12 @@
-/**
- * Scheduler Page - Placeholder for migration
- */
+import { FoundationPlaceholderPage } from "@/components/FoundationPlaceholderPage"
+
 export function SchedulerPage() {
   return (
-    <div className="p-4">
-      <h1 className="text-2xl font-bold mb-4">Scheduler</h1>
-      <p className="text-muted-foreground">
-        Job scheduler with CRUD operations and pause/resume controls.
-        (Page migration in progress)
-      </p>
-    </div>
+    <FoundationPlaceholderPage
+      title="Scheduler"
+      description="Job scheduler with CRUD operations and pause/resume controls."
+      emptyMessage="No scheduler jobs are listed in this foundation placeholder yet. The full React Scheduler migration is in progress."
+      testID="scheduler-page"
+    />
   )
 }

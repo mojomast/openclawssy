@@ -1,14 +1,12 @@
-/**
- * Sessions Page - Placeholder for migration
- */
+import { FoundationPlaceholderPage } from "@/components/FoundationPlaceholderPage"
+
 export function SessionsPage() {
   return (
-    <div className="p-4">
-      <h1 className="text-2xl font-bold mb-4">Sessions</h1>
-      <p className="text-muted-foreground">
-        Session list and message viewer with tool event inspection.
-        (Page migration in progress)
-      </p>
-    </div>
+    <FoundationPlaceholderPage
+      title="Sessions"
+      description="Session list and message viewer with tool event inspection."
+      emptyMessage="No session records are displayed in this foundation placeholder yet. The full React Sessions migration is in progress."
+      testID="sessions-page"
+    />
   )
 }
