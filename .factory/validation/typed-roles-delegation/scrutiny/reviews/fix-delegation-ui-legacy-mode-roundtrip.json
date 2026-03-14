@@ -1,0 +1,21 @@
+{
+  "featureId": "fix-delegation-ui-legacy-mode-roundtrip",
+  "reviewedAt": "2026-03-14T18:43:06Z",
+  "commitId": "0c2634e",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix directly resolves the prior blocking issue: delegation mode parsing now accepts backend-valid legacy modes (`prompt_only`, `tool_gated`, `auto_execute`) and the policy selector preserves those values on save instead of coercing to `suggest_only`.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "`frontend-worker` still expects manual browser verification by default, but this worker run was non-interactive and had to substitute focused Playwright evidence.",
+      "evidence": "Handoff skillFeedback for session `5391a52f-a6c1-4f08-b96d-ebee9f7155e1` marks `followedProcedure=false` with deviation at step `6. Manual Verification`; `.factory/skills/frontend-worker/SKILL.md` step 6 requires manual checks unless mission guidance explicitly allows substitution."
+    }
+  ],
+  "addressesFailureFrom": "/home/mojo/projects/openclawssy/.factory/validation/typed-roles-delegation/scrutiny/reviews/delegation-ui.json",
+  "summary": "Reviewed prior failure context, fix handoff/transcript skeleton, and both commit diffs (`9767d0a` original and `0c2634e` fix). The original parser bug is corrected and covered by regression tests for all legacy modes, so this fix review passes."
+}

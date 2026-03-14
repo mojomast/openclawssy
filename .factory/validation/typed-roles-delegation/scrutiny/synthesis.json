@@ -1,7 +1,7 @@
 {
   "milestone": "typed-roles-delegation",
-  "round": 1,
-  "status": "fail",
+  "round": 2,
+  "status": "pass",
   "validatorsRun": {
     "test": {
       "passed": true,
@@ -20,58 +20,21 @@
     }
   },
   "reviewsSummary": {
-    "total": 6,
-    "passed": 4,
-    "failed": 2,
-    "failedFeatures": [
-      "decision-ledger",
-      "delegation-ui"
-    ]
+    "total": 2,
+    "passed": 2,
+    "failed": 0,
+    "failedFeatures": []
   },
-  "blockingIssues": [
-    {
-      "featureId": "decision-ledger",
-      "severity": "blocking",
-      "description": "internal/channels/dashboard/decisions_api.go uses bufio.Scanner with default token limit; large audit JSONL lines can trigger token-too-long and cause GET /api/admin/runs/{id}/decisions to return 500."
-    },
-    {
-      "featureId": "delegation-ui",
-      "severity": "blocking",
-      "description": "internal/channels/dashboard/ui/src/pages/DelegationPage.tsx parseDelegationMode only accepts new modes and falls back to suggest_only, which can misrepresent and overwrite backend-valid legacy modes like tool_gated/prompt_only/auto_execute."
-    }
-  ],
-  "appliedUpdates": [
-    {
-      "target": "library",
-      "description": "Updated .factory/library/architecture.md to reflect dashboard API handler split across multiple files (including decisions_api.go), replacing stale single-file claim.",
-      "sourceFeature": "decision-ledger"
-    }
-  ],
+  "blockingIssues": [],
+  "appliedUpdates": [],
   "suggestedGuidanceUpdates": [
     {
       "target": "skills",
-      "suggestion": "Tighten skill-procedure compliance reporting: when required manual/integration checks (e.g., interactiveChecks) are omitted, workers should not mark followedProcedure=true, or skills should explicitly define acceptable non-interactive alternatives.",
-      "evidence": "Observed in typed-roles-api-ui and decision-ledger reviews: handoffs omitted interactiveChecks despite skill steps requiring them.",
+      "suggestion": "Clarify manual verification expectations for non-interactive mission runs so workers either provide an approved automated evidence substitute or explicitly record a required-procedure deviation.",
+      "evidence": "Skill requirement: /home/mojo/projects/openclawssy/.factory/skills/backend-worker/SKILL.md lines 94-108. Fix handoff includes `verification.commandsRun` and no `interactiveChecks`: /home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/handoffs/2026-03-14T18-31-12-565Z__fix-decision-ledger-decisions-api-large-audit-lines__6e458877-3d1a-4eb2-82b9-a12af3d98ec8.json lines 13-14, 77. ; Handoff skillFeedback for session `5391a52f-a6c1-4f08-b96d-ebee9f7155e1` marks `followedProcedure=false` with deviation at step `6. Manual Verification`; `.factory/skills/frontend-worker/SKILL.md` step 6 requires manual checks unless mission guidance explicitly allows substitution.",
       "isSystemic": true
-    },
-    {
-      "target": "skills",
-      "suggestion": "Clarify backend-worker tests-first guidance as strict vs best-effort for large/interrupted refactors to reduce inconsistent reviewer interpretation.",
-      "evidence": "delegation-planner review observed implementation patches before first focused red-phase test while still producing passing coverage.",
-      "isSystemic": false
-    },
-    {
-      "target": "AGENTS.md",
-      "suggestion": "Align delegation failure-retry semantics across mission artifacts so contract and feature specs do not diverge (same-role retry vs different-role retry).",
-      "evidence": "validation-contract.md states different-role retry while delegation-planner feature spec and implementation/tests use same-role retry.",
-      "isSystemic": false
     }
   ],
-  "rejectedObservations": [
-    {
-      "observation": "Fullstack skill compliance observation duplicate variants",
-      "reason": "duplicate"
-    }
-  ],
-  "previousRound": null
+  "rejectedObservations": [],
+  "previousRound": ".factory/validation/typed-roles-delegation/scrutiny/synthesis.round1.json"
 }
