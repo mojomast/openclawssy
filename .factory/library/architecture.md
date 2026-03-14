@@ -16,7 +16,7 @@ Architectural decisions, patterns, and conventions for the openclawssy operator-
 - **Agent system**: `internal/agent/` — run state, delegation, complexity scoring, decomposition
 - **Tools**: `internal/tools/` — registry, builtins, capability checks
 - **Policy**: `internal/policy/` — deny-by-default enforcement, path guards, secret redaction
-- **Dashboard API**: `internal/channels/dashboard/handler.go` — admin API endpoints (3474 lines, single file)
+- **Dashboard API**: `internal/channels/dashboard/handler.go` + focused endpoint files in `internal/channels/dashboard/` (e.g. `decisions_api.go`) — admin API surface split across handlers
 - **Runtime API**: `internal/channels/http/server.go` — /v1/runs, /v1/chat, SSE events
 
 ## Key Patterns

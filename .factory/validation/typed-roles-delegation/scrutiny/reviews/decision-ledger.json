@@ -1,0 +1,33 @@
+{
+  "featureId": "decision-ledger",
+  "reviewedAt": "2026-03-14T18:21:10Z",
+  "commitId": "346efc4",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature substantially implements decision ledger emission and the admin decisions API with nested subagent trees, but the API parser is brittle and can fail on valid audit logs containing large non-decision events, breaking queryability.",
+    "issues": [
+      {
+        "file": "internal/channels/dashboard/decisions_api.go",
+        "line": 125,
+        "severity": "blocking",
+        "description": "`readDecisionAuditFile` uses `bufio.Scanner` with default token size and returns `scanner.Err()` (line 175). Since audit logs include full tool results (`internal/tools/registry.go:206,228`), a >64KiB JSONL line can trigger `token too long`, causing `GET /api/admin/runs/{id}/decisions` to return 500 and violate the requirement that decisions remain queryable by run."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The backend-worker skill requires manual API verification with curl and recording `interactiveChecks`, but this handoff contains only command-based checks and no interactive checks while still marking procedure followed.",
+      "evidence": "Skill requirements: .factory/skills/backend-worker/SKILL.md lines 91-100; handoff has `commandsRun` and no `interactiveChecks`: /home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/handoffs/2026-03-14T17-56-35-123Z__decision-ledger__86302ec0-7def-4340-beec-e8e098d907bf.json (lines 14, 91)."
+    },
+    {
+      "area": "knowledge",
+      "observation": "Shared architecture notes are stale about dashboard API file layout after this feature split handler logic into an additional file.",
+      "evidence": ".factory/library/architecture.md line 19 says dashboard API is in `internal/channels/dashboard/handler.go` as a single file, but commit 346efc4 adds `internal/channels/dashboard/decisions_api.go`."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed handoff, transcript skeleton, skill guidance, and commit 346efc4. Implementation is mostly aligned with decision-ledger requirements, but a blocking scanner-size bug in the decisions API can make ledger retrieval fail on large audit files, so the review status is fail."
+}
