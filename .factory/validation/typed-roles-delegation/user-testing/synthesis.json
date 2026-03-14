@@ -1,55 +1,20 @@
 {
   "milestone": "typed-roles-delegation",
-  "round": 1,
-  "status": "fail",
+  "round": 2,
+  "status": "pass",
   "assertionsSummary": {
-    "total": 16,
-    "passed": 13,
-    "failed": 1,
-    "blocked": 2
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "blocked": 0
   },
   "passedAssertions": [
-    "VAL-ROLES-001",
-    "VAL-ROLES-002",
-    "VAL-ROLES-003",
-    "VAL-ROLES-004",
-    "VAL-ROLES-005",
-    "VAL-DELEG-002",
-    "VAL-DELEG-003",
-    "VAL-DELEG-004",
-    "VAL-DELEG-005",
-    "VAL-DELEG-007",
-    "VAL-DECISION-001",
-    "VAL-DECISION-002",
-    "VAL-DECISION-003"
+    "VAL-DELEG-001",
+    "VAL-DELEG-006",
+    "VAL-DECISION-004"
   ],
-  "failedAssertions": [
-    {
-      "id": "VAL-DECISION-004",
-      "reason": "Run comparison view showed no records for selected runs and did not expose a selectable run with decision records in the loaded run window."
-    }
-  ],
-  "blockedAssertions": [
-    {
-      "id": "VAL-DELEG-001",
-      "blockedBy": "No observable decomposition_plan field in user-visible run payloads during validation; prerequisite evidence remained unavailable."
-    },
-    {
-      "id": "VAL-DELEG-006",
-      "blockedBy": "Task graph preview could not be validated because selectable runs in UI lacked decomposition plan data."
-    }
-  ],
-  "appliedUpdates": [
-    {
-      "target": "user-testing.md",
-      "description": "Added Flow Validator Guidance: Terminal Backend Assertions section to define safe command scope and evidence capture rules for terminal-based validators.",
-      "source": "setup"
-    },
-    {
-      "target": "user-testing.md",
-      "description": "Added decision-ledger validation note to create a fresh run and deep-link to /#/runs/<run-id> for deterministic Why-this-happened drawer checks.",
-      "source": "flow-report"
-    }
-  ],
-  "previousRound": null
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "previousRound": ".factory/validation/typed-roles-delegation/user-testing/synthesis.round1.json"
 }

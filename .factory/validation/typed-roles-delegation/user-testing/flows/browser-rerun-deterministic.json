@@ -1,0 +1,103 @@
+{
+  "groupId": "browser-rerun-deterministic",
+  "testedAt": "2026-03-14T20:12:35Z",
+  "isolation": {
+    "milestone": "typed-roles-delegation",
+    "missionDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3",
+    "dashboardUrl": "http://localhost:8081/dashboard",
+    "authToken": "change-me",
+    "deterministicRuns": [
+      "run_1773518562997498624",
+      "run_1773518588934334391"
+    ],
+    "browserSession": "brd1"
+  },
+  "toolsUsed": [
+    "agent-browser",
+    "curl"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-DELEG-006",
+      "title": "Task Graph Preview UI",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Open /dashboard -> Delegation, provide bearer token, and set run selector to run_1773518562997498624",
+          "expected": "Task graph preview loads plan for deterministic run",
+          "observed": "Task graph preview loaded selected deterministic run and rendered plan metadata"
+        },
+        {
+          "action": "Inspect Task graph preview visualization",
+          "expected": "Graph renders nodes/edges/confidence and does not show no-plan empty message",
+          "observed": "Graph rendered 2 task nodes with connecting edge and 20% confidence badges; no 'This run does not include a decomposition plan' message"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "typed-roles-delegation/browser-rerun-deterministic/03-val-deleg-006-task-graph.png"
+        ],
+        "consoleErrors": "none (agent-browser errors returned no entries)",
+        "network": "GET /v1/runs/run_1773518562997498624 -> 200; decomposition plan includes 2 tasks (evidence: val-deleg-006-run-detail.headers, val-deleg-006-run-detail.json)",
+        "artifacts": [
+          "typed-roles-delegation/browser-rerun-deterministic/val-deleg-006-run-detail.headers",
+          "typed-roles-delegation/browser-rerun-deterministic/val-deleg-006-run-detail.json"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-DECISION-004",
+      "title": "Run comparison view",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Select Run A=run_1773518562997498624 and Run B=run_1773518588934334391, then click Compare runs",
+          "expected": "Comparison loads two run timelines",
+          "observed": "Comparison loaded with divergence summary and two populated side-by-side decision timelines"
+        },
+        {
+          "action": "Verify timeline panels",
+          "expected": "Decision records are present and not empty placeholders",
+          "observed": "Both panels contained multiple decision cards (constraint_activation/goal_interpretation/strategy_selection/tool_decision/etc.); no empty placeholder shown"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "typed-roles-delegation/browser-rerun-deterministic/04-val-decision-004-run-comparison.png"
+        ],
+        "consoleErrors": "none (agent-browser errors returned no entries)",
+        "network": "GET /api/admin/runs/run_1773518562997498624/decisions -> 200 (10 records); GET /api/admin/runs/run_1773518588934334391/decisions -> 200 (10 records)",
+        "artifacts": [
+          "typed-roles-delegation/browser-rerun-deterministic/val-decision-004-runA-decisions.headers",
+          "typed-roles-delegation/browser-rerun-deterministic/val-decision-004-runA-decisions.json",
+          "typed-roles-delegation/browser-rerun-deterministic/val-decision-004-runB-decisions.headers",
+          "typed-roles-delegation/browser-rerun-deterministic/val-decision-004-runB-decisions.json"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "agent-browser failed to start a fresh daemon session directly in this environment",
+      "resolved": true,
+      "resolution": "Started Chromium manually with Playwright libs and attached agent-browser via CDP (session brd1)",
+      "affectedAssertions": [
+        "VAL-DELEG-006",
+        "VAL-DECISION-004"
+      ]
+    },
+    {
+      "description": "agent-browser network request tracker returned no captured requests for this dashboard flow",
+      "resolved": true,
+      "resolution": "Collected supplemental network evidence via authenticated curl requests to the same endpoints",
+      "affectedAssertions": [
+        "VAL-DELEG-006",
+        "VAL-DECISION-004"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 2 assertions (VAL-DELEG-006, VAL-DECISION-004): 2 passed, 0 failed, 0 blocked. Deterministic task graph and run comparison decision timelines both rendered with expected data."
+}
