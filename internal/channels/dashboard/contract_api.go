@@ -31,7 +31,7 @@ type contractFieldDiff struct {
 }
 
 func (h *Handler) handleAgentContractAPI(w http.ResponseWriter, r *http.Request) {
-	rawAgentID, action, ok := parseAgentContractRoute(r.URL.Path)
+	rawAgentID, actions, ok := parseAgentAdminRoute(r.URL.Path)
 	if !ok {
 		http.NotFound(w, r)
 		return
@@ -47,7 +47,17 @@ func (h *Handler) handleAgentContractAPI(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	switch action {
+	if actions[0] == "prompt-stack" {
+		h.handlePromptStackAPI(w, r, agentID, actions[1:])
+		return
+	}
+
+	if len(actions) != 1 {
+		http.NotFound(w, r)
+		return
+	}
+
+	switch actions[0] {
 	case "resolved":
 		if r.Method != http.MethodGet {
 			writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
@@ -165,19 +175,24 @@ func (h *Handler) restoreAgentRollbackSnapshot(w http.ResponseWriter, r *http.Re
 	writeJSON(w, map[string]any{"ok": true})
 }
 
-func parseAgentContractRoute(requestPath string) (agentID string, action string, ok bool) {
+func parseAgentAdminRoute(requestPath string) (agentID string, actions []string, ok bool) {
 	suffix := strings.TrimPrefix(requestPath, "/api/admin/agents/")
 	if suffix == requestPath {
-		return "", "", false
+		return "", nil, false
 	}
 	parts := strings.Split(strings.Trim(suffix, "/"), "/")
-	if len(parts) != 2 {
-		return "", "", false
+	if len(parts) < 2 {
+		return "", nil, false
 	}
-	if strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
-		return "", "", false
+	if strings.TrimSpace(parts[0]) == "" {
+		return "", nil, false
 	}
-	return parts[0], parts[1], true
+	for _, action := range parts[1:] {
+		if strings.TrimSpace(action) == "" {
+			return "", nil, false
+		}
+	}
+	return parts[0], parts[1:], true
 }
 
 func (h *Handler) dashboardAgentExists(agentID string) bool {

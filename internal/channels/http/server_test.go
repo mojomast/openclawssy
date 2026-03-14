@@ -631,6 +631,8 @@ func TestServer_AuthAllowsOnlyDashboardGetHeadPathsWithoutToken(t *testing.T) {
 		{name: "admin memory path blocked", method: http.MethodGet, path: "/api/admin/memory/default", want: http.StatusUnauthorized},
 		{name: "admin contract resolved path blocked", method: http.MethodGet, path: "/api/admin/agents/default/resolved", want: http.StatusUnauthorized},
 		{name: "admin contract diff path blocked", method: http.MethodGet, path: "/api/admin/agents/default/diff?base=global", want: http.StatusUnauthorized},
+		{name: "admin prompt stack blocked", method: http.MethodGet, path: "/api/admin/agents/default/prompt-stack", want: http.StatusUnauthorized},
+		{name: "admin prompt stack preview blocked", method: http.MethodGet, path: "/api/admin/agents/default/prompt-stack/preview", want: http.StatusUnauthorized},
 	}
 
 	for _, tc := range tests {
