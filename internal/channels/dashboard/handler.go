@@ -179,6 +179,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/monitor/runs", h.handleMonitorRuns)
 	mux.HandleFunc("/api/admin/monitor/runs/control", h.handleMonitorRunControl)
 	mux.HandleFunc("/api/admin/agents", h.handleAgents)
+	mux.HandleFunc("/api/admin/agents/", h.handleAgentContractAPI)
 	mux.HandleFunc("/api/admin/agent/docs", h.handleAgentDocs)
 	mux.HandleFunc("/api/admin/skills", h.handleSkills)
 	mux.HandleFunc("/api/admin/workspace/entries", h.handleWorkspaceEntries)
