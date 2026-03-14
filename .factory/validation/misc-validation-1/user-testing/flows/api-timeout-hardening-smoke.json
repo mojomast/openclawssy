@@ -1,0 +1,83 @@
+{
+  "flow": "api-timeout-hardening-smoke",
+  "milestone": "misc-validation-1",
+  "missionDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3",
+  "api_base": "http://localhost:8081",
+  "assertions": [
+    {
+      "id": "VAL-CONTRACT-001",
+      "status": "pass",
+      "attempts": 1,
+      "steps": [
+        {
+          "step": "Discover agent id via GET /api/admin/agents",
+          "result": "HTTP 200",
+          "evidence": [
+            "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/api-timeout-hardening-smoke/agents-list.meta.json",
+            "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/api-timeout-hardening-smoke/agents-list.headers.txt",
+            "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/api-timeout-hardening-smoke/agents-list.body.json"
+          ]
+        },
+        {
+          "step": "GET /api/admin/agents/{id}/resolved with retry-once policy for transient errors",
+          "result": "Successful agent: default",
+          "attempts": [
+            {
+              "agent_id": "default",
+              "attempt": 1,
+              "http_code": "200",
+              "meta_path": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/api-timeout-hardening-smoke/agent-resolved-default-attempt-1.meta.json",
+              "headers_path": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/api-timeout-hardening-smoke/agent-resolved-default-attempt-1.headers.txt",
+              "body_path": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/api-timeout-hardening-smoke/agent-resolved-default-attempt-1.body.json"
+            }
+          ]
+        },
+        {
+          "step": "Concise payload field check",
+          "required_fields": [
+            "identity",
+            "system_prompt",
+            "tool_policy",
+            "delegation_policy",
+            "memory_policy",
+            "model_policy",
+            "sandbox_policy",
+            "observability_policy"
+          ],
+          "missing_fields": [],
+          "field_presence": {
+            "identity": true,
+            "system_prompt": true,
+            "tool_policy": true,
+            "delegation_policy": true,
+            "memory_policy": true,
+            "model_policy": true,
+            "sandbox_policy": true,
+            "observability_policy": true
+          }
+        }
+      ],
+      "evidence": [
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/api-timeout-hardening-smoke/agents-list.meta.json",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/api-timeout-hardening-smoke/agents-list.headers.txt",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/api-timeout-hardening-smoke/agents-list.body.json",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/api-timeout-hardening-smoke/agent-resolved-default-attempt-1.meta.json",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/api-timeout-hardening-smoke/agent-resolved-default-attempt-1.headers.txt",
+        "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/api-timeout-hardening-smoke/agent-resolved-default-attempt-1.body.json"
+      ]
+    }
+  ],
+  "summary": {
+    "pass": 1,
+    "fail": 0,
+    "blocked": 0,
+    "skipped": 0,
+    "pending": 0
+  },
+  "heartbeat": {
+    "timestamp": "2026-03-14T22:30:52.122980+00:00",
+    "phase": "complete"
+  },
+  "frictions": [],
+  "blockers": []
+}
