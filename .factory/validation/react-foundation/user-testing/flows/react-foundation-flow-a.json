@@ -1,0 +1,124 @@
+{
+  "groupId": "react-foundation-flow-a",
+  "testedAt": "2026-03-14T03:35:00Z",
+  "isolation": {
+    "surface": "Browser Dashboard",
+    "url": "http://localhost:8081/dashboard",
+    "token": "change-me",
+    "missionDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3",
+    "browserSession": "react-foundation-flow-a"
+  },
+  "toolsUsed": [
+    "agent-browser",
+    "curl"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-REACT-FND-001",
+      "status": "pass",
+      "reason": "React dashboard shell loaded at /dashboard with header, sidebar nav, main content, and inspector visible; console errors were empty.",
+      "evidence": [
+        "react-foundation/flow-a/VAL-REACT-FND-001-shell.png",
+        "react-foundation/flow-a/VAL-REACT-FND-001-console-errors.json"
+      ]
+    },
+    {
+      "id": "VAL-REACT-FND-002",
+      "status": "pass",
+      "reason": "Sidebar navigation click changed hash route to #/settings, and direct hash URL navigation to #/skills rendered the correct page; console errors were empty.",
+      "evidence": [
+        "react-foundation/flow-a/VAL-REACT-FND-002-nav-click-settings.png",
+        "react-foundation/flow-a/VAL-REACT-FND-002-direct-url-skills.png",
+        "react-foundation/flow-a/VAL-REACT-FND-002-console-errors.json"
+      ]
+    },
+    {
+      "id": "VAL-REACT-FND-004",
+      "status": "fail",
+      "reason": "Desktop layout zones, collapsible nav/inspector, and pane resizing were observed, but at narrow viewport the nav switched to drawer while inspector drawer behavior/trigger was not observable.",
+      "evidence": [
+        "react-foundation/flow-a/VAL-REACT-FND-004-desktop-layout.png",
+        "react-foundation/flow-a/VAL-REACT-FND-004-collapsed-panes.png",
+        "react-foundation/flow-a/VAL-REACT-FND-004-narrow-layout.png",
+        "react-foundation/flow-a/VAL-REACT-FND-004-narrow-layout-nav-drawer.png",
+        "react-foundation/flow-a/VAL-REACT-FND-004-console-errors.json"
+      ]
+    },
+    {
+      "id": "VAL-REACT-FND-005",
+      "status": "pass",
+      "reason": "Theme toggled from light to dark and persisted after full page reload (toggle remained on 'Switch to light' and ui-store theme persisted as dark).",
+      "evidence": [
+        "react-foundation/flow-a/VAL-REACT-FND-005-light.png",
+        "react-foundation/flow-a/VAL-REACT-FND-005-dark-after-toggle.png",
+        "react-foundation/flow-a/VAL-REACT-FND-005-dark-after-reload.png",
+        "react-foundation/flow-a/VAL-REACT-FND-005-console-errors.json"
+      ]
+    },
+    {
+      "id": "VAL-REACT-FND-006",
+      "status": "pass",
+      "reason": "F1 opened the help drawer, '/' focused the global search input, and the g then c shortcut sequence navigated to #/chat; console errors were empty.",
+      "evidence": [
+        "react-foundation/flow-a/VAL-REACT-FND-006-help-drawer-open.png",
+        "react-foundation/flow-a/VAL-REACT-FND-006-console-errors.json"
+      ]
+    },
+    {
+      "id": "VAL-REACT-FND-008",
+      "status": "pass",
+      "reason": "Footer link 'Open Legacy Dashboard' navigated to /dashboard-legacy and legacy UI rendered; network header capture showed GET /dashboard-legacy returned HTTP 200.",
+      "evidence": [
+        "react-foundation/flow-a/VAL-REACT-FND-008-legacy-dashboard.png",
+        "react-foundation/flow-a/VAL-REACT-FND-008-network-dashboard-legacy-curl.txt",
+        "react-foundation/flow-a/VAL-REACT-FND-008-console-errors.json"
+      ]
+    },
+    {
+      "id": "VAL-REACT-FND-014",
+      "status": "fail",
+      "reason": "A meaningful empty-state message was observed on Secrets filter ('No keys match this search'), but Runs route showed migration-placeholder content and no explicit loading indicator/empty-state contract for data-fetch pages, so all-page loading/empty requirements were not met.",
+      "evidence": [
+        "react-foundation/flow-a/VAL-REACT-FND-014-loading-state.png",
+        "react-foundation/flow-a/VAL-REACT-FND-014-empty-state.png",
+        "react-foundation/flow-a/VAL-REACT-FND-014-console-errors.json"
+      ]
+    },
+    {
+      "id": "VAL-REACT-FND-016",
+      "status": "pass",
+      "reason": "After navigating Runs -> Settings, browser Back returned to #/runs and Forward restored #/settings; hash-based history navigation behaved correctly.",
+      "evidence": [
+        "react-foundation/flow-a/VAL-REACT-FND-016-page-after-back-button.png",
+        "react-foundation/flow-a/VAL-REACT-FND-016-console-errors.json"
+      ]
+    }
+  ],
+  "frictions": [
+    {
+      "description": "agent-browser default daemon launch failed with missing libnspr4.so in this environment.",
+      "resolved": true,
+      "resolution": "Used isolated AGENT_BROWSER_HOME and prefixed LD_LIBRARY_PATH with Playwright bundled libs for each command.",
+      "affectedAssertions": [
+        "VAL-REACT-FND-001",
+        "VAL-REACT-FND-002",
+        "VAL-REACT-FND-004",
+        "VAL-REACT-FND-005",
+        "VAL-REACT-FND-006",
+        "VAL-REACT-FND-008",
+        "VAL-REACT-FND-014",
+        "VAL-REACT-FND-016"
+      ]
+    },
+    {
+      "description": "agent-browser network request tracker did not return /dashboard-legacy request entries after navigation.",
+      "resolved": true,
+      "resolution": "Captured HTTP response headers via curl for GET /dashboard-legacy to record status evidence.",
+      "affectedAssertions": [
+        "VAL-REACT-FND-008"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "Validated 8 assigned assertions: 6 passed and 2 failed (VAL-REACT-FND-004, VAL-REACT-FND-014)."
+}

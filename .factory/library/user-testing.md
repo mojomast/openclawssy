@@ -15,6 +15,10 @@ Testing surface, validation approach, and resource cost classification.
 - **Auth**: Bearer token required. Default token: `change-me` (set via OPENCLAWSSY_TOKEN or config)
 - **Setup**: Dashboard is served by the openclawssy Docker container. After React changes, the container must be rebuilt (`docker compose build openclawssy && docker compose up -d openclawssy`) to serve updated assets. For development, use Vite dev server at :5175.
 
+#### Browser Runtime Notes
+- If `agent-browser` startup fails with missing shared library errors (for example `libnspr4.so`), run with an isolated `AGENT_BROWSER_HOME` and prepend Playwright bundled libs to `LD_LIBRARY_PATH`.
+- For `/dashboard-legacy` verification, if browser network capture misses the request, use `curl -i http://localhost:8081/dashboard-legacy` as supplemental status evidence.
+
 ### Playwright Runtime Bootstrap (Linux)
 - The Playwright config at `internal/channels/dashboard/ui/playwright.config.js` now bootstraps `LD_LIBRARY_PATH` at process startup.
 - If `/home/mojo/.cache/playwright-libs/root/usr/lib/x86_64-linux-gnu` exists, it is prepended to `LD_LIBRARY_PATH` before browsers launch.
@@ -41,3 +45,12 @@ Testing surface, validation approach, and resource cost classification.
 ### CLI/curl
 - **Max concurrent validators: 3**
 - **Rationale**: Terminal and curl are lightweight. Main constraint is concurrent Go test runs.
+
+## Flow Validator Guidance: Browser Dashboard
+
+- Assigned surface: `http://localhost:8081/dashboard` only.
+- Use bearer token `change-me` when auth prompt appears; do not modify server auth/config.
+- Stay within assigned assertions; do not run unrelated flows.
+- Use isolated browser context/session per validator and do not share local storage state across validators.
+- Do not modify global runtime settings, scheduler jobs, secrets, or sandbox resources unless explicitly required by an assigned assertion.
+- Save all screenshots/network evidence under the assigned evidence directory only.
