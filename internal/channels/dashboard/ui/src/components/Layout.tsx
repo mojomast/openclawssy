@@ -5,7 +5,7 @@ import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
 import { ResizablePanel, ResizableHandle } from './ui/resizable'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog'
 import { useState, useEffect } from 'react'
-import { Sun, Moon, Menu, X, HelpCircle, Search, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Sun, Moon, Menu, X, HelpCircle, Search, ChevronLeft, ChevronRight, PanelRightOpen } from 'lucide-react'
 import { Input } from './ui/input'
 
 interface NavSection {
@@ -68,6 +68,23 @@ export function Layout() {
     return () => window.removeEventListener('resize', checkMobile)
   }, [])
 
+  // Close mobile drawers with Escape
+  useEffect(() => {
+    if (!isMobile || (!showMobileNav && !showMobileInspector)) {
+      return
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowMobileNav(false)
+        setShowMobileInspector(false)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isMobile, showMobileNav, showMobileInspector])
+
   // Calculate effective theme
   const effectiveTheme = theme === 'system'
     ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
@@ -105,14 +122,26 @@ export function Layout() {
       <header className="border-b bg-card px-4 py-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
           {isMobile && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setShowMobileNav(true)}
-              className="lg:hidden"
-            >
-              <Menu className="h-5 w-5" />
-            </Button>
+            <>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowMobileNav(true)}
+                className="lg:hidden"
+                aria-label="Open navigation menu"
+              >
+                <Menu className="h-5 w-5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowMobileInspector(true)}
+                className="lg:hidden"
+                aria-label="Open inspector drawer"
+              >
+                <PanelRightOpen className="h-5 w-5" />
+              </Button>
+            </>
           )}
           <h1 className="text-lg font-semibold">Openclawssy Dashboard</h1>
           <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded">
@@ -318,7 +347,7 @@ export function Layout() {
           <div className="absolute left-0 top-0 bottom-0 w-72 bg-card border-r p-4 overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold">Navigation</h2>
-              <Button variant="ghost" size="icon" onClick={() => setShowMobileNav(false)}>
+              <Button variant="ghost" size="icon" aria-label="Close navigation drawer" onClick={() => setShowMobileNav(false)}>
                 <X className="h-5 w-5" />
               </Button>
             </div>
@@ -365,7 +394,7 @@ export function Layout() {
           <div className="absolute right-0 top-0 bottom-0 w-72 bg-card border-l p-4 overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold">Inspector</h2>
-              <Button variant="ghost" size="icon" onClick={() => setShowMobileInspector(false)}>
+              <Button variant="ghost" size="icon" aria-label="Close inspector drawer" onClick={() => setShowMobileInspector(false)}>
                 <X className="h-5 w-5" />
               </Button>
             </div>

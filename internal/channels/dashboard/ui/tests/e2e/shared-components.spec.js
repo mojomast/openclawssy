@@ -34,21 +34,21 @@ test.describe("Shared Components", () => {
 
   test("Layout shell renders with header, nav, main, inspector panels", async ({ page }) => {
     // Header
-    await expect(page.getByText("Openclawssy Dashboard")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Openclawssy Dashboard", exact: true })).toBeVisible();
     await expect(page.getByText("React")).toBeVisible();
     await expect(page.getByText("Runtime Active")).toBeVisible();
 
     // Sidebar navigation
-    await expect(page.getByText("Dashboard")).toBeVisible();
-    await expect(page.getByText("Operations")).toBeVisible();
-    await expect(page.getByText("Control Plane")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Operations", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Control Plane", exact: true })).toBeVisible();
 
     // Inspector panel
-    await expect(page.getByText("Inspector")).toBeVisible();
+    await expect(page.locator(".border-l.bg-card").getByRole("heading", { name: "Inspector", exact: true })).toBeVisible();
 
     // Footer
-    await expect(page.getByText("Open Legacy Dashboard")).toBeVisible();
-    await expect(page.getByText("18 routes configured")).toBeVisible();
+    await expect(page.locator("footer").getByRole("link", { name: "Open Legacy Dashboard", exact: true })).toBeVisible();
+    await expect(page.locator("footer").getByText("18 routes configured", { exact: true })).toBeVisible();
   });
 
   test("Nav sidebar shows links for all routes", async ({ page }) => {
@@ -56,7 +56,7 @@ test.describe("Shared Components", () => {
     await expect(page.getByRole("link", { name: "Help", exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "Workspace", exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "Secrets", exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Chat", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: /^Chat/ })).toBeVisible();
 
     // Operations section
     await expect(page.getByRole("link", { name: "Runs", exact: true })).toBeVisible();
@@ -88,8 +88,8 @@ test.describe("Shared Components", () => {
     await page.keyboard.press("F1");
     await expect(page.getByRole("dialog")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Keyboard Shortcuts" })).toBeVisible();
-    await expect(page.getByText("F1")).toBeVisible();
-    await expect(page.getByText("Open help")).toBeVisible();
+    await expect(page.getByRole("dialog").getByText("F1", { exact: true })).toBeVisible();
+    await expect(page.getByRole("dialog").getByText("Open help", { exact: true })).toBeVisible();
   });
 
   test("Help dialog opens with ? key", async ({ page }) => {
@@ -127,9 +127,9 @@ test.describe("Shared Components", () => {
     await expandButton.click();
 
     // Sidebar should expand again
-    await expect(page.getByText("Dashboard")).toBeVisible();
-    await expect(page.getByText("Operations")).toBeVisible();
-    await expect(page.getByText("Control Plane")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Operations", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Control Plane", exact: true })).toBeVisible();
   });
 
   test("Inspector panel can be closed and opened", async ({ page }) => {
@@ -146,13 +146,13 @@ test.describe("Shared Components", () => {
     await expandButton.click();
 
     // Inspector should be visible again
-    await expect(page.getByText("Inspector")).toBeVisible();
+    await expect(page.locator(".border-l.bg-card").getByRole("heading", { name: "Inspector", exact: true })).toBeVisible();
   });
 
   test("Footer displays legacy dashboard link and route count", async ({ page }) => {
-    await expect(page.getByText("Open Legacy Dashboard")).toBeVisible();
-    await expect(page.getByText("18 routes configured")).toBeVisible();
-    await expect(page.getByText("Press ? for keyboard shortcuts")).toBeVisible();
+    await expect(page.locator("footer").getByRole("link", { name: "Open Legacy Dashboard", exact: true })).toBeVisible();
+    await expect(page.locator("footer").getByText("18 routes configured", { exact: true })).toBeVisible();
+    await expect(page.locator("footer").getByText("Press ? for keyboard shortcuts", { exact: true })).toBeVisible();
   });
 
   test("Navigation links work and show active state", async ({ page }) => {
@@ -168,14 +168,34 @@ test.describe("Shared Components", () => {
     await page.setViewportSize({ width: 375, height: 667 });
 
     // Click hamburger menu
-    const menuButton = page.getByRole("button", { name: "Open navigation menu" }).first();
+    const menuButton = page.getByRole("button", { name: "Open navigation menu", exact: true });
     await menuButton.click();
 
     // Mobile drawer should appear
     await expect(page.getByRole("heading", { name: "Navigation" })).toBeVisible();
 
     // Close the drawer
-    await page.getByRole("button", { name: "Close", exact: true }).click();
+    await page.getByRole("button", { name: "Close navigation drawer", exact: true }).click();
+  });
+
+  test("Mobile inspector drawer can be opened and closed via backdrop", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 667 });
+
+    await page.getByRole("button", { name: "Open inspector drawer", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Inspector" })).toBeVisible();
+
+    await page.mouse.click(20, 20);
+    await expect(page.getByRole("heading", { name: "Inspector" })).toBeHidden();
+  });
+
+  test("Mobile inspector drawer closes on Escape", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 667 });
+
+    await page.getByRole("button", { name: "Open inspector drawer", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Inspector" })).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("heading", { name: "Inspector" })).toBeHidden();
   });
 });
 
