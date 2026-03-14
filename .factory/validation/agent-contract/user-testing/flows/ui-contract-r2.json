@@ -1,0 +1,71 @@
+{
+  "groupId": "ui-contract-r2",
+  "surface": "browser-dashboard",
+  "testedAt": "2026-03-14T15:05:00Z",
+  "isolation": {
+    "url": "http://localhost:8081/dashboard#/agent-contract",
+    "authToken": "change-me",
+    "missionDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3"
+  },
+  "toolsUsed": [
+    "playwright",
+    "node",
+    "curl"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-CONTRACT-005",
+      "status": "pass",
+      "reason": "Agent Contract page loaded on live dashboard, showed heading and agent selector, and rendered structured resolved contract sections.",
+      "evidence": {
+        "files": [
+          "agent-contract/ui-contract-r2/VAL-CONTRACT-r2-agent-contract-page.png",
+          "agent-contract/ui-contract-r2/agent-contract-page-text.txt",
+          "agent-contract/ui-contract-r2/ui-validation-summary.json"
+        ]
+      }
+    },
+    {
+      "id": "VAL-CONTRACT-006",
+      "status": "pass",
+      "reason": "Raw and Resolved toggle controls were visible and successfully switched views.",
+      "evidence": {
+        "files": [
+          "agent-contract/ui-contract-r2/VAL-CONTRACT-r2-after-interactions.png",
+          "agent-contract/ui-contract-r2/ui-validation-summary.json"
+        ]
+      }
+    },
+    {
+      "id": "VAL-CONTRACT-007",
+      "status": "pass",
+      "reason": "Resolved contract view displayed inheritance/source annotations (Global/Agent Profile/Subagent Override labels).",
+      "evidence": {
+        "files": [
+          "agent-contract/ui-contract-r2/agent-contract-page-text.txt",
+          "agent-contract/ui-contract-r2/ui-validation-summary.json"
+        ]
+      }
+    },
+    {
+      "id": "VAL-CONTRACT-008",
+      "status": "pass",
+      "reason": "Diff view was visible and rollback snapshot/restore controls executed successfully with confirmation, while rollback endpoints returned HTTP 200.",
+      "evidence": {
+        "network": [
+          "GET /api/admin/agents/autonomous_inquirer_1/diff?base=global -> 200",
+          "POST /api/admin/agents/autonomous_inquirer_1/rollback-snapshot -> 200",
+          "POST /api/admin/agents/autonomous_inquirer_1/rollback-restore -> 200"
+        ],
+        "files": [
+          "agent-contract/ui-contract-r2/diff-view-text.txt",
+          "agent-contract/ui-contract-r2/ui-network-contract-endpoints.json",
+          "agent-contract/ui-contract-r2/ui-validation-summary.json",
+          "agent-contract/ui-contract-r2/VAL-CONTRACT-r2-after-interactions.png"
+        ]
+      }
+    }
+  ],
+  "frictions": [],
+  "blockers": []
+}
