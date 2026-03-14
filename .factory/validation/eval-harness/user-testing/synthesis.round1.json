@@ -1,0 +1,45 @@
+{
+  "milestone": "eval-harness",
+  "round": 1,
+  "status": "fail",
+  "assertionsSummary": {
+    "total": 18,
+    "passed": 17,
+    "failed": 1,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-CROSS-001",
+    "VAL-CROSS-002",
+    "VAL-CROSS-003",
+    "VAL-CROSS-005",
+    "VAL-CROSS-006",
+    "VAL-CROSS-007",
+    "VAL-CROSS-008",
+    "VAL-CROSS-010",
+    "VAL-CROSS-011",
+    "VAL-EVAL-001",
+    "VAL-EVAL-002",
+    "VAL-EVAL-003",
+    "VAL-EVAL-004",
+    "VAL-EVAL-005",
+    "VAL-EVAL-006",
+    "VAL-EVAL-007",
+    "VAL-EVAL-008"
+  ],
+  "failedAssertions": [
+    {
+      "id": "VAL-CROSS-004",
+      "reason": "Ledger schema is inconsistent for record_type=delegation_trigger; not every delegation_trigger entry includes the full required rationale/role/task/parent context fields."
+    }
+  ],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added Browser Runtime note for CDP fallback workflow when agent-browser has unresolved shared-library startup issues.",
+      "source": "flow-report"
+    }
+  ],
+  "previousRound": null
+}
