@@ -110,10 +110,43 @@ load_state() {
   CHROMIUM_PID=""
   CHROMIUM_BIN=""
 
-  if [[ -f "$STATE_FILE" ]]; then
-    # shellcheck disable=SC1090
-    source "$STATE_FILE"
+  if [[ ! -r "$STATE_FILE" ]]; then
+    return 0
   fi
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+
+    if [[ -z "$line" || "$line" == \#* || "$line" != *=* ]]; then
+      continue
+    fi
+
+    local key="${line%%=*}"
+    local value="${line#*=}"
+
+    case "$key" in
+      MODE)
+        case "$value" in
+          ""|direct|cdp)
+            MODE="$value"
+            ;;
+        esac
+        ;;
+      CDP_PORT)
+        if [[ -z "$value" || "$value" =~ ^[0-9]+$ ]]; then
+          CDP_PORT="$value"
+        fi
+        ;;
+      CHROMIUM_PID)
+        if [[ -z "$value" || "$value" =~ ^[0-9]+$ ]]; then
+          CHROMIUM_PID="$value"
+        fi
+        ;;
+      CHROMIUM_BIN)
+        CHROMIUM_BIN="$value"
+        ;;
+    esac
+  done <"$STATE_FILE"
 }
 
 save_state() {
