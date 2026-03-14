@@ -418,11 +418,12 @@ function buildResumableInterruption(
   }
 ): ResumableInterruption | null {
   const summary = safeText(message)
-  const status = safeText(meta.status).toLowerCase()
+  const status = normalizeRunStatus(meta.status)
   const interruptedStatus = status === "failed"
+  const canceledStatus = status === "canceled"
   const interruptedSignal =
     hasInterruptionSignal(summary) || hasInterruptionSignal(meta.error) || hasInterruptionSignal(meta.streamError)
-  if (!(messageSupportsContinue(summary) || Boolean(meta.interrupted) || (interruptedStatus && interruptedSignal))) {
+  if (!(messageSupportsContinue(summary) || Boolean(meta.interrupted) || canceledStatus || (interruptedStatus && interruptedSignal))) {
     return null
   }
 
@@ -815,12 +816,17 @@ export function ChatPage() {
   }, [])
 
   const shouldOfferContinueAction = useMemo(() => {
+    const status = normalizeRunStatus(state.currentRunStatus)
+    if (status === "canceled") {
+      return true
+    }
+
     const latestAssistant = state.transcript
       .slice()
       .reverse()
       .find((item) => item.role === "assistant")
     const hasInterruptionFallbackSignal =
-      normalizeRunStatus(state.currentRunStatus) === "failed" &&
+      status === "failed" &&
       (hasInterruptionSignal(state.lastErrorSummary) ||
         hasInterruptionSignal(state.streamError) ||
         hasInterruptionSignal(state.currentRunLastOutput) ||
@@ -829,7 +835,6 @@ export function ChatPage() {
     if (!state.resumableInterruption && !hasInterruptionFallbackSignal) {
       return false
     }
-    const status = normalizeRunStatus(state.currentRunStatus)
     if (!status || status === "idle" || status === "paused") {
       return true
     }
@@ -1931,28 +1936,41 @@ export function ChatPage() {
           ? `Run ${runID} completed before cancellation finished.`
           : `Stopping run ${runID}...`
 
+      const updatedAt = new Date().toISOString()
       setState((prev) => ({
         ...prev,
         currentRunStatus: nextStatus,
-        currentRunLastUpdatedAt: new Date().toISOString(),
+        currentRunLastUpdatedAt: updatedAt,
         polling: !isTerminalStatus(nextStatus),
         runPollingEnabled: true,
         sessionPollIntervalMS: SESSION_POLL_MS,
         currentStreamingText: isTerminalStatus(nextStatus) ? "" : prev.currentStreamingText,
         debugCopyStatus: statusMessage,
         sendError: "",
+        resumableInterruption:
+          nextStatus === "canceled" || nextStatus === "failed"
+            ? buildResumableInterruption(statusMessage, {
+                runID,
+                sessionID: prev.currentSessionID,
+                updatedAt,
+                source: "cancel.request",
+                status: nextStatus,
+                error: statusMessage,
+                streamError: prev.streamError,
+                interrupted: true,
+              }) || prev.resumableInterruption
+            : nextStatus === "completed" && safeText(prev.resumableInterruption?.runID) === runID
+            ? null
+            : prev.resumableInterruption,
       }))
       toast({ description: statusMessage })
-      if (isTerminalStatus(nextStatus)) {
-        clearResumableInterruption(runID)
-      }
     } catch (error) {
       setState((prev) => ({
         ...prev,
         sendError: (error as Error)?.message || String(error),
       }))
     }
-  }, [clearResumableInterruption, toast])
+  }, [toast])
 
   const cancelObservedSubagentRun = useCallback(async (runID: string) => {
     const targetRunID = safeText(runID)

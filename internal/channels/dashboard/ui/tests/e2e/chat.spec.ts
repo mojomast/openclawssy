@@ -412,6 +412,12 @@ test("stop current run shows cancel progress and reaches canceled terminal state
   await expect(page.getByText("Stopping run run_chat_1...")).toBeVisible()
   await expect.poll(() => state.cancelCalls.length).toBe(1)
   await expect(page.getByText("Status: canceled")).toBeVisible({ timeout: 8000 })
+
+  const resumeButton = page.getByRole("button", { name: "Resume interrupted run" }).first()
+  await expect(resumeButton).toBeEnabled()
+  await resumeButton.click()
+  await expect.poll(() => state.chatPosts.length).toBe(2)
+  expect(state.chatPosts.at(-1)?.message).toBe(RESUME_INTERRUPTED_RUN_MESSAGE)
 })
 
 test("resume interrupted run enables from interrupted failure state even without continue phrase", async ({ page }) => {

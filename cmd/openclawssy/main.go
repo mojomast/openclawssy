@@ -361,6 +361,7 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 		return 1
 	}
 	eventBus := httpchannel.NewRunEventBus(0)
+	runTracker := httpchannel.NewActiveRunTracker()
 
 	exec := runtimeExecutor{engine: engine}
 	runtimeCfg, err := config.LoadOrDefault(filepath.Join(".openclawssy", "config.json"))
@@ -447,7 +448,7 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 	schedulerExec.Start()
 	defer schedulerExec.Stop()
 
-	sharedChat, err := buildSharedChatConnector(runtimeCfg, runStore, exec, eventBus)
+	sharedChat, err := buildSharedChatConnector(runtimeCfg, runStore, exec, eventBus, runTracker)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -509,7 +510,7 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 		BearerToken: serveCfg.Token,
 		Store:       runStore,
 		Executor:    exec,
-		RunTracker:  httpchannel.NewActiveRunTracker(),
+		RunTracker:  runTracker,
 		Chat:        buildDashboardChatConnector(runtimeCfg, sharedChat),
 		EventBus:    eventBus,
 		RegisterMux: func(mux *http.ServeMux) {
@@ -869,7 +870,7 @@ func (e runtimeExecutor) Execute(ctx context.Context, input httpchannel.Executio
 	return httpchannel.ExecutionResult{Output: res.FinalText, ArtifactPath: res.ArtifactPath, DurationMS: res.DurationMS, ToolCalls: res.ToolCalls, Provider: res.Provider, Model: res.Model, Trace: res.Trace}, nil
 }
 
-func buildSharedChatConnector(cfg config.Config, store httpchannel.RunStore, exec httpchannel.RunExecutor, eventBus *httpchannel.RunEventBus) (*chat.Connector, error) {
+func buildSharedChatConnector(cfg config.Config, store httpchannel.RunStore, exec httpchannel.RunExecutor, eventBus *httpchannel.RunEventBus, runTracker *httpchannel.ActiveRunTracker) (*chat.Connector, error) {
 	if !cfg.Chat.Enabled && !cfg.Discord.Enabled && !cfg.Telegram.Enabled {
 		return nil, nil
 	}
@@ -902,7 +903,7 @@ func buildSharedChatConnector(cfg config.Config, store httpchannel.RunStore, exe
 				source,
 				sessionID,
 				thinkingMode,
-				httpchannel.QueueRunOptions{EventBus: eventBus},
+				httpchannel.QueueRunOptions{EventBus: eventBus, Tracker: runTracker},
 			)
 			if err != nil {
 				return chat.QueuedRun{}, err

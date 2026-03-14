@@ -19,6 +19,21 @@ import (
 	"openclawssy/internal/scheduler"
 )
 
+type cancelBlockingRunExecutor struct {
+	started chan struct{}
+}
+
+func (e cancelBlockingRunExecutor) Execute(ctx context.Context, _ httpchannel.ExecutionInput) (httpchannel.ExecutionResult, error) {
+	if e.started != nil {
+		select {
+		case e.started <- struct{}{}:
+		default:
+		}
+	}
+	<-ctx.Done()
+	return httpchannel.ExecutionResult{}, ctx.Err()
+}
+
 func TestChatAdaptersRouteBySource(t *testing.T) {
 	store, err := chatstore.NewStore(filepath.Join(t.TempDir(), ".openclawssy", "agents"))
 	if err != nil {
@@ -231,6 +246,74 @@ func TestResolveScheduledJobSessionCreatesSessionWhenMissing(t *testing.T) {
 	}
 	if session.Channel != "dashboard" || session.UserID != "dashboard_user" || session.RoomID != "dashboard" {
 		t.Fatalf("unexpected created session metadata: %+v", session)
+	}
+}
+
+func TestBuildSharedChatConnectorTracksQueuedChatRunsForCancellation(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmp := t.TempDir()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir temp: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(wd)
+	}()
+
+	cfg := config.Default()
+	cfg.Chat.Enabled = true
+
+	store := httpchannel.NewInMemoryRunStore()
+	eventBus := httpchannel.NewRunEventBus(0)
+	runTracker := httpchannel.NewActiveRunTracker()
+	exec := cancelBlockingRunExecutor{started: make(chan struct{}, 1)}
+
+	connector, err := buildSharedChatConnector(cfg, store, exec, eventBus, runTracker)
+	if err != nil {
+		t.Fatalf("build shared chat connector: %v", err)
+	}
+	if connector == nil {
+		t.Fatal("expected non-nil connector")
+	}
+
+	result, err := connector.HandleMessage(context.Background(), chat.Message{
+		UserID:  "dashboard_user",
+		RoomID:  "dashboard",
+		Source:  "dashboard",
+		AgentID: "default",
+		Text:    "cancel me",
+	})
+	if err != nil {
+		t.Fatalf("queue chat message: %v", err)
+	}
+	if strings.TrimSpace(result.ID) == "" {
+		t.Fatalf("expected queued run id, got %+v", result)
+	}
+
+	select {
+	case <-exec.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for queued chat run to start")
+	}
+
+	if err := runTracker.Cancel(result.ID); err != nil {
+		t.Fatalf("cancel tracked run %q: %v", result.ID, err)
+	}
+
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer waitCancel()
+	if err := httpchannel.WaitForQueuedRuns(waitCtx); err != nil {
+		t.Fatalf("wait for queued runs: %v", err)
+	}
+
+	run, err := store.Get(context.Background(), result.ID)
+	if err != nil {
+		t.Fatalf("load canceled run: %v", err)
+	}
+	if run.Status != "canceled" {
+		t.Fatalf("expected canceled run status, got %+v", run)
 	}
 }
 
