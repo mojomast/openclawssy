@@ -458,24 +458,145 @@ test("Runs detail view opens Why this happened drawer with chronological decisio
   await expect(page.getByTestId("decision-drawer")).toContainText("Assigned implementer due to write-heavy task.")
 })
 
-test("Run comparison shows two runs side-by-side with divergence callout", async ({ page }) => {
+test("Run comparison loads non-empty records for deterministic run IDs outside the first run window", async ({ page }) => {
   const state = createMockState()
+  const runs: MockRun[] = []
+
+  for (let index = 0; index < 130; index += 1) {
+    const runID = `run_window_${String(index).padStart(3, "0")}`
+    const hasPlan = index < 25
+    const run: MockRun = {
+      id: runID,
+      agent_id: "default",
+      source: "chat",
+      status: "completed",
+      updated_at: `2026-03-14T10:${String(index % 60).padStart(2, "0")}:00Z`,
+    }
+
+    if (hasPlan) {
+      run.decomposition_plan = {
+        delegation_mode: "suggest_only",
+        trigger_reason: "windowed test seed",
+        min_confidence: 0.7,
+        avg_confidence: 0.8,
+        all_roles_built_in: true,
+        generated_at: "2026-03-14T10:00:00Z",
+        tasks: [
+          {
+            task_id: "seed",
+            description: "Seed plan run",
+            assigned_role: "planner",
+            confidence: 0.8,
+            depends_on: [],
+          },
+        ],
+        dependency_dag: [],
+      }
+    }
+
+    runs.push(run)
+    state.runDetails[runID] = {
+      ...run,
+      trace: run.decomposition_plan ? { decomposition_plan: run.decomposition_plan } : {},
+    }
+  }
+
+  const knownRunA = "run_1773515700895177438"
+  const knownRunB = "run_1773515700895177440"
+  runs[110] = {
+    id: knownRunA,
+    agent_id: "default",
+    source: "chat",
+    status: "completed",
+    updated_at: "2026-03-14T11:30:00Z",
+  }
+  runs[111] = {
+    id: knownRunB,
+    agent_id: "default",
+    source: "chat",
+    status: "completed",
+    updated_at: "2026-03-14T11:31:00Z",
+  }
+
+  state.runDetails[knownRunA] = {
+    id: knownRunA,
+    agent_id: "default",
+    source: "chat",
+    status: "completed",
+    updated_at: "2026-03-14T11:30:00Z",
+  }
+  state.runDetails[knownRunB] = {
+    id: knownRunB,
+    agent_id: "default",
+    source: "chat",
+    status: "completed",
+    updated_at: "2026-03-14T11:31:00Z",
+  }
+
+  state.runs = runs
+  state.decisionsByRunID[knownRunA] = {
+    run_id: knownRunA,
+    agent_id: "default",
+    records: [
+      {
+        timestamp: "2026-03-14T11:30:00Z",
+        run_id: knownRunA,
+        agent_id: "default",
+        record_type: "goal_interpretation",
+        human_summary: "Loaded deterministic comparison run A.",
+      },
+      {
+        timestamp: "2026-03-14T11:30:03Z",
+        run_id: knownRunA,
+        agent_id: "default",
+        record_type: "strategy_selection",
+        human_summary: "Run A selected scout-first strategy.",
+      },
+    ],
+  }
+  state.decisionsByRunID[knownRunB] = {
+    run_id: knownRunB,
+    agent_id: "default",
+    records: [
+      {
+        timestamp: "2026-03-14T11:31:00Z",
+        run_id: knownRunB,
+        agent_id: "default",
+        record_type: "goal_interpretation",
+        human_summary: "Loaded deterministic comparison run B.",
+      },
+      {
+        timestamp: "2026-03-14T11:31:04Z",
+        run_id: knownRunB,
+        agent_id: "default",
+        record_type: "strategy_selection",
+        human_summary: "Run B selected implementer-first strategy.",
+      },
+    ],
+  }
+
   await installDelegationMocks(page, state)
 
   await page.goto("/dashboard#/delegation")
 
-  await page.getByTestId("run-compare-left-select").selectOption("run_plan_alpha")
-  await page.getByTestId("run-compare-right-select").selectOption("run_plan_beta")
+  await expect(page.locator(`#run-compare-left-select option[value="${knownRunA}"]`)).toHaveCount(1)
+  await expect(page.locator(`#run-compare-right-select option[value="${knownRunB}"]`)).toHaveCount(1)
+
+  await page.getByTestId("run-compare-left-select").selectOption(knownRunA)
+  await page.getByTestId("run-compare-right-select").selectOption(knownRunB)
   await page.getByTestId("run-compare-load").click()
 
   const leftPanel = page.getByTestId("run-compare-left-panel")
   const rightPanel = page.getByTestId("run-compare-right-panel")
 
-  await expect(leftPanel).toContainText("run_plan_alpha")
-  await expect(leftPanel).toContainText("Selected typed-role decomposition strategy.")
+  await expect(leftPanel).toContainText(knownRunA)
+  await expect(leftPanel).toContainText("Run A selected scout-first strategy.")
 
-  await expect(rightPanel).toContainText("run_plan_beta")
-  await expect(rightPanel).toContainText("Picked approve-plan workflow for human gate.")
+  await expect(rightPanel).toContainText(knownRunB)
+  await expect(rightPanel).toContainText("Run B selected implementer-first strategy.")
+
+  await expect(leftPanel).not.toContainText("No records loaded for run A.")
+  await expect(rightPanel).not.toContainText("No records loaded for run B.")
 
   await expect(page.getByTestId("run-compare-divergence")).toContainText("Divergence")
 })

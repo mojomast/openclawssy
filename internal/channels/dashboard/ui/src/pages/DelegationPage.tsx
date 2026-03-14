@@ -24,6 +24,8 @@ type RunsPage = {
 const modernDelegationModes = ["suggest_only", "approve_plan", "auto_trusted", "full_autonomous"] as const
 const legacyDelegationModes = ["prompt_only", "tool_gated", "auto_execute"] as const
 const supportedDelegationModes = [...modernDelegationModes, ...legacyDelegationModes]
+const runsPageSize = 100
+const maxRunsPagesToScan = 20
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -260,7 +262,6 @@ export function DelegationPage() {
   }, [])
 
   const loadRuns = useCallback(async (): Promise<{ allRuns: RunSummary[]; planRuns: RunSummary[] }> => {
-    const pageSize = 100
     let nextOffset = 0
     let total = Number.POSITIVE_INFINITY
     let pagesFetched = 0
@@ -269,9 +270,9 @@ export function DelegationPage() {
     const runsWithPlan: RunSummary[] = []
     const seen = new Set<string>()
 
-    while (nextOffset < total && pagesFetched < 10) {
+    while (nextOffset < total && pagesFetched < maxRunsPagesToScan) {
       const runsPayload = await api.get<Record<string, unknown>>(
-        `/v1/runs?limit=${encodeURIComponent(String(pageSize))}&offset=${encodeURIComponent(String(nextOffset))}`
+        `/v1/runs?limit=${encodeURIComponent(String(runsPageSize))}&offset=${encodeURIComponent(String(nextOffset))}`
       )
       const page = parseRunsPage(runsPayload)
       total = page.total
@@ -288,19 +289,29 @@ export function DelegationPage() {
         }
       }
 
-      if (page.runs.length === 0 || runsWithPlan.length >= 20) {
+      if (page.runs.length === 0) {
         break
       }
       nextOffset += page.limit
     }
 
-    const nextAllRuns = allRuns.slice(0, pageSize)
+    const nextAllRuns = allRuns
     const nextPlanRuns = runsWithPlan
     setRuns(nextAllRuns)
     setPlanRuns(nextPlanRuns)
 
+    const hitScanLimit = pagesFetched >= maxRunsPagesToScan && nextOffset < total
+
     if (nextPlanRuns.length > 0) {
-      setRunListNotice("")
+      setRunListNotice(
+        hitScanLimit
+          ? `Loaded ${nextAllRuns.length} runs from the latest ${maxRunsPagesToScan} pages. Older runs may require direct deep-links.`
+          : ""
+      )
+    } else if (hitScanLimit && nextAllRuns.length > 0) {
+      setRunListNotice(
+        `Loaded ${nextAllRuns.length} runs from the latest ${maxRunsPagesToScan} pages. No decomposition plans were found in that range.`
+      )
     } else if (nextAllRuns.length > 0) {
       setRunListNotice("No runs in the scanned window exposed decomposition plans. Select a run and reload to re-check detail data.")
     } else {
