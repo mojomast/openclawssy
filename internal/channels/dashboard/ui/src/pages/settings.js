@@ -2850,3 +2850,14 @@ export const settingsPage = {
     renderSettingsPage();
   },
 };
+
+export function settingsPageHasUnsavedChanges() {
+  if (!settingsState.baselineConfig || !settingsState.draftConfig) {
+    return false;
+  }
+  return computeDiffRows(settingsState.baselineConfig, settingsState.draftConfig).length > 0;
+}
+
+export function disposeSettingsPage() {
+  settingsState.container = null;
+}
