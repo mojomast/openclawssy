@@ -1104,9 +1104,12 @@ func collectConfigFieldErrors(cfg config.Config, err error) map[string]string {
 	if mode := strings.TrimSpace(cfg.Agents.SubAgentDefaults.ThinkingMode); mode != "" && !config.IsValidThinkingMode(mode) {
 		set("agents.subagent_defaults.thinking_mode", "Thinking mode must be one of never, on_error, always.")
 	}
-	validDelegation := map[string]bool{"": true, "prompt_only": true, "tool_gated": true, "auto_execute": true}
+	validDelegation := map[string]bool{"": true, "prompt_only": true, "tool_gated": true, "auto_execute": true, "suggest_only": true, "approve_plan": true, "auto_trusted": true, "full_autonomous": true}
+	if !validDelegation[strings.TrimSpace(cfg.Agents.DelegationMode)] {
+		set("agents.delegation_mode", "Delegation mode must be one of prompt_only, tool_gated, auto_execute, suggest_only, approve_plan, auto_trusted, full_autonomous.")
+	}
 	if !validDelegation[strings.TrimSpace(cfg.Agents.SubAgentDefaults.DelegationMode)] {
-		set("agents.subagent_defaults.delegation_mode", "Delegation mode must be one of prompt_only, tool_gated, auto_execute.")
+		set("agents.subagent_defaults.delegation_mode", "Delegation mode must be one of prompt_only, tool_gated, auto_execute, suggest_only, approve_plan, auto_trusted, full_autonomous.")
 	}
 	if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "generic provider base url") && strings.TrimSpace(cfg.Providers.Generic.BaseURL) == "" {
 		set("providers.generic.base_url", "Generic provider base URL is required when model.provider is generic.")

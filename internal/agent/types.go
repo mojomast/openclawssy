@@ -16,32 +16,36 @@ type ArtifactDoc struct {
 
 // RunInput is the input contract for a single runner invocation.
 type RunInput struct {
-	AgentID           string                     `json:"agent_id"`
-	RunID             string                     `json:"run_id"`
-	Message           string                     `json:"message"`
-	Messages          []ChatMessage              `json:"messages,omitempty"`
-	ArtifactDocs      []ArtifactDoc              `json:"artifact_docs"`
-	PerFileByteLimit  int                        `json:"per_file_byte_limit"`
-	MaxToolIterations int                        `json:"max_tool_iterations"`
-	ToolTimeoutMS     int                        `json:"tool_timeout_ms,omitempty"`
-	AllowedTools      []string                   `json:"allowed_tools,omitempty"`
-	ToolSchemas       []ToolSchema               `json:"tool_schemas,omitempty"`
-	AutoDelegate      bool                       `json:"auto_delegate,omitempty"`
-	OnToolCall        func(ToolCallRecord) error `json:"-"`
-	SystemPromptExt   SystemPromptExtender       `json:"-"`
-	OnTextDelta       func(delta string) error   `json:"-"`
+	AgentID            string                     `json:"agent_id"`
+	RunID              string                     `json:"run_id"`
+	Message            string                     `json:"message"`
+	Messages           []ChatMessage              `json:"messages,omitempty"`
+	ArtifactDocs       []ArtifactDoc              `json:"artifact_docs"`
+	PerFileByteLimit   int                        `json:"per_file_byte_limit"`
+	MaxToolIterations  int                        `json:"max_tool_iterations"`
+	ToolTimeoutMS      int                        `json:"tool_timeout_ms,omitempty"`
+	AllowedTools       []string                   `json:"allowed_tools,omitempty"`
+	ToolSchemas        []ToolSchema               `json:"tool_schemas,omitempty"`
+	AutoDelegate       bool                       `json:"auto_delegate,omitempty"`
+	DelegationMode     string                     `json:"delegation_mode,omitempty"`
+	DelegationApproved bool                       `json:"delegation_approved,omitempty"`
+	OnToolCall         func(ToolCallRecord) error `json:"-"`
+	SystemPromptExt    SystemPromptExtender       `json:"-"`
+	OnTextDelta        func(delta string) error   `json:"-"`
 }
 
 // RunOutput is the finalized output contract for a run.
 type RunOutput struct {
-	Prompt           string           `json:"prompt"`
-	FinalText        string           `json:"final_text"`
-	Thinking         string           `json:"thinking,omitempty"`
-	ThinkingPresent  bool             `json:"thinking_present,omitempty"`
-	ToolParseFailure bool             `json:"tool_parse_failure,omitempty"`
-	ToolCalls        []ToolCallRecord `json:"tool_calls"`
-	StartedAt        time.Time        `json:"started_at"`
-	CompletedAt      time.Time        `json:"completed_at"`
+	Prompt            string             `json:"prompt"`
+	FinalText         string             `json:"final_text"`
+	Thinking          string             `json:"thinking,omitempty"`
+	ThinkingPresent   bool               `json:"thinking_present,omitempty"`
+	ToolParseFailure  bool               `json:"tool_parse_failure,omitempty"`
+	ToolCalls         []ToolCallRecord   `json:"tool_calls"`
+	DecompositionPlan *DecompositionPlan `json:"decomposition_plan,omitempty"`
+	DelegationEvents  []DelegationEvent  `json:"delegation_events,omitempty"`
+	StartedAt         time.Time          `json:"started_at"`
+	CompletedAt       time.Time          `json:"completed_at"`
 }
 
 // ModelRequest is sent to the model on each loop iteration.

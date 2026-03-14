@@ -720,6 +720,9 @@ func (c Config) Validate() error {
 	if _, err := roles.NewRoleStore(c.Agents.CustomRoleTemplates); err != nil {
 		return fmt.Errorf("agents.custom_role_templates: %w", err)
 	}
+	if !isValidDelegationMode(c.Agents.DelegationMode) {
+		return fmt.Errorf("agents.delegation_mode must be one of %s, got %q", delegationModeList(), c.Agents.DelegationMode)
+	}
 
 	// Validate subagent restriction defaults
 	if err := validateSubAgentRestrictions("subagent_defaults", c.Agents.SubAgentDefaults); err != nil {
@@ -926,11 +929,23 @@ func validateSubAgentRestrictions(prefix string, r SubAgentRestrictions) error {
 			return fmt.Errorf("agents.%s.thinking_mode must be one of never|on_error|always, got %q", prefix, mode)
 		}
 	}
-	validDelegationModes := map[string]bool{"": true, "prompt_only": true, "tool_gated": true, "auto_execute": true}
-	if !validDelegationModes[strings.TrimSpace(r.DelegationMode)] {
-		return fmt.Errorf("agents.%s.delegation_mode must be one of prompt_only|tool_gated|auto_execute, got %q", prefix, r.DelegationMode)
+	if !isValidDelegationMode(r.DelegationMode) {
+		return fmt.Errorf("agents.%s.delegation_mode must be one of %s, got %q", prefix, delegationModeList(), r.DelegationMode)
 	}
 	return nil
+}
+
+func isValidDelegationMode(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "prompt_only", "tool_gated", "auto_execute", "suggest_only", "approve_plan", "auto_trusted", "full_autonomous":
+		return true
+	default:
+		return false
+	}
+}
+
+func delegationModeList() string {
+	return "prompt_only|tool_gated|auto_execute|suggest_only|approve_plan|auto_trusted|full_autonomous"
 }
 
 func (c Config) Redacted() Config {

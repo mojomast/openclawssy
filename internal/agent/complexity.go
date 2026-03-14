@@ -40,6 +40,10 @@ const (
 	DelegationModePromptOnly  DelegationMode = "prompt_only"
 	DelegationModeToolGated   DelegationMode = "tool_gated"
 	DelegationModeAutoExecute DelegationMode = "auto_execute"
+	DelegationModeSuggestOnly DelegationMode = "suggest_only"
+	DelegationModeApprovePlan DelegationMode = "approve_plan"
+	DelegationModeAutoTrusted DelegationMode = "auto_trusted"
+	DelegationModeFullAuto    DelegationMode = "full_autonomous"
 )
 
 type DelegationTrigger struct {

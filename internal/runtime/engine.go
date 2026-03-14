@@ -71,17 +71,18 @@ func (e *Engine) RunTracker() *RunTracker {
 }
 
 type ExecuteInput struct {
-	RunID             string
-	AgentID           string
-	Message           string
-	TaskID            string
-	Source            string
-	SessionID         string
-	ThinkingMode      string
-	AllowedTools      []string // If non-empty, overrides the default allowed tools for this run.
-	MaxToolIterations int      // If >0, overrides the default tool iteration cap.
-	TimeoutMS         int      // If >0, applies as a context deadline for this run.
-	OnProgress        func(eventType string, data map[string]any)
+	RunID              string
+	AgentID            string
+	Message            string
+	TaskID             string
+	Source             string
+	SessionID          string
+	ThinkingMode       string
+	AllowedTools       []string // If non-empty, overrides the default allowed tools for this run.
+	MaxToolIterations  int      // If >0, overrides the default tool iteration cap.
+	TimeoutMS          int      // If >0, applies as a context deadline for this run.
+	DelegationApproved bool     // Used by approve_plan delegation mode to execute a prepared plan.
+	OnProgress         func(eventType string, data map[string]any)
 	// SandboxAgentID, when non-empty, makes the run share the sandbox
 	// container/volume of the specified agent instead of creating its own.
 	// This is used so sub-agents can see (and write to) the parent agent's
@@ -462,19 +463,22 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 
 	start := time.Now().UTC()
 	out, runErr := runner.Run(runCtx, agent.RunInput{
-		AgentID:           agentID,
-		RunID:             runID,
-		Message:           runMessage,
-		Messages:          modelMessages,
-		ArtifactDocs:      docs,
-		PerFileByteLimit:  16 * 1024,
-		MaxToolIterations: maxToolIterations,
-		ToolTimeoutMS:     int(agent.DefaultToolTimeout / time.Millisecond),
-		AllowedTools:      allowedTools,
-		ToolSchemas:       toolSchemas,
-		OnToolCall:        onToolCall,
-		SystemPromptExt:   e.memoryPromptExtender(cfg, agentID, runID),
-		OnTextDelta:       onTextDelta,
+		AgentID:            agentID,
+		RunID:              runID,
+		Message:            runMessage,
+		Messages:           modelMessages,
+		ArtifactDocs:       docs,
+		PerFileByteLimit:   16 * 1024,
+		MaxToolIterations:  maxToolIterations,
+		ToolTimeoutMS:      int(agent.DefaultToolTimeout / time.Millisecond),
+		AllowedTools:       allowedTools,
+		ToolSchemas:        toolSchemas,
+		AutoDelegate:       cfg.Agents.AutoDelegate,
+		DelegationMode:     strings.TrimSpace(cfg.Agents.DelegationMode),
+		DelegationApproved: in.DelegationApproved,
+		OnToolCall:         onToolCall,
+		SystemPromptExt:    e.memoryPromptExtender(cfg, agentID, runID),
+		OnTextDelta:        onTextDelta,
 	})
 	if runErr == nil {
 		emitProgress("model_text", map[string]any{"text": out.FinalText, "partial": false})
@@ -500,21 +504,28 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 			if includeThinking {
 				finalOutput = formatFinalOutputWithThinking(finalOutput, persistedThinking)
 			}
+			meta := map[string]any{
+				"started_at":       out.StartedAt,
+				"completed_at":     out.CompletedAt,
+				"duration_ms":      durationMS,
+				"tool_call_count":  toolCount,
+				"provider":         model.ProviderName(),
+				"model":            model.ModelName(),
+				"thinking":         persistedThinking,
+				"thinking_present": thinkingPresent,
+			}
+			if out.DecompositionPlan != nil {
+				meta["decomposition_plan"] = out.DecompositionPlan
+			}
+			if len(out.DelegationEvents) > 0 {
+				meta["delegation_events"] = out.DelegationEvents
+			}
 			artifactPath, err = artifacts.WriteRunBundleV1(e.rootDir, agentID, runID, artifacts.BundleV1Input{
-				Input:     map[string]any{"agent_id": agentID, "message": message},
-				PromptMD:  out.Prompt,
-				ToolCalls: toolLines,
-				OutputMD:  finalOutput,
-				Meta: map[string]any{
-					"started_at":       out.StartedAt,
-					"completed_at":     out.CompletedAt,
-					"duration_ms":      durationMS,
-					"tool_call_count":  toolCount,
-					"provider":         model.ProviderName(),
-					"model":            model.ModelName(),
-					"thinking":         persistedThinking,
-					"thinking_present": thinkingPresent,
-				},
+				Input:      map[string]any{"agent_id": agentID, "message": message},
+				PromptMD:   out.Prompt,
+				ToolCalls:  toolLines,
+				OutputMD:   finalOutput,
+				Meta:       meta,
 				MirrorJSON: true,
 			})
 			out.FinalText = finalOutput
@@ -552,6 +563,12 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 
 	traceCollector.RecordThinking(persistedThinking, thinkingPresent)
 	traceCollector.RecordToolExecution(out.ToolCalls)
+	if out.DecompositionPlan != nil {
+		traceCollector.RecordDecompositionPlan(*out.DecompositionPlan)
+	}
+	if len(out.DelegationEvents) > 0 {
+		traceCollector.RecordDelegationEvents(out.DelegationEvents)
+	}
 	traceSnapshot := traceCollector.Snapshot()
 	parseDiagnostics := buildRunParseDiagnostics(traceSnapshot, thinkingMode == config.ThinkingModeAlways || out.ToolParseFailure)
 	checkpointPath, checkpointErr := clawdefuckifierpkg.WriteRunCheckpoint(e.workspaceDir, clawdefuckifierpkg.RunCheckpointInput{

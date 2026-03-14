@@ -25,6 +25,8 @@ type runTraceEnvelope struct {
 	ModelUsage           []modelUsageTrace        `json:"model_usage,omitempty"`
 	ExtractedToolCalls   []toolExtractionTrace    `json:"extracted_tool_calls,omitempty"`
 	ToolExecutionResults []toolExecutionResultLog `json:"tool_execution_results,omitempty"`
+	DecompositionPlan    *agent.DecompositionPlan `json:"decomposition_plan,omitempty"`
+	DelegationEvents     []agent.DelegationEvent  `json:"delegation_events,omitempty"`
 }
 
 type modelInputTrace struct {
@@ -208,6 +210,27 @@ func (c *runTraceCollector) RecordThinking(thinking string, thinkingPresent bool
 	defer c.mu.Unlock()
 	c.env.Thinking = strings.TrimSpace(thinking)
 	c.env.ThinkingPresent = thinkingPresent
+}
+
+func (c *runTraceCollector) RecordDecompositionPlan(plan agent.DecompositionPlan) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cloned := plan
+	cloned.Tasks = append([]agent.DecompositionTaskNode(nil), plan.Tasks...)
+	cloned.DependencyDAG = append([]agent.PlanDependencyEdge(nil), plan.DependencyDAG...)
+	c.env.DecompositionPlan = &cloned
+}
+
+func (c *runTraceCollector) RecordDelegationEvents(events []agent.DelegationEvent) {
+	if c == nil || len(events) == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.env.DelegationEvents = append(c.env.DelegationEvents, events...)
 }
 
 func summarizeToolExecution(toolName, output, errText string) string {

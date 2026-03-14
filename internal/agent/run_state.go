@@ -91,6 +91,7 @@ type runState struct {
 	recentIntents       []string
 	toolRewriteCount    int  // tracks rewrites to prevent infinite loops
 	delegationLocked    bool // once true, stays true until subtasks complete
+	delegationReason    string
 }
 
 func newRunState(input RunInput, r Runner) *runState {
@@ -145,6 +146,7 @@ func newRunState(input RunInput, r Runner) *runState {
 		recentIntents:           make([]string, 0),
 		toolRewriteCount:        0,
 		delegationLocked:        false,
+		delegationReason:        "",
 	}
 }
 
@@ -432,6 +434,53 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 		// Only evaluate delegation trigger if not already locked in forced mode
 		if !s.delegationLocked {
 			if trigger := s.computeDelegationTrigger(promptTokens, contextWindow, snapshot); trigger != nil {
+				s.delegationReason = strings.TrimSpace(trigger.Reason)
+
+				configuredMode := normalizeDelegationMode(input.DelegationMode)
+				if isPlannerDelegationMode(configuredMode) {
+					plan, plannedTasks, planErr := GenerateDecompositionPlan(trigger.Reason, configuredMode, trigger.Subtasks, nil)
+					if planErr != nil {
+						s.out.Thinking = s.latestThinking
+						s.out.ThinkingPresent = s.thinkingPresent
+						s.out.ToolParseFailure = s.toolParseFailure
+						s.out.CompletedAt = time.Now().UTC()
+						return s.out, planErr
+					}
+
+					s.out.DecompositionPlan = &plan
+					s.pendingSubtasks = plannedTasks
+					s.delegationActive = true
+					s.appendPlannedDelegationEvents(plan)
+
+					autoExecute, decisionSummary := shouldAutoExecutePlan(configuredMode, plan, input.DelegationApproved)
+					if autoExecute && r.SubAgentRunner == nil {
+						autoExecute = false
+						decisionSummary = "delegation plan generated, but subagent runner is unavailable"
+					}
+
+					if !autoExecute {
+						s.out.FinalText = formatDecompositionPlanForOperator(plan, decisionSummary)
+						s.out.Thinking = s.latestThinking
+						s.out.ThinkingPresent = s.thinkingPresent
+						s.out.ToolParseFailure = s.toolParseFailure
+						s.out.CompletedAt = time.Now().UTC()
+						return s.out, nil
+					}
+
+					if err := r.executeDelegatedTasks(ctx, s, plannedTasks, input); err != nil {
+						s.out.Thinking = s.latestThinking
+						s.out.ThinkingPresent = s.thinkingPresent
+						s.out.ToolParseFailure = s.toolParseFailure
+						s.out.CompletedAt = time.Now().UTC()
+						return s.out, err
+					}
+					s.out.Thinking = s.latestThinking
+					s.out.ThinkingPresent = s.thinkingPresent
+					s.out.ToolParseFailure = s.toolParseFailure
+					s.out.CompletedAt = time.Now().UTC()
+					return s.out, nil
+				}
+
 				// Downgrade execution-dependent modes when no SubAgentRunner is
 				// available.  PromptOnly mode is always safe (just a system-prompt
 				// hint) so we keep it; ToolGated and AutoExecute require the runner
@@ -1320,4 +1369,31 @@ func (s *runState) setLastModelOutput(output string) {
 	if len(s.recentIntents) > 3 {
 		s.recentIntents = s.recentIntents[1:]
 	}
+}
+
+func (s *runState) appendPlannedDelegationEvents(plan DecompositionPlan) {
+	for _, task := range plan.Tasks {
+		s.appendDelegationEvent(DelegationEvent{
+			Timestamp:      time.Now().UTC(),
+			TaskID:         task.TaskID,
+			TriggerReason:  strings.TrimSpace(plan.TriggerReason),
+			SelectedRole:   strings.TrimSpace(task.AssignedRole),
+			Confidence:     task.Confidence,
+			TaskAssignment: strings.TrimSpace(task.Description),
+			Rationale:      strings.TrimSpace(task.Rationale),
+			Outcome:        "planned",
+		})
+	}
+}
+
+func (s *runState) appendDelegationEvent(event DelegationEvent) {
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
+	event.TriggerReason = strings.TrimSpace(event.TriggerReason)
+	event.SelectedRole = strings.TrimSpace(event.SelectedRole)
+	event.TaskAssignment = strings.TrimSpace(event.TaskAssignment)
+	event.Rationale = strings.TrimSpace(event.Rationale)
+	event.Outcome = strings.TrimSpace(event.Outcome)
+	s.out.DelegationEvents = append(s.out.DelegationEvents, event)
 }
