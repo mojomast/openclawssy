@@ -664,13 +664,13 @@ func isUnauthenticatedDashboardRoute(method, requestPath string) bool {
 	if method != http.MethodGet && method != http.MethodHead {
 		return false
 	}
-	if requestPath == "/dashboard" || requestPath == "/dashboard-legacy" {
-		return true
-	}
-	if cleaned := path.Clean(requestPath); cleaned == "/favicon.ico" {
-		return true
-	}
 	cleaned := path.Clean(requestPath)
+	if cleaned == "/dashboard" || cleaned == "/dashboard-legacy" {
+		return true
+	}
+	if cleaned == "/favicon.ico" {
+		return true
+	}
 	if strings.HasPrefix(cleaned, "/dashboard/static/") && strings.TrimPrefix(cleaned, "/dashboard/static/") != "" {
 		return true
 	}

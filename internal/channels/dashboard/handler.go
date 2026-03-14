@@ -138,6 +138,7 @@ func NewWithOptions(rootDir string, store httpchannel.RunStore, opts Options) *H
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/favicon.ico", h.serveDashboardFavicon)
 	mux.HandleFunc("/dashboard", h.serveDashboard)
+	mux.HandleFunc("/dashboard/", h.serveDashboard)
 	mux.HandleFunc("/dashboard-legacy", h.serveLegacyDashboard)
 	mux.HandleFunc("/dashboard/static/", h.serveDashboardStatic)
 	mux.HandleFunc("/api/admin/status", h.getStatus)
@@ -330,6 +331,10 @@ func (h *Handler) handleSchedulerControl(w http.ResponseWriter, r *http.Request)
 func (h *Handler) serveDashboard(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if r.URL.Path != "/dashboard" && r.URL.Path != "/dashboard/" {
+		http.NotFound(w, r)
 		return
 	}
 	// Serve React build from dist/ if available, fallback to legacy index.html

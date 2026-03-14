@@ -44,6 +44,27 @@ func TestDashboardRouteServesStaticShell(t *testing.T) {
 	}
 }
 
+func TestDashboardRouteWithTrailingSlashServesStaticShell(t *testing.T) {
+	h := New(t.TempDir(), httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Open Legacy Dashboard") {
+		t.Fatalf("expected shell footer link in body, got %q", body)
+	}
+	if strings.Contains(body, dashboardHTML) {
+		t.Fatal("expected /dashboard/ to serve new shell, not legacy HTML")
+	}
+}
+
 func TestDashboardLegacyRouteServesExistingHTMLExactly(t *testing.T) {
 	h := New(t.TempDir(), httpchannel.NewInMemoryRunStore())
 	mux := http.NewServeMux()

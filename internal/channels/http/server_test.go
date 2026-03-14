@@ -602,6 +602,7 @@ func TestServer_AuthAllowsOnlyDashboardGetHeadPathsWithoutToken(t *testing.T) {
 		RegisterMux: func(mux *http.ServeMux) {
 			mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 			mux.HandleFunc("/dashboard", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+			mux.HandleFunc("/dashboard/", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 			mux.HandleFunc("/dashboard-legacy", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 			mux.HandleFunc("/dashboard/static/app.js", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 		},
@@ -617,10 +618,13 @@ func TestServer_AuthAllowsOnlyDashboardGetHeadPathsWithoutToken(t *testing.T) {
 		{name: "favicon head allowed", method: http.MethodHead, path: "/favicon.ico", want: http.StatusNoContent},
 		{name: "dashboard get allowed", method: http.MethodGet, path: "/dashboard", want: http.StatusOK},
 		{name: "dashboard head allowed", method: http.MethodHead, path: "/dashboard", want: http.StatusOK},
+		{name: "dashboard slash get allowed", method: http.MethodGet, path: "/dashboard/", want: http.StatusOK},
+		{name: "dashboard slash head allowed", method: http.MethodHead, path: "/dashboard/", want: http.StatusOK},
 		{name: "dashboard legacy get allowed", method: http.MethodGet, path: "/dashboard-legacy", want: http.StatusOK},
 		{name: "dashboard static get allowed", method: http.MethodGet, path: "/dashboard/static/app.js", want: http.StatusOK},
 		{name: "dashboard static head allowed", method: http.MethodHead, path: "/dashboard/static/app.js", want: http.StatusOK},
 		{name: "dashboard post blocked", method: http.MethodPost, path: "/dashboard", want: http.StatusUnauthorized},
+		{name: "dashboard slash post blocked", method: http.MethodPost, path: "/dashboard/", want: http.StatusUnauthorized},
 		{name: "dashboard legacy post blocked", method: http.MethodPost, path: "/dashboard-legacy", want: http.StatusUnauthorized},
 		{name: "dashboard static post blocked", method: http.MethodPost, path: "/dashboard/static/app.js", want: http.StatusUnauthorized},
 		{name: "other path blocked", method: http.MethodGet, path: "/api/admin/status", want: http.StatusUnauthorized},
