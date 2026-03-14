@@ -1,0 +1,28 @@
+{
+  "featureId": "eval-harness-framework",
+  "reviewedAt": "2026-03-14T21:20:39Z",
+  "commitId": "cc60ce1",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The commit delivers the requested eval framework in internal/eval with suite/test-case types, suite runner, metrics computation, SQLite persistence (eval_results), baseline save/compare + regression detection, built-in suites (basic/tool_choice/delegation), JSON custom-suite loading from .openclawssy/eval, and focused tests across runner/metrics/store/baseline/suites. No blocking gaps were found against the feature description and expected behavior.",
+    "issues": [
+      {
+        "file": "internal/eval/runner.go",
+        "line": 83,
+        "severity": "non_blocking",
+        "description": "runCase directly executes Setup/Run/Cleanup callbacks without panic recovery, so a panic in any test callback can abort the entire suite execution instead of being captured as a failed case result."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The backend-worker skill prescribes explicit red-phase execution (run targeted tests and confirm failure before implementation), but this session's skeleton shows implementation patches before the first package test execution. This suggests the skill procedure and practical workflow are out of sync for new-package features.",
+      "evidence": "Skill: .factory/skills/backend-worker/SKILL.md section '2. Write Tests First (TDD)' requires running failing tests first. Transcript skeleton for workerSessionId fdfae1f5-f845-43f3-ac7b-4a06e1d48177 shows mkdir + multiple ApplyPatch calls before first 'go test ./internal/eval -count=1'."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed handoff, transcript skeleton, and commit cc60ce1 for eval-harness-framework. Implementation meets feature requirements with one non-blocking robustness issue (panic handling in runner callbacks) and one shared-state observation about TDD procedure drift in the backend-worker skill."
+}

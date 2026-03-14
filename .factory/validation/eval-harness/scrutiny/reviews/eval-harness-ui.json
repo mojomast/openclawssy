@@ -1,0 +1,33 @@
+{
+  "featureId": "eval-harness-ui",
+  "reviewedAt": "2026-03-14T21:19:21Z",
+  "commitId": "8f2bf6c",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The feature delivers the requested backend endpoint and Eval Results UI flow: suite history, expandable case details, metrics cards, and baseline regression highlighting are implemented and covered by new backend and e2e tests. No blocking defects were found against the stated expected behavior.",
+    "issues": [
+      {
+        "file": "internal/channels/dashboard/ui/src/pages/EvalPage.tsx",
+        "line": 211,
+        "severity": "non_blocking",
+        "description": "EvalPage is a large monolithic component (~478 lines) combining parsing helpers, API orchestration, and full UI rendering in one file. This exceeds mission guidance to keep components around ~200 lines and increases maintenance/test friction; extracting sections/hooks would improve maintainability."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "Mission guidance says to keep components around ~200 lines and, when exceptions are needed, note decomposition checkpoints in handoff. This feature ships a much larger page without decomposition notes.",
+      "evidence": "Mission AGENTS.md (React Frontend section) specifies the ~200-line convention and decomposition-note expectation; internal/channels/dashboard/ui/src/pages/EvalPage.tsx is 478 lines in commit 8f2bf6c; handoff 2026-03-14T20-46-25-176Z__eval-harness-ui__c1f36e84-a295-40a2-b007-1417e1997386.json contains no decomposition checkpoint notes."
+    },
+    {
+      "area": "skills",
+      "observation": "The fullstack-worker skill requires recording integration verification as interactiveChecks (or explicitly documenting a substituted non-interactive approach there). The handoff only includes commandsRun, so the skill procedure and expected handoff shape appear misaligned with actual worker practice in this run.",
+      "evidence": ".factory/skills/fullstack-worker/SKILL.md, section '5. Integration Verification', requires recording interactiveChecks; handoff verification for this feature includes commandsRun entries but no interactiveChecks block."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed commit 8f2bf6c for eval-harness-ui and found the required endpoint/UI capabilities implemented with appropriate test coverage and no blocking behavior gaps. Logged one maintainability non-blocking issue plus shared-state observations for convention/skill-process alignment."
+}
