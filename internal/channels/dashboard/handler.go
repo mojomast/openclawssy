@@ -28,6 +28,7 @@ import (
 	"openclawssy/internal/config"
 	"openclawssy/internal/memory"
 	memorystore "openclawssy/internal/memory/store"
+	"openclawssy/internal/promptstack"
 	"openclawssy/internal/runtime"
 	"openclawssy/internal/scheduler"
 	"openclawssy/internal/secrets"
@@ -41,6 +42,8 @@ type Handler struct {
 	runCanceller    dashboardRunCanceller
 	monitorRunMu    sync.Mutex
 	monitorRuns     map[string]monitorRunState
+	promptStackMu   sync.Mutex
+	promptStack     *promptstack.VersionStore
 	rollbackMu      sync.Mutex
 	rollbackByAgent map[string][]agentRollbackSnapshot
 }

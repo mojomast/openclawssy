@@ -3,11 +3,13 @@ package dashboard
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	httpchannel "openclawssy/internal/channels/http"
@@ -226,6 +228,112 @@ func TestPromptStackLintAndTestEndpoints(t *testing.T) {
 	}
 	if len(testPayload.Checks) != 3 {
 		t.Fatalf("expected 3 structural checks, got %d", len(testPayload.Checks))
+	}
+}
+
+func TestPromptStackStoreReusesSharedVersionStore(t *testing.T) {
+	h := New(t.TempDir(), httpchannel.NewInMemoryRunStore())
+
+	first, err := h.promptStackStore()
+	if err != nil {
+		t.Fatalf("first promptStackStore() error = %v", err)
+	}
+	second, err := h.promptStackStore()
+	if err != nil {
+		t.Fatalf("second promptStackStore() error = %v", err)
+	}
+
+	if first != second {
+		t.Fatalf("expected promptStackStore() to return a shared store instance")
+	}
+}
+
+func TestPromptStackConcurrentUpdateAndRollbackMaintainMonotonicHistory(t *testing.T) {
+	root := t.TempDir()
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	initial := httptest.NewRequest(http.MethodPut, "/api/admin/agents/default/prompt-stack/agent_identity", bytes.NewBufferString(`{"content":"seed"}`))
+	initial.Header.Set("Content-Type", "application/json")
+	initialRR := httptest.NewRecorder()
+	mux.ServeHTTP(initialRR, initial)
+	if initialRR.Code != http.StatusOK {
+		t.Fatalf("expected initial PUT status 200, got %d (%s)", initialRR.Code, initialRR.Body.String())
+	}
+
+	const concurrentUpdates = 24
+	const concurrentRollbacks = 24
+	totalOps := concurrentUpdates + concurrentRollbacks
+
+	start := make(chan struct{})
+	errCh := make(chan error, totalOps)
+	var wg sync.WaitGroup
+
+	for i := range concurrentUpdates {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+
+			content := fmt.Sprintf("concurrent-update-%02d", i)
+			req := httptest.NewRequest(http.MethodPut, "/api/admin/agents/default/prompt-stack/agent_identity", bytes.NewBufferString(`{"content":`+strconvQuote(content)+`}`))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			mux.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				errCh <- fmt.Errorf("PUT #%d returned %d (%s)", i, rr.Code, rr.Body.String())
+			}
+		}(i)
+	}
+
+	for i := range concurrentRollbacks {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+
+			req := httptest.NewRequest(http.MethodPost, "/api/admin/agents/default/prompt-stack/rollback", bytes.NewBufferString(`{"version":1}`))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			mux.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				errCh <- fmt.Errorf("rollback #%d returned %d (%s)", i, rr.Code, rr.Body.String())
+			}
+		}(i)
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatalf("concurrent prompt-stack request failed: %v", err)
+	}
+
+	historyRR := httptest.NewRecorder()
+	mux.ServeHTTP(historyRR, httptest.NewRequest(http.MethodGet, "/api/admin/agents/default/prompt-stack/history", nil))
+	if historyRR.Code != http.StatusOK {
+		t.Fatalf("expected history status 200, got %d (%s)", historyRR.Code, historyRR.Body.String())
+	}
+
+	var historyPayload struct {
+		Layers map[string][]promptstack.PromptLayer `json:"layers"`
+	}
+	if err := json.Unmarshal(historyRR.Body.Bytes(), &historyPayload); err != nil {
+		t.Fatalf("decode history response: %v", err)
+	}
+
+	agentIdentityHistory := historyPayload.Layers[promptstack.LayerAgentIdentity]
+	expectedEntries := 1 + totalOps
+	if len(agentIdentityHistory) != expectedEntries {
+		t.Fatalf("expected %d agent_identity history entries, got %d", expectedEntries, len(agentIdentityHistory))
+	}
+
+	for i, layer := range agentIdentityHistory {
+		wantVersion := i + 1
+		if layer.Version != wantVersion {
+			t.Fatalf("expected monotonic version %d at index %d, got %d", wantVersion, i, layer.Version)
+		}
 	}
 }
 

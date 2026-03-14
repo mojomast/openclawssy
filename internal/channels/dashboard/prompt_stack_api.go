@@ -122,7 +122,19 @@ func (h *Handler) handlePromptStackAPI(w http.ResponseWriter, r *http.Request, a
 }
 
 func (h *Handler) promptStackStore() (*promptstack.VersionStore, error) {
-	return promptstack.NewVersionStore(filepath.Join(h.rootDir, ".openclawssy"))
+	h.promptStackMu.Lock()
+	defer h.promptStackMu.Unlock()
+
+	if h.promptStack != nil {
+		return h.promptStack, nil
+	}
+
+	store, err := promptstack.NewVersionStore(filepath.Join(h.rootDir, ".openclawssy"))
+	if err != nil {
+		return nil, err
+	}
+	h.promptStack = store
+	return h.promptStack, nil
 }
 
 func (h *Handler) getPromptStack(w http.ResponseWriter, agentID string, store *promptstack.VersionStore) {
