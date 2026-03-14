@@ -1,0 +1,119 @@
+{
+  "milestone": "react-migration",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "go test -parallel 2 ./...",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "cd internal/channels/dashboard/ui && npx tsc --noEmit",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "go vet ./...",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 9,
+    "passed": 5,
+    "failed": 4,
+    "failedFeatures": [
+      "react-migrate-chat",
+      "react-migrate-settings",
+      "react-migrate-sandbox",
+      "react-remove-legacy"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "react-migrate-chat",
+      "severity": "blocking",
+      "description": "Composer Retry is functionally broken: retryLastPrompt sets draft then calls sendMessage() without an explicit message, while sendMessage reads stale stateRef.current.draft, causing Retry to no-op when draft is empty."
+    },
+    {
+      "featureId": "react-migrate-settings",
+      "severity": "blocking",
+      "description": "SettingsPage.tsx is a wrapper around legacy settings.js instead of a React-native migration, so the feature does not satisfy the requested migration objective."
+    },
+    {
+      "featureId": "react-migrate-sandbox",
+      "severity": "blocking",
+      "description": "Sandbox status rendering is incorrectly gated by status.provider even though backend status payload has no provider field; container metadata/running badge view is suppressed on real responses."
+    },
+    {
+      "featureId": "react-migrate-sandbox",
+      "severity": "blocking",
+      "description": "Sandbox image normalization expects repo/size_mb while backend returns repository/size, causing image table metadata to render as unknown/empty against real API responses."
+    },
+    {
+      "featureId": "react-remove-legacy",
+      "severity": "blocking",
+      "description": "Legacy artifact internal/channels/dashboard/ui/app.js remains after legacy removal scope, and it imports deleted src/main.js."
+    },
+    {
+      "featureId": "react-remove-legacy",
+      "severity": "blocking",
+      "description": "Legacy stylesheet internal/channels/dashboard/ui/styles.css remains even though removal scope called for old styles.css cleanup after Tailwind migration."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": ".factory/skills/frontend-worker/SKILL.md",
+      "suggestion": "Reconcile validation guidance by explicitly allowing scoped Playwright specs for in-progress migration milestones when full-suite failures are known and unrelated.",
+      "evidence": "Repeated across react-migrate-chat, react-migrate-runs, react-migrate-sessions, react-migrate-scheduler, and react-migrate-dashboards review reports; mission AGENTS.md already documents scoped-spec expectation.",
+      "isSystemic": true
+    },
+    {
+      "target": ".factory/skills/frontend-worker/SKILL.md",
+      "suggestion": "Add a required API-contract parity check step for mocked Playwright routes (verify mock response shapes against backend structs/endpoints before finalizing).",
+      "evidence": "react-migrate-sandbox passed mocked tests while shipping blocking schema mismatches (provider/repo/size_mb vs real status/image payload fields).",
+      "isSystemic": true
+    },
+    {
+      "target": "Mission feature-authoring conventions",
+      "suggestion": "Define explicit migration completion criteria that prohibit legacy-wrapper implementations for page-migration features.",
+      "evidence": "react-migrate-settings was marked completed despite SettingsPage.tsx delegating core UI to legacy settings.js.",
+      "isSystemic": true
+    },
+    {
+      "target": "Mission feature-authoring conventions",
+      "suggestion": "Keep feature source references and expectedBehavior lists current and complete (avoid stale legacy file paths; include all critical controls called out in descriptions).",
+      "evidence": "Stale references to removed runs.js/sessions.js/agent_monitor.js and missing explicit Retry expectation in react-migrate-chat expectedBehavior.",
+      "isSystemic": true
+    },
+    {
+      "target": ".factory/skills/fullstack-worker/SKILL.md",
+      "suggestion": "Add an explicit exception path for deletion-heavy/cutover features where implementation-first then test realignment is the safer order.",
+      "evidence": "react-remove-legacy handoff recorded justified procedure deviation for strict test-first sequencing.",
+      "isSystemic": false
+    },
+    {
+      "target": ".factory/services.yaml",
+      "suggestion": "Add a bootstrap command entry for .factory/init.sh and refresh stale Playwright helper command references to removed .spec.js files.",
+      "evidence": "Monitor/scheduler transcripts use init.sh but it is absent from command shortcuts; services.yaml still references tests/e2e/shared-components.spec.js while only .spec.ts exists.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Multiple duplicated reports of the same frontend-worker full-suite-vs-scoped-spec mismatch.",
+      "reason": "duplicate"
+    },
+    {
+      "observation": "Multiple duplicated reports of stale legacy source-path references in migration feature metadata.",
+      "reason": "duplicate"
+    },
+    {
+      "observation": "Repeated missing-init-command notes from monitor/scheduler reviews.",
+      "reason": "duplicate"
+    }
+  ],
+  "previousRound": null
+}

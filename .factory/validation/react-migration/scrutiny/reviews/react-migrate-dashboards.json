@@ -1,0 +1,28 @@
+{
+  "featureId": "react-migrate-dashboards",
+  "reviewedAt": "2026-03-14T07:11:32Z",
+  "commitId": "5db98f0",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The React migration delivers the contracted dashboard CRUD, widget picker/search, drag+resize grid, widget context actions, debounced autosave, local backup, and dashboards API sync, with focused Playwright coverage. One non-blocking parity regression was found versus the legacy page.",
+    "issues": [
+      {
+        "file": "internal/channels/dashboard/ui/src/pages/CustomDashboardsPage.tsx",
+        "line": 740,
+        "severity": "non_blocking",
+        "description": "Widget cards are no longer keyboard-operable (legacy supported Delete and Arrow keys on focused cards). The new React card is not focusable and has no key handlers, so this is a parity/accessibility regression outside current validation criteria."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The frontend-worker skill still marks scoped Playwright validation as a deviation in practice because Step 5 says to run full e2e suite, even though migration milestones allow scoped specs. This creates avoidable 'followedProcedure=false' handoffs.",
+      "evidence": "handoff.skillFeedback.followedProcedure=false for worker session aa014cd9-ecfc-4d7c-bf91-24496282281e; SKILL.md Step 5 says run full suite while the same file's 'Migration Milestone Validation Note' allows scoped validation during partial migration."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Feature passes contract-level scrutiny with strong implementation and test coverage. Noted one non-blocking regression (lost keyboard widget controls) and one skill-procedure clarity gap around scoped vs full Playwright runs."
+}

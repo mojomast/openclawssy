@@ -1,0 +1,33 @@
+{
+  "featureId": "react-migrate-runs",
+  "reviewedAt": "2026-03-14T07:13:08Z",
+  "commitId": "51920abeec8c360bbf3510daa313080306fa7a64",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The Runs migration delivers the requested React functionality end-to-end: status/agent/source filtering, 10/25/50 page sizing, Prev/Next pagination meta, deep-linkable run detail, payload JSON viewer, model steps, timeline-based tool inspection, collapsed repeated-failure groups, and loading/error states, with matching scoped Playwright coverage. One non-blocking edge-case was identified in pagination metadata synchronization.",
+    "issues": [
+      {
+        "file": "internal/channels/dashboard/ui/src/pages/RunsPage.tsx",
+        "line": 402,
+        "severity": "non_blocking",
+        "description": "The list response shape includes `limit`/`offset`, but `loadRuns` only updates `runs` and `total`; `currentPageStart/currentPageEnd` are computed from local `offset`. If backend pagination clamps offset (for example after data shrink), the UI meta can drift (e.g., stale `offset` with new `total`)."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The frontend-worker skill still mixes two validation expectations: it instructs running the full dashboard e2e suite and manual verification, but also includes a migration note directing scoped specs due known unrelated failures. This makes `followedProcedure` interpretation inconsistent across migrations.",
+      "evidence": ".factory/skills/frontend-worker/SKILL.md:85 requires full e2e; :87 starts manual verification; :142-144 says to run scoped specs during migration milestones; mission AGENTS at /home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/AGENTS.md:61-62 also instruct scoped-only behavior."
+    },
+    {
+      "area": "knowledge",
+      "observation": "Feature metadata for this migration still references an original `runs.js` file as the source of truth, but that path no longer exists in the current repo tree, which can cause wasted discovery time for workers.",
+      "evidence": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/features.json:1299 references `runs.js`; repository glob search for `**/runs.js` returned no matches."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed worker session 1fbf2ded-ee3b-40ec-a3c1-177bcaea45fa for react-migrate-runs at commit 51920abeec8c360bbf3510daa313080306fa7a64. Feature behavior matches the contract and tests, so review passes with one non-blocking pagination-meta edge-case and two shared-state observations."
+}

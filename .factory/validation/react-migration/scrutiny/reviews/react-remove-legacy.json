@@ -1,0 +1,39 @@
+{
+  "featureId": "react-remove-legacy",
+  "reviewedAt": "2026-03-14T07:11:52Z",
+  "commitId": "f84577d",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The commit correctly removes `/dashboard-legacy`, switches embed/serving to `ui/dist`, and deletes the legacy `src/pages/*.js`/router/store/client surfaces. However, legacy root UI artifacts were left behind, so the feature does not fully satisfy the stated removal scope.",
+    "issues": [
+      {
+        "file": "internal/channels/dashboard/ui/app.js",
+        "line": 1,
+        "severity": "blocking",
+        "description": "Legacy entrypoint `app.js` still exists and imports `./src/main.js`, which was deleted in this feature. The feature description explicitly requires deleting legacy-only dashboard files; leaving this broken legacy file means the legacy surface cleanup is incomplete."
+      },
+      {
+        "file": "internal/channels/dashboard/ui/styles.css",
+        "line": 1,
+        "severity": "blocking",
+        "description": "The legacy global stylesheet remains in-repo (`styles.css`, 2k+ lines) even though the feature scope called out cleaning up old `styles.css` after Tailwind migration. This is another leftover legacy artifact not removed by the cutover."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The fullstack-worker skill enforces test-first sequencing, but this deletion-heavy migration required implementation-first then test realignment; worker marked `followedProcedure=false` with a justified deviation. Skill procedure likely needs an explicit exception path for large cutover/removal features.",
+      "evidence": "Handoff skillFeedback in mission handoff file (`...react-remove-legacy__1db7d178-89b5-4a31-9e03-7f3c0ba22e9f.json`) shows deviation at step '2. Write Tests First — Both Layers' with rationale."
+    },
+    {
+      "area": "services",
+      "observation": "Service command catalog still includes a Playwright command targeting a removed `.spec.js` file.",
+      "evidence": ".factory/services.yaml:9 defines `test-ui-component` as `...shared-components.spec.js`, but only `internal/channels/dashboard/ui/tests/e2e/shared-components.spec.ts` exists."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Feature is close but not fully complete: runtime route/embed cutover is correct, yet legacy root files (`ui/app.js`, `ui/styles.css`) remain despite explicit removal scope. Marked fail pending cleanup of those remaining legacy artifacts."
+}
