@@ -193,6 +193,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/skills", h.handleSkills)
 	mux.HandleFunc("/api/admin/workspace/entries", h.handleWorkspaceEntries)
 	mux.HandleFunc("/api/admin/workspace/file", h.handleWorkspaceFile)
+	mux.HandleFunc("/api/admin/eval/results", h.handleEvalResults)
 	mux.HandleFunc("/api/admin/debug/runs/", h.getRunTrace)
 	mux.HandleFunc("/api/admin/memory/", h.getAgentMemory)
 }
