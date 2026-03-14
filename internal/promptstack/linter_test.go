@@ -119,6 +119,18 @@ func TestLintUndefinedRoleReferences(t *testing.T) {
 			t.Fatalf("did not expect undefined role issue, got %#v", issues)
 		}
 	})
+
+	t.Run("does not flag generic natural-language delegation phrase", func(t *testing.T) {
+		t.Parallel()
+
+		stack := lintBaselineStack()
+		stack.DelegationPolicy.Content = "Delegate this work to another role when complexity exceeds two files."
+
+		issues := NewLinter([]string{"planner", "implementer"}).Lint(stack)
+		if hasIssueContaining(issues, "Undefined role reference") {
+			t.Fatalf("did not expect undefined role issue for generic delegation phrasing, got %#v", issues)
+		}
+	})
 }
 
 func TestLintMissingSuccessCriteria(t *testing.T) {
@@ -144,6 +156,18 @@ func TestLintMissingSuccessCriteria(t *testing.T) {
 		issues := NewLinter(nil).Lint(stack)
 		if hasIssueContaining(issues, "Missing success criteria") {
 			t.Fatalf("did not expect missing success criteria warning, got %#v", issues)
+		}
+	})
+
+	t.Run("flags vague completion criteria phrasing", func(t *testing.T) {
+		t.Parallel()
+
+		stack := lintBaselineStack()
+		stack.SessionOverlay.Content = "Follow completion criteria before returning results.\nStop and return when all requested steps are complete."
+
+		issues := NewLinter(nil).Lint(stack)
+		if !hasLintIssue(issues, LintSeverityWarning, LintLayerAll, "Missing success criteria") {
+			t.Fatalf("expected missing success criteria warning for vague completion-criteria phrasing, got %#v", issues)
 		}
 	})
 }

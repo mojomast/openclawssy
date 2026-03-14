@@ -31,14 +31,16 @@ type Linter struct {
 type lintIssueEmitter func(severity LintSeverity, description, layerID, suggestedFix string)
 
 var (
-	instructionPrefixPattern = regexp.MustCompile(`^\s*(?:[-*+]\s+|\d+[\.)]\s+)`)
-	toolNamePattern          = regexp.MustCompile(`\b[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+\b`)
-	delegateToPattern        = regexp.MustCompile(`\bdelegate(?:\s+\w+){0,3}\s+to\s+([a-z][a-z0-9_-]*)\b`)
-	roleLabelPattern         = regexp.MustCompile(`\brole\s*[:=]\s*([a-z][a-z0-9_-]*)\b`)
-	roleVerbPattern          = regexp.MustCompile(`\b(?:use|assign|select)\s+([a-z][a-z0-9_-]*)\s+role\b`)
-	clearTriggerPattern      = regexp.MustCompile(`\b(when|if|after|once|unless|upon|whenever|as soon as)\b`)
-	terminationPatternA      = regexp.MustCompile(`\b(stop|return|terminate|halt|end)\b[^\n\.]{0,80}\b(when|once|if|upon)\b`)
-	terminationPatternB      = regexp.MustCompile(`\b(when|once|if|upon)\b[^\n\.]{0,80}\b(stop|return|terminate|halt|end)\b`)
+	instructionPrefixPattern        = regexp.MustCompile(`^\s*(?:[-*+]\s+|\d+[\.)]\s+)`)
+	toolNamePattern                 = regexp.MustCompile(`\b[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+\b`)
+	delegateToPattern               = regexp.MustCompile(`\bdelegate(?:\s+\w+){0,6}\s+to\s+(?:the\s+|an?\s+)?([a-z][a-z0-9_-]*)(?:\s+(?:role|agent))?\b`)
+	roleLabelPattern                = regexp.MustCompile(`\brole\s*[:=]\s*([a-z][a-z0-9_-]*)\b`)
+	roleVerbPattern                 = regexp.MustCompile(`\b(?:use|assign|select)\s+([a-z][a-z0-9_-]*)\s+role\b`)
+	clearTriggerPattern             = regexp.MustCompile(`\b(when|if|after|once|unless|upon|whenever|as soon as)\b`)
+	successCriteriaLabelPattern     = regexp.MustCompile(`\b(?:success|completion|acceptance)\s+criteria\s*[:\-]\s*`)
+	successCriteriaConditionPattern = regexp.MustCompile(`\b(?:done when|task is complete when|consider task complete)\b`)
+	terminationPatternA             = regexp.MustCompile(`\b(stop|return|terminate|halt|end)\b[^\n\.]{0,80}\b(when|once|if|upon)\b`)
+	terminationPatternB             = regexp.MustCompile(`\b(when|once|if|upon)\b[^\n\.]{0,80}\b(stop|return|terminate|halt|end)\b`)
 
 	defaultDefinedRoles = []string{"scout", "planner", "implementer", "verifier", "reviewer", "operator"}
 
@@ -49,13 +51,25 @@ var (
 		"could delegate",
 	}
 
-	successCriteriaSignals = []string{
-		"success criteria",
-		"completion criteria",
-		"acceptance criteria",
-		"done when",
-		"task is complete when",
-		"consider task complete",
+	genericRoleReferenceStopWords = map[string]struct{}{
+		"another":    {},
+		"other":      {},
+		"any":        {},
+		"someone":    {},
+		"somebody":   {},
+		"anyone":     {},
+		"anybody":    {},
+		"person":     {},
+		"people":     {},
+		"teammate":   {},
+		"team":       {},
+		"specialist": {},
+		"expert":     {},
+		"agent":      {},
+		"subagent":   {},
+		"assistant":  {},
+		"worker":     {},
+		"role":       {},
 	}
 
 	terminationSignals = []string{
@@ -259,7 +273,7 @@ func (l *Linter) lintUndefinedRoleReferences(stack PromptStack, emit lintIssueEm
 
 func (l *Linter) lintMissingSuccessCriteria(stack PromptStack, emit lintIssueEmitter) {
 	assembled := strings.ToLower(Assemble(stack))
-	if hasAnySignal(assembled, successCriteriaSignals) {
+	if hasExplicitSuccessCriteria(assembled) {
 		return
 	}
 
@@ -358,19 +372,19 @@ func extractRoleReferences(content string) []string {
 		if len(match) < 2 {
 			continue
 		}
-		roles[match[1]] = struct{}{}
+		addRoleReference(roles, match[1])
 	}
 	for _, match := range roleLabelPattern.FindAllStringSubmatch(normalized, -1) {
 		if len(match) < 2 {
 			continue
 		}
-		roles[match[1]] = struct{}{}
+		addRoleReference(roles, match[1])
 	}
 	for _, match := range roleVerbPattern.FindAllStringSubmatch(normalized, -1) {
 		if len(match) < 2 {
 			continue
 		}
-		roles[match[1]] = struct{}{}
+		addRoleReference(roles, match[1])
 	}
 
 	out := make([]string, 0, len(roles))
@@ -379,6 +393,60 @@ func extractRoleReferences(content string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func addRoleReference(roles map[string]struct{}, candidate string) {
+	roleName := normalizeRoleReferenceCandidate(candidate)
+	if roleName == "" {
+		return
+	}
+	roles[roleName] = struct{}{}
+}
+
+func normalizeRoleReferenceCandidate(candidate string) string {
+	roleName := normalizeFreeText(candidate)
+	if roleName == "" {
+		return ""
+	}
+	if _, blocked := genericRoleReferenceStopWords[roleName]; blocked {
+		return ""
+	}
+	return roleName
+}
+
+func hasExplicitSuccessCriteria(content string) bool {
+	if successCriteriaConditionPattern.MatchString(content) {
+		return true
+	}
+
+	lines := splitContentLines(content)
+	for idx, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+		if !successCriteriaLabelPattern.MatchString(line) {
+			continue
+		}
+
+		remainder := strings.TrimSpace(successCriteriaLabelPattern.ReplaceAllString(line, ""))
+		if remainder != "" {
+			return true
+		}
+
+		for next := idx + 1; next < len(lines) && next <= idx+3; next++ {
+			candidate := strings.TrimSpace(lines[next])
+			if candidate == "" {
+				continue
+			}
+			candidate = strings.TrimSpace(instructionPrefixPattern.ReplaceAllString(candidate, ""))
+			if candidate != "" {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func sortedLayerIDs(in map[string]struct{}) []string {
