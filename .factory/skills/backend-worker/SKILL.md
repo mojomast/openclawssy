@@ -105,6 +105,8 @@ For CLI commands:
 3. Verify output, exit codes, error messages
 4. Record each check as an `interactiveChecks` entry
 
+If mission guidance explicitly allows non-interactive/manual-skip validation for the current feature, provide equivalent evidence-backed checks (targeted automated command/API probes plus logs/artifacts) and document the substitution in `interactiveChecks`.
+
 ## Example Handoff
 
 ```json

@@ -77,6 +77,8 @@ Verify frontend:
 7. Run full test suites: `go test ./...` and `cd internal/channels/dashboard/ui && npx playwright test`.
    - If mission guidance documents known unrelated full-suite Playwright failures, run the scoped spec(s) covering your feature and explicitly cite the known unrelated failures in handoff evidence.
 
+If mission guidance explicitly allows non-interactive/manual-skip validation for the current feature, provide equivalent evidence-backed checks (targeted automated API/UI probes plus logs/screenshots/network artifacts) and document the substitution in `interactiveChecks`.
+
 ### 6. Cleanup
 
 - Stop any servers you started
