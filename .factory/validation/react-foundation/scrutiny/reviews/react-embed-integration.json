@@ -1,0 +1,39 @@
+{
+  "featureId": "react-embed-integration",
+  "reviewedAt": "2026-03-14T02:31:55Z",
+  "commitId": "HEAD",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature adds cache headers, but it still does not satisfy the required /dashboard/ SPA serving behavior and includes overly broad immutable caching logic for static assets.",
+    "issues": [
+      {
+        "file": "internal/channels/dashboard/handler.go",
+        "line": 140,
+        "severity": "blocking",
+        "description": "Only '/dashboard' is registered, not '/dashboard/'. With net/http ServeMux, GET /dashboard/ does not match this route and returns 404, so the expected behavior ('GET /dashboard/ returns React SPA index.html') is not met."
+      },
+      {
+        "file": "internal/channels/dashboard/handler.go",
+        "line": 396,
+        "severity": "non_blocking",
+        "description": "The immutable-cache condition uses `strings.Contains(assetPath, \".\")`, which is true for nearly every file with an extension. This applies 1-year immutable caching to most `/assets/` files, not specifically hashed filenames as the comment/requirement implies."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "Worker handoff uses a symbolic commit reference (`HEAD`) instead of an immutable SHA, which makes downstream review ambiguous once additional commits land.",
+      "evidence": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/handoffs/2026-03-14T00-54-04-849Z__react-embed-integration__fe0bb7af-5be2-4c0a-b051-5566d3f419dd.json -> commitId: \"HEAD\""
+    },
+    {
+      "area": "skills",
+      "observation": "The `fullstack-worker` procedure requires test-first backend+frontend coverage and full integration verification, but this feature was completed without added tests and without frontend test execution while still marked followedProcedure=true.",
+      "evidence": "/home/mojo/projects/openclawssy/.factory/skills/fullstack-worker/SKILL.md (sections 'Write Tests First — Both Layers' and 'Integration Verification') vs handoff tests.added=[] and verification.commandsRun (no Playwright/tsc entries)."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed transcript skeleton, handoff, skill guidance, and commit diff for react-embed-integration. The implementation does not meet the required /dashboard/ serving behavior and has a non-blocking cache-classification bug, so this feature fails scrutiny."
+}

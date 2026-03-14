@@ -29,7 +29,7 @@ Global config → agent profile (zero-value fallback) → subagent restrictions 
 Complexity-driven: `ComputeComplexity()` scores → triggers at thresholds → modes: prompt_only (≥2), tool_gated (≥4), auto_execute (≥6). `DecomposeTask()` does pattern + signal based decomposition. Topological sort execution via `executeDelegatedTasks()`.
 
 ### Dashboard Embedding
-UI assets compiled by Vite → output to dist/ → Go embeds via `//go:embed ui/*` in dashboard package → served at /dashboard/.
+UI assets compiled by Vite → output to dist/ → Go embeds explicit dashboard paths via `//go:embed ui/dist ui/index.html ui/app.js ui/styles.css ui/help ui/src` in `internal/channels/dashboard/handler.go` → served at /dashboard/.
 
 ### API Authentication
 Bearer token via middleware. Token from config (`OPENCLAWSSY_TOKEN` env or config file).

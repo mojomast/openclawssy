@@ -1,0 +1,26 @@
+{
+  "featureId": "react-migrate-help",
+  "reviewedAt": "2026-03-14T02:31:45Z",
+  "commitId": "73c940f",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Commit 73c940f fully migrates the Help page to React and implements the required grouped searchable topic list, markdown topic rendering, breadcrumbs, heading-based TOC navigation, related-topic chips, deep-link query selection, and copy-link toast behavior, with targeted Playwright coverage for the specified flows.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The frontend-worker procedure still requires running the full Playwright suite, which conflicts with mission guidance for in-progress migrations to run scoped specs only; this mismatch continues to trigger avoidable procedure deviations.",
+      "evidence": ".factory/skills/frontend-worker/SKILL.md:83-85 requires full e2e suite; /home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/AGENTS.md:60-62 states full suite is currently expected to fail and instructs scoped specs; handoff /home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/handoffs/2026-03-14T01-21-46-218Z__react-migrate-help__b8a428c2-f270-4a1b-84a0-33acb761fe04.json:79-84 records followedProcedure=false at Step 5."
+    },
+    {
+      "area": "knowledge",
+      "observation": "A shared dashboard interaction catalog is still missing from .factory/library, so migration workers keep rediscovering expected behavior from legacy page code.",
+      "evidence": ".factory/skills/frontend-worker/SKILL.md:72 references `.factory/library/dashboard-interactions.md`; /home/mojo/projects/openclawssy/.factory/library currently contains architecture.md, environment.md, and user-testing.md only; worker transcript skeleton in /home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/worker-transcripts.jsonl:5 shows explicit reads of internal/channels/dashboard/ui/src/pages/help.js during migration discovery."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed react-migrate-help (commit 73c940f) and found the feature implementation aligns with the stated behavior and test expectations; no code defects were identified in this review."
+}
