@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -438,5 +440,200 @@ func TestStringEnv(t *testing.T) {
 	}
 	if v != "unix:///tmp/docker.sock" {
 		t.Fatalf("unexpected trimmed value %q", v)
+	}
+}
+
+func TestEvalServiceUsageAndList(t *testing.T) {
+	t.Helper()
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	svc := evalService{out: &out, err: &errOut}
+
+	if code := svc.HandleEval(context.Background(), nil); code != 0 {
+		t.Fatalf("HandleEval() code = %d, want 0; stderr=%q", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "usage: openclawssy eval") {
+		t.Fatalf("expected usage output, got %q", out.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := svc.HandleEval(context.Background(), []string{"list"}); code != 0 {
+		t.Fatalf("HandleEval(list) code = %d, want 0; stderr=%q", code, errOut.String())
+	}
+	listOut := out.String()
+	if !strings.Contains(listOut, "basic") {
+		t.Fatalf("expected basic suite in list output, got %q", listOut)
+	}
+	if !strings.Contains(listOut, "Simple Q&A correctness checks") {
+		t.Fatalf("expected basic suite description in list output, got %q", listOut)
+	}
+}
+
+func TestEvalServiceRunAllSuites(t *testing.T) {
+	t.Helper()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmp := t.TempDir()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir temp: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(wd)
+	})
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	svc := evalService{out: &out, err: &errOut}
+
+	if code := svc.HandleEval(context.Background(), []string{"run", "--suite", "all"}); code != 0 {
+		t.Fatalf("HandleEval(run --suite all) code = %d, want 0; stderr=%q", code, errOut.String())
+	}
+	runOut := out.String()
+	for _, suiteName := range []string{"basic", "tool_choice", "delegation"} {
+		if !strings.Contains(runOut, "Suite: "+suiteName) {
+			t.Fatalf("expected suite %q in run output, got %q", suiteName, runOut)
+		}
+	}
+}
+
+func TestEvalServiceRunResultsAndBaselineSet(t *testing.T) {
+	t.Helper()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmp := t.TempDir()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir temp: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(wd)
+	})
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	svc := evalService{out: &out, err: &errOut}
+
+	if code := svc.HandleEval(context.Background(), []string{"run", "--suite", "basic"}); code != 0 {
+		t.Fatalf("HandleEval(run --suite basic) code = %d, want 0; stderr=%q", code, errOut.String())
+	}
+	runOut := out.String()
+	if !strings.Contains(runOut, "Suite: basic") {
+		t.Fatalf("expected basic suite run output, got %q", runOut)
+	}
+	if !strings.Contains(runOut, "\x1b[32mPASS\x1b[0m") {
+		t.Fatalf("expected PASS color output, got %q", runOut)
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := svc.HandleEval(context.Background(), []string{"results"}); code != 0 {
+		t.Fatalf("HandleEval(results) code = %d, want 0; stderr=%q", code, errOut.String())
+	}
+	resultsOut := out.String()
+	if !strings.Contains(resultsOut, "basic") {
+		t.Fatalf("expected basic suite in results output, got %q", resultsOut)
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := svc.HandleEval(context.Background(), []string{"baseline", "set"}); code != 0 {
+		t.Fatalf("HandleEval(baseline set) code = %d, want 0; stderr=%q", code, errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(".openclawssy", "eval", "baselines", "basic.json")); err != nil {
+		t.Fatalf("expected baseline file for basic suite: %v", err)
+	}
+}
+
+func TestEvalServiceCompareHighlightsRegressions(t *testing.T) {
+	t.Helper()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmp := t.TempDir()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir temp: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(wd)
+	})
+
+	writeCustomSuiteFile(t, "regression", true)
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	svc := evalService{out: &out, err: &errOut}
+
+	if code := svc.HandleEval(context.Background(), []string{"run", "--suite", "regression"}); code != 0 {
+		t.Fatalf("HandleEval(run regression baseline) code = %d, want 0; stderr=%q", code, errOut.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := svc.HandleEval(context.Background(), []string{"baseline", "set", "--suite", "regression"}); code != 0 {
+		t.Fatalf("HandleEval(baseline set --suite regression) code = %d, want 0; stderr=%q", code, errOut.String())
+	}
+
+	writeCustomSuiteFile(t, "regression", false)
+
+	out.Reset()
+	errOut.Reset()
+	if code := svc.HandleEval(context.Background(), []string{"run", "--suite", "regression"}); code == 0 {
+		t.Fatalf("HandleEval(run regression latest) code = %d, want non-zero due to failing case", code)
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := svc.HandleEval(context.Background(), []string{"compare", "--suite", "regression"}); code == 0 {
+		t.Fatalf("HandleEval(compare --suite regression) code = %d, want non-zero when regressions exist", code)
+	}
+	compareOut := out.String()
+	if !strings.Contains(compareOut, "regressions=1") {
+		t.Fatalf("expected regression count in compare output, got %q", compareOut)
+	}
+	if !strings.Contains(compareOut, "\x1b[31m") {
+		t.Fatalf("expected red regression highlight in compare output, got %q", compareOut)
+	}
+}
+
+func writeCustomSuiteFile(t *testing.T, suiteName string, passed bool) {
+	t.Helper()
+
+	dir := filepath.Join(".openclawssy", "eval")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir eval dir: %v", err)
+	}
+
+	payload := map[string]any{
+		"name":        suiteName,
+		"description": "regression validation suite",
+		"test_cases": []map[string]any{
+			{
+				"name":        "case-1",
+				"description": "single deterministic case",
+				"expected":    "ok tokens=7",
+				"actual":      "ok tokens=7",
+				"duration_ms": 7,
+				"passed":      passed,
+			},
+		},
+	}
+
+	raw, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal custom suite json: %v", err)
+	}
+	raw = append(raw, '\n')
+
+	if err := os.WriteFile(filepath.Join(dir, suiteName+".json"), raw, 0o644); err != nil {
+		t.Fatalf("write custom suite file: %v", err)
 	}
 }

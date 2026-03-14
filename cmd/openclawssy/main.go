@@ -54,6 +54,7 @@ func main() {
 	}
 
 	handlers := cli.Handlers{Init: initService{engine: engine}, Ask: askService{engine: engine}, Run: runService{engine: engine}, Doctor: doctorService{}, Cron: cronService{}, Out: os.Stdout, Err: os.Stderr}
+	evalSvc := evalService{engine: engine, out: os.Stdout, err: os.Stderr}
 
 	if len(os.Args) < 2 {
 		printUsage(os.Stderr)
@@ -80,6 +81,8 @@ func main() {
 		code = handleRemote(ctx, os.Args[2:])
 	case "openclaw":
 		code = handleOpenClaw(ctx, os.Args[2:])
+	case "eval":
+		code = evalSvc.HandleEval(ctx, os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n\n", os.Args[1])
 		printUsage(os.Stderr)
@@ -91,7 +94,7 @@ func main() {
 
 func printUsage(w *os.File) {
 	fmt.Fprintln(w, "usage: openclawssy <subcommand> [flags]")
-	fmt.Fprintln(w, "subcommands: init, setup, ask, run, serve, cron, doctor, remote, openclaw")
+	fmt.Fprintln(w, "subcommands: init, setup, ask, run, serve, cron, doctor, remote, openclaw, eval")
 }
 
 func handleOpenClaw(ctx context.Context, args []string) int {
