@@ -1322,6 +1322,129 @@ func TestMonitorRunControlReconcilesStaleRunningEntryAfterSuccessfulCancel(t *te
 	}
 }
 
+func TestMonitorRunControlReconcilesUntrackedStaleRunAfterCancelFallback(t *testing.T) {
+	root := t.TempDir()
+	auditDir := filepath.Join(root, ".openclawssy", "agents", "alpha", "audit")
+	if err := os.MkdirAll(auditDir, 0o755); err != nil {
+		t.Fatalf("mkdir audit dir: %v", err)
+	}
+	auditBody := `{"ts":"2026-03-14T12:00:00Z","type":"run.start","run_id":"run-stale-untracked","agent_id":"alpha","payload":{"source":"scheduler/system","message":"stale maintenance"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(auditDir, "events.jsonl"), []byte(auditBody), 0o600); err != nil {
+		t.Fatalf("write audit log: %v", err)
+	}
+
+	canceller := &stubDashboardRunCanceller{tracked: map[string]bool{}}
+	h := NewWithOptions(root, httpchannel.NewInMemoryRunStore(), Options{RunCanceller: canceller})
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	cancelReq := httptest.NewRequest(http.MethodPost, "/api/admin/monitor/runs/control", bytes.NewBufferString(`{"action":"cancel","run_id":"run-stale-untracked"}`))
+	cancelReq.Header.Set("Content-Type", "application/json")
+	cancelResp := httptest.NewRecorder()
+	mux.ServeHTTP(cancelResp, cancelReq)
+	if cancelResp.Code != http.StatusOK {
+		t.Fatalf("expected cancel status 200, got %d (%s)", cancelResp.Code, cancelResp.Body.String())
+	}
+	var cancelPayload map[string]any
+	if err := json.Unmarshal(cancelResp.Body.Bytes(), &cancelPayload); err != nil {
+		t.Fatalf("decode cancel payload: %v", err)
+	}
+	if cancelPayload["cancelled"] != true {
+		t.Fatalf("expected cancelled=true for untracked stale fallback, got %#v", cancelPayload)
+	}
+	if cancelPayload["tracked"] != false {
+		t.Fatalf("expected tracked=false for untracked stale fallback, got %#v", cancelPayload)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/monitor/runs", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Runs []monitorRunRecord `json:"runs"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload.Runs) != 1 {
+		t.Fatalf("expected one monitor run, got %+v", payload.Runs)
+	}
+	if payload.Runs[0].RunID != "run-stale-untracked" || payload.Runs[0].Status != "canceled" {
+		t.Fatalf("expected run-stale-untracked canceled after fallback reconciliation, got %+v", payload.Runs[0])
+	}
+	if payload.Runs[0].CompletedAt == "" {
+		t.Fatalf("expected completed_at to be populated after fallback reconciliation, got %+v", payload.Runs[0])
+	}
+}
+
+func TestMonitorRunsEndpointRetiresStaleUntrackedAuditOnlyRunningRuns(t *testing.T) {
+	root := t.TempDir()
+	auditDir := filepath.Join(root, ".openclawssy", "agents", "default", "audit")
+	if err := os.MkdirAll(auditDir, 0o755); err != nil {
+		t.Fatalf("mkdir audit dir: %v", err)
+	}
+
+	now := time.Now().UTC()
+	oldStartedAt := now.Add(-(monitorStaleUntrackedRunTTL + 2*time.Minute)).Format(time.RFC3339)
+	recentStartedAt := now.Add(-(monitorStaleUntrackedRunTTL / 4)).Format(time.RFC3339)
+	auditBody := strings.Join([]string{
+		fmt.Sprintf(`{"ts":"%s","type":"run.start","run_id":"run-orphan-old","agent_id":"default","payload":{"source":"scheduler/system","message":"stale orphan"}}`, oldStartedAt),
+		fmt.Sprintf(`{"ts":"%s","type":"run.start","run_id":"run-orphan-recent","agent_id":"default","payload":{"source":"scheduler/system","message":"still active"}}`, recentStartedAt),
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(auditDir, "events.jsonl"), []byte(auditBody), 0o600); err != nil {
+		t.Fatalf("write audit log: %v", err)
+	}
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/monitor/runs", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Runs []monitorRunRecord `json:"runs"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload.Runs) != 2 {
+		t.Fatalf("expected 2 monitor runs, got %+v", payload.Runs)
+	}
+
+	byRunID := make(map[string]monitorRunRecord, len(payload.Runs))
+	for _, record := range payload.Runs {
+		byRunID[record.RunID] = record
+	}
+
+	oldRecord, ok := byRunID["run-orphan-old"]
+	if !ok {
+		t.Fatalf("expected stale orphan run in payload, got %+v", payload.Runs)
+	}
+	if oldRecord.Status != "failed" {
+		t.Fatalf("expected stale orphan run to be retired to failed, got %+v", oldRecord)
+	}
+	if oldRecord.CompletedAt == "" {
+		t.Fatalf("expected stale orphan run completed_at to be populated, got %+v", oldRecord)
+	}
+	if !strings.Contains(strings.ToLower(oldRecord.Error), "stale") {
+		t.Fatalf("expected stale orphan retirement error detail, got %+v", oldRecord)
+	}
+
+	recentRecord, ok := byRunID["run-orphan-recent"]
+	if !ok {
+		t.Fatalf("expected recent orphan run in payload, got %+v", payload.Runs)
+	}
+	if recentRecord.Status != "running" {
+		t.Fatalf("expected recent orphan run to remain running, got %+v", recentRecord)
+	}
+}
+
 func TestMonitorRunsEndpointUsesStoreTerminalStatusForMatchingRunID(t *testing.T) {
 	root := t.TempDir()
 	auditDir := filepath.Join(root, ".openclawssy", "agents", "default", "audit")

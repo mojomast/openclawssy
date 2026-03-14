@@ -77,7 +77,11 @@ type monitorRunState struct {
 	UpdatedAt time.Time
 }
 
-const monitorRunStateTTL = 15 * time.Minute
+const (
+	monitorRunStateTTL            = 15 * time.Minute
+	monitorStaleUntrackedRunTTL   = 45 * time.Minute
+	monitorStaleUntrackedRunError = "stale untracked run retired"
+)
 
 type dashboardLayoutRecord struct {
 	ID        string                  `json:"id"`
@@ -1565,12 +1569,19 @@ func (h *Handler) handleMonitorRunControl(w http.ResponseWriter, r *http.Request
 	if err := h.runCanceller.Cancel(runID); err != nil {
 		if status, ok := h.monitorRunStatusFromStore(r.Context(), runID); ok && isTerminalMonitorRunStatus(status) {
 			h.noteMonitorRunState(runID, status)
+			writeJSON(w, map[string]any{"run_id": runID, "cancelled": false, "tracked": tracked})
+			return
+		}
+		if !tracked {
+			h.noteMonitorRunState(runID, "canceled")
+			writeJSON(w, map[string]any{"run_id": runID, "cancelled": true, "tracked": false})
+			return
 		}
 		writeJSON(w, map[string]any{"run_id": runID, "cancelled": false, "tracked": tracked})
 		return
 	}
 	h.noteMonitorRunState(runID, "canceled")
-	writeJSON(w, map[string]any{"run_id": runID, "cancelled": true, "tracked": true})
+	writeJSON(w, map[string]any{"run_id": runID, "cancelled": true, "tracked": tracked})
 }
 
 func (h *Handler) collectMonitorRuns(ctx context.Context, limit int, agentFilter string) ([]monitorRunRecord, error) {
@@ -1753,6 +1764,17 @@ func (h *Handler) reconcileMonitorRunRecords(ctx context.Context, byRunID map[st
 	}
 
 	for runID, record := range byRunID {
+		if shouldRetireStaleUntrackedMonitorRun(record, storedByID, now) {
+			record.Status = "failed"
+			record.Tracked = false
+			if record.CompletedAt == "" {
+				record.CompletedAt = now.Format(time.RFC3339)
+			}
+			if record.Error == "" {
+				record.Error = monitorStaleUntrackedRunError
+			}
+			byRunID[runID] = record
+		}
 		if isTerminalMonitorRunStatus(record.Status) {
 			h.clearMonitorRunState(runID)
 		}
@@ -1869,6 +1891,44 @@ func isTerminalMonitorRunStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+func shouldRetireStaleUntrackedMonitorRun(record monitorRunRecord, storedByID map[string]httpchannel.Run, now time.Time) bool {
+	if normalizeMonitorRunStatus(record.Status) != "running" {
+		return false
+	}
+	if record.Tracked {
+		return false
+	}
+	runID := strings.TrimSpace(record.RunID)
+	if runID == "" {
+		return false
+	}
+	if _, ok := storedByID[runID]; ok {
+		return false
+	}
+	startedAt, ok := parseMonitorRunTimestamp(record.StartedAt)
+	if !ok {
+		return false
+	}
+	if now.Before(startedAt) {
+		return false
+	}
+	return now.Sub(startedAt) > monitorStaleUntrackedRunTTL
+}
+
+func parseMonitorRunTimestamp(raw string) (time.Time, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return time.Time{}, false
+	}
+	if parsed, err := time.Parse(time.RFC3339, trimmed); err == nil {
+		return parsed, true
+	}
+	if parsed, err := time.Parse(time.RFC3339Nano, trimmed); err == nil {
+		return parsed, true
+	}
+	return time.Time{}, false
 }
 
 func isCanceledMonitorError(message string) bool {
