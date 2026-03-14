@@ -159,6 +159,9 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 }
 
 func coerceContextCancellation(ctx context.Context, err error) error {
+	if isContextCanceledExecutionError(err) {
+		return context.Canceled
+	}
 	if err != nil {
 		return err
 	}
@@ -169,6 +172,17 @@ func coerceContextCancellation(ctx context.Context, err error) error {
 		return context.Canceled
 	}
 	return nil
+}
+
+func isContextCanceledExecutionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	lower := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(lower, "context canceled") || strings.Contains(lower, "context cancelled")
 }
 
 func publishQueueRunEvent(bus *RunEventBus, runID string, eventType RunEventType, data map[string]any) {

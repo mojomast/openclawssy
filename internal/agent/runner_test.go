@@ -92,6 +92,18 @@ func (m *toolThenAlwaysTransientErrorModel) Generate(_ context.Context, req Mode
 	return ModelResponse{}, errors.New("provider stream interrupted after partial output: context deadline exceeded")
 }
 
+type toolThenContextCanceledModel struct {
+	attempts int
+}
+
+func (m *toolThenContextCanceledModel) Generate(_ context.Context, req ModelRequest) (ModelResponse, error) {
+	m.attempts++
+	if len(req.ToolResults) == 0 {
+		return ModelResponse{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.list", Arguments: []byte(`{"path":"."}`)}}}, nil
+	}
+	return ModelResponse{}, errors.New("provider stream interrupted after partial output: context canceled")
+}
+
 type transientErrorThenSuccessModel struct {
 	attempts int
 }
@@ -1537,6 +1549,28 @@ func TestRunnerTransientProviderErrorAfterToolsReturnsContinuationHint(t *testin
 	}
 	if model.attempts != 6 {
 		t.Fatalf("expected 6 model attempts including failed recovery finalization, got %d", model.attempts)
+	}
+}
+
+func TestRunnerReturnsContextCanceledErrorAfterToolWorkWhenModelSignalsCancellation(t *testing.T) {
+	model := &toolThenContextCanceledModel{}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Output: `{"entries":["SPECPLAN.md","DEVPLAN.md"]}`},
+	}}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 120}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "summarize the workspace", AllowedTools: []string{"fs.list"}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context canceled error, got %v", err)
+	}
+	if strings.TrimSpace(out.FinalText) != "" {
+		t.Fatalf("expected no fallback completion text for canceled run, got %q", out.FinalText)
+	}
+	if len(out.ToolCalls) != 1 {
+		t.Fatalf("expected tool call history to persist before cancellation, got %d", len(out.ToolCalls))
+	}
+	if model.attempts != 2 {
+		t.Fatalf("expected single post-tool cancellation attempt, got %d", model.attempts)
 	}
 }
 

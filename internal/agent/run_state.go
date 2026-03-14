@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -536,6 +537,10 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 			s.out.Thinking = s.latestThinking
 			s.out.ThinkingPresent = s.thinkingPresent
 			s.out.ToolParseFailure = s.toolParseFailure
+			if isContextCanceledModelError(ctx, err) {
+				s.out.CompletedAt = time.Now().UTC()
+				return s.out, context.Canceled
+			}
 			if len(s.toolResults) > 0 {
 				if isTransientProviderModelError(err) {
 					if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, "# TRANSIENT_MODEL_ERROR_RECOVERY\n- Your previous model turn ended with a transient provider interruption after tool work.\n- Do not call tools in this recovery turn.\n- Use the latest tool results to answer the user directly.\n- If the tool results are incomplete, say what remains and mention that the stream was interrupted."); finalized != "" {
@@ -871,6 +876,9 @@ func isTransientProviderModelError(err error) bool {
 		return false
 	}
 	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	if strings.Contains(text, "context canceled") || strings.Contains(text, "context cancelled") {
+		return false
+	}
 	return strings.Contains(text, "stream interrupted") ||
 		strings.Contains(text, "context deadline exceeded") ||
 		strings.Contains(text, "client.timeout") ||
@@ -879,6 +887,20 @@ func isTransientProviderModelError(err error) bool {
 		strings.Contains(text, "connection reset") ||
 		strings.Contains(text, "unexpected eof") ||
 		strings.Contains(text, "provider returned no choices")
+}
+
+func isContextCanceledModelError(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	if ctx != nil && errors.Is(ctx.Err(), context.Canceled) {
+		return true
+	}
+	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(text, "context canceled") || strings.Contains(text, "context cancelled")
 }
 
 // extractAgentIDFromArgs extracts the agent_id field from JSON tool arguments

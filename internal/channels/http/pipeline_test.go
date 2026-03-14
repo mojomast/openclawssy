@@ -33,6 +33,8 @@ type cancelFallbackExecutor struct {
 	started chan struct{}
 }
 
+type contextCanceledErrorExecutor struct{}
+
 func (f *flakyRetryableExecutor) Execute(_ context.Context, _ ExecutionInput) (ExecutionResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -81,6 +83,15 @@ func (c cancelFallbackExecutor) Execute(ctx context.Context, _ ExecutionInput) (
 		ToolCalls: 2,
 		Trace:     map[string]any{"cancel_seen": true},
 	}, nil
+}
+
+func (contextCanceledErrorExecutor) Execute(_ context.Context, _ ExecutionInput) (ExecutionResult, error) {
+	return ExecutionResult{
+		Provider:  "test-provider",
+		Model:     "test-model",
+		ToolCalls: 1,
+		Trace:     map[string]any{"cancel_seen": true},
+	}, errors.New("provider stream interrupted after partial output: context canceled")
 }
 
 func TestQueueRunPersistsSessionAndTrace(t *testing.T) {
@@ -297,6 +308,72 @@ func TestQueueRunCanceledWhenExecutorReturnsNilErrorAfterContextCancel(t *testin
 	}
 	if seenCompleted {
 		t.Fatal("did not expect completed terminal event for canceled run")
+	}
+}
+
+func TestQueueRunTreatsContextCanceledExecutionErrorAsCanceled(t *testing.T) {
+	store := NewInMemoryRunStore()
+	eventBus := NewRunEventBus(16)
+
+	queued, err := QueueRunWithOptions(
+		context.Background(),
+		store,
+		contextCanceledErrorExecutor{},
+		"agent-1",
+		"cancel me",
+		"dashboard",
+		"chat_123",
+		"",
+		QueueRunOptions{EventBus: eventBus},
+	)
+	if err != nil {
+		t.Fatalf("queue run: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		run, getErr := store.Get(context.Background(), queued.ID)
+		if getErr != nil {
+			t.Fatalf("get run: %v", getErr)
+		}
+		if run.Status == "canceled" {
+			if run.Error != "run canceled" {
+				t.Fatalf("expected normalized canceled error, got %+v", run)
+			}
+			if run.Provider != "test-provider" || run.Model != "test-model" || run.ToolCalls != 1 {
+				t.Fatalf("expected result metadata to persist on canceled run, got %+v", run)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run did not transition to canceled in time, last status=%q", run.Status)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	ch, unsubscribe := eventBus.Subscribe(queued.ID, 0)
+	defer unsubscribe()
+	seenCanceled := false
+	seenFailed := false
+	seenCompleted := false
+	for event := range ch {
+		switch event.Type {
+		case RunEventCanceled:
+			seenCanceled = true
+		case RunEventFailed:
+			seenFailed = true
+		case RunEventCompleted:
+			seenCompleted = true
+		}
+	}
+	if !seenCanceled {
+		t.Fatal("expected canceled terminal event")
+	}
+	if seenFailed {
+		t.Fatal("did not expect failed terminal event for context-canceled execution error")
+	}
+	if seenCompleted {
+		t.Fatal("did not expect completed terminal event for context-canceled execution error")
 	}
 }
 
