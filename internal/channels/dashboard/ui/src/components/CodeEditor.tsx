@@ -14,6 +14,7 @@ interface CodeEditorProps {
   minHeight?: string
   className?: string
   onCopy?: () => void
+  textareaTestId?: string
 }
 
 export function CodeEditor({
@@ -27,6 +28,7 @@ export function CodeEditor({
   minHeight = "100px",
   className,
   onCopy,
+  textareaTestId,
 }: CodeEditorProps) {
   const [copied, setCopied] = React.useState(false)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
@@ -95,6 +97,7 @@ export function CodeEditor({
         )}
         <textarea
           ref={textareaRef}
+          data-testid={textareaTestId}
           value={value}
           onChange={(e) => onChange?.(e.target.value)}
           onScroll={handleScroll}
