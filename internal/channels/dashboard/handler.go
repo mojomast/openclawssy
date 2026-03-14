@@ -344,6 +344,10 @@ func (h *Handler) serveDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Prevent caching of index.html to ensure fresh SPA on reload
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 	_, _ = w.Write(content)
 }
 
@@ -379,13 +383,24 @@ func (h *Handler) serveDashboardStatic(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	contentType := mime.TypeByExtension(filepath.Ext(assetPath))
+	ext := filepath.Ext(assetPath)
+	contentType := mime.TypeByExtension(ext)
 	if contentType == "" && strings.HasSuffix(assetPath, ".md") {
 		contentType = "text/markdown; charset=utf-8"
 	}
 	if contentType != "" {
 		w.Header().Set("Content-Type", contentType)
 	}
+
+	// Add cache headers for static assets with hash in filename (e.g., index-abc123.js)
+	// These files are immutable and can be cached indefinitely
+	if strings.Contains(assetPath, "assets/") && (strings.Contains(assetPath, "-") || strings.Contains(assetPath, ".")) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		// For other static assets, use a shorter cache time
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+	}
+
 	_, _ = w.Write(content)
 }
 
