@@ -11,6 +11,14 @@ type RunSummary = {
   id: string
   status: string
   updatedAt: string
+  decompositionPlan: DecompositionPlan | null
+}
+
+type RunsPage = {
+  runs: RunSummary[]
+  total: number
+  limit: number
+  offset: number
 }
 
 const modernDelegationModes = ["suggest_only", "approve_plan", "auto_trusted", "full_autonomous"] as const
@@ -59,26 +67,38 @@ function extractErrorMessage(error: unknown): string {
   return asText(error).trim() || "Unknown error"
 }
 
-function parseRuns(payload: unknown): RunSummary[] {
+function parseRunSummary(value: unknown): RunSummary | null {
+  const raw = asRecord(value)
+  if (!raw) {
+    return null
+  }
+  const id = asText(raw.id).trim()
+  if (!id) {
+    return null
+  }
+
+  const trace = asRecord(raw.trace)
+  const decompositionPlan = parsePlan(raw.decomposition_plan) || parsePlan(trace?.decomposition_plan)
+
+  return {
+    id,
+    status: asText(raw.status).trim(),
+    updatedAt: asText(raw.updated_at).trim(),
+    decompositionPlan,
+  }
+}
+
+function parseRunsPage(payload: unknown): RunsPage {
   const record = asRecord(payload)
   const rawRuns = Array.isArray(record?.runs) ? record.runs : []
-  return rawRuns
-    .map((entry) => {
-      const raw = asRecord(entry)
-      if (!raw) {
-        return null
-      }
-      const id = asText(raw.id).trim()
-      if (!id) {
-        return null
-      }
-      return {
-        id,
-        status: asText(raw.status).trim(),
-        updatedAt: asText(raw.updated_at).trim(),
-      }
-    })
-    .filter((run): run is RunSummary => run !== null)
+  const runs = rawRuns.map(parseRunSummary).filter((run): run is RunSummary => run !== null)
+
+  return {
+    runs,
+    total: Math.max(0, Math.round(asNumber(record?.total))),
+    limit: Math.max(1, Math.round(asNumber(record?.limit)) || 50),
+    offset: Math.max(0, Math.round(asNumber(record?.offset))),
+  }
 }
 
 function parseTask(value: unknown): DecompositionTaskNode | null {
@@ -199,6 +219,7 @@ export function DelegationPage() {
   const [autoDelegate, setAutoDelegate] = useState(false)
 
   const [runs, setRuns] = useState<RunSummary[]>([])
+  const [planRuns, setPlanRuns] = useState<RunSummary[]>([])
   const [selectedRunID, setSelectedRunID] = useState("")
   const [selectedPlan, setSelectedPlan] = useState<DecompositionPlan | null>(null)
 
@@ -217,6 +238,7 @@ export function DelegationPage() {
   const [saveError, setSaveError] = useState("")
   const [saveNotice, setSaveNotice] = useState("")
   const [planError, setPlanError] = useState("")
+  const [runListNotice, setRunListNotice] = useState("")
   const [actionNotice, setActionNotice] = useState("")
   const [comparisonError, setComparisonError] = useState("")
 
@@ -237,14 +259,58 @@ export function DelegationPage() {
     setAutoDelegate(Boolean(agents?.auto_delegate))
   }, [])
 
-  const loadRuns = useCallback(async (): Promise<RunSummary[]> => {
-    const runsPayload = await api.get<Record<string, unknown>>("/v1/runs?limit=50&offset=0")
-    const parsedRuns = parseRuns(runsPayload)
-    setRuns(parsedRuns)
-    return parsedRuns
+  const loadRuns = useCallback(async (): Promise<{ allRuns: RunSummary[]; planRuns: RunSummary[] }> => {
+    const pageSize = 100
+    let nextOffset = 0
+    let total = Number.POSITIVE_INFINITY
+    let pagesFetched = 0
+
+    const allRuns: RunSummary[] = []
+    const runsWithPlan: RunSummary[] = []
+    const seen = new Set<string>()
+
+    while (nextOffset < total && pagesFetched < 10) {
+      const runsPayload = await api.get<Record<string, unknown>>(
+        `/v1/runs?limit=${encodeURIComponent(String(pageSize))}&offset=${encodeURIComponent(String(nextOffset))}`
+      )
+      const page = parseRunsPage(runsPayload)
+      total = page.total
+      pagesFetched += 1
+
+      for (const run of page.runs) {
+        if (seen.has(run.id)) {
+          continue
+        }
+        seen.add(run.id)
+        allRuns.push(run)
+        if (run.decompositionPlan) {
+          runsWithPlan.push(run)
+        }
+      }
+
+      if (page.runs.length === 0 || runsWithPlan.length >= 20) {
+        break
+      }
+      nextOffset += page.limit
+    }
+
+    const nextAllRuns = allRuns.slice(0, pageSize)
+    const nextPlanRuns = runsWithPlan
+    setRuns(nextAllRuns)
+    setPlanRuns(nextPlanRuns)
+
+    if (nextPlanRuns.length > 0) {
+      setRunListNotice("")
+    } else if (nextAllRuns.length > 0) {
+      setRunListNotice("No runs in the scanned window exposed decomposition plans. Select a run and reload to re-check detail data.")
+    } else {
+      setRunListNotice("No runs found.")
+    }
+
+    return { allRuns: nextAllRuns, planRuns: nextPlanRuns }
   }, [])
 
-  const loadRunPlan = useCallback(async (runID: string) => {
+  const loadRunPlan = useCallback(async (runID: string, fallbackPlan: DecompositionPlan | null = null) => {
     const targetRunID = runID.trim()
     if (!targetRunID) {
       setSelectedPlan(null)
@@ -257,7 +323,7 @@ export function DelegationPage() {
     setActionNotice("")
     try {
       const detailPayload = await api.get<unknown>(`/v1/runs/${encodeURIComponent(targetRunID)}`)
-      const plan = extractPlanFromRunDetail(detailPayload)
+      const plan = extractPlanFromRunDetail(detailPayload) || fallbackPlan
       if (!plan) {
         setSelectedPlan(null)
         setPlanError("This run does not include a decomposition plan.")
@@ -276,13 +342,14 @@ export function DelegationPage() {
     setLoading(true)
     setLoadError("")
     try {
-      const [_, parsedRuns] = await Promise.all([loadPolicyConfig(), loadRuns()])
-      const initialRunID = parsedRuns[0]?.id || ""
+      const [_, loadedRuns] = await Promise.all([loadPolicyConfig(), loadRuns()])
+      const initialPlanRun = loadedRuns.planRuns[0] || loadedRuns.allRuns[0] || null
+      const initialRunID = initialPlanRun?.id || ""
       setSelectedRunID(initialRunID)
-      setLeftRunID(parsedRuns[0]?.id || "")
-      setRightRunID(parsedRuns[1]?.id || parsedRuns[0]?.id || "")
+      setLeftRunID(loadedRuns.allRuns[0]?.id || "")
+      setRightRunID(loadedRuns.allRuns[1]?.id || loadedRuns.allRuns[0]?.id || "")
       if (initialRunID) {
-        await loadRunPlan(initialRunID)
+        await loadRunPlan(initialRunID, initialPlanRun?.decompositionPlan || null)
       } else {
         setSelectedPlan(null)
       }
@@ -466,14 +533,15 @@ export function DelegationPage() {
                 data-testid="delegation-run-select"
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                 value={selectedRunID}
-                disabled={loading || loadingPlan || runs.length === 0}
+                disabled={loading || loadingPlan || (planRuns.length === 0 && runs.length === 0)}
                 onChange={(event) => {
                   const nextRunID = event.target.value
+                  const selectedRun = planRuns.find((run) => run.id === nextRunID) || runs.find((run) => run.id === nextRunID)
                   setSelectedRunID(nextRunID)
-                  void loadRunPlan(nextRunID)
+                  void loadRunPlan(nextRunID, selectedRun?.decompositionPlan || null)
                 }}
               >
-                {runs.map((run) => (
+                {(planRuns.length > 0 ? planRuns : runs).map((run) => (
                   <option key={run.id} value={run.id}>
                     {formatRunOption(run)}
                   </option>
@@ -481,11 +549,20 @@ export function DelegationPage() {
               </select>
             </label>
 
-            <Button variant="outline" size="sm" disabled={loading || loadingPlan} onClick={() => void loadRunPlan(selectedRunID)}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={loading || loadingPlan}
+              onClick={() => {
+                const selectedRun = planRuns.find((run) => run.id === selectedRunID) || runs.find((run) => run.id === selectedRunID)
+                void loadRunPlan(selectedRunID, selectedRun?.decompositionPlan || null)
+              }}
+            >
               Reload plan
             </Button>
           </div>
 
+          {runListNotice ? <p className="text-sm text-muted-foreground">{runListNotice}</p> : null}
           {loadingPlan ? <p className="text-sm text-muted-foreground">Loading decomposition plan...</p> : null}
           {planError ? <p className="text-sm text-destructive">{planError}</p> : null}
 

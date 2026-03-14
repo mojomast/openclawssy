@@ -41,6 +41,7 @@ func NewFileRunStore(path string) (*FileRunStore, error) {
 func (s *FileRunStore) Create(_ context.Context, run Run) (Run, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	normalizeRunDerivedFields(&run)
 	s.runs[run.ID] = run
 	return run, s.saveLocked()
 }
@@ -52,6 +53,7 @@ func (s *FileRunStore) Get(_ context.Context, id string) (Run, error) {
 	if !ok {
 		return Run{}, ErrRunNotFound
 	}
+	normalizeRunDerivedFields(&run)
 	return run, nil
 }
 
@@ -61,6 +63,7 @@ func (s *FileRunStore) Update(_ context.Context, run Run) error {
 	if _, ok := s.runs[run.ID]; !ok {
 		return ErrRunNotFound
 	}
+	normalizeRunDerivedFields(&run)
 	s.runs[run.ID] = run
 	return s.saveLocked()
 }
@@ -70,6 +73,7 @@ func (s *FileRunStore) List(_ context.Context) ([]Run, error) {
 	defer s.mu.RUnlock()
 	runs := make([]Run, 0, len(s.runs))
 	for _, run := range s.runs {
+		normalizeRunDerivedFields(&run)
 		runs = append(runs, run)
 	}
 	sort.Slice(runs, func(i, j int) bool { return runs[i].CreatedAt.After(runs[j].CreatedAt) })
@@ -92,6 +96,7 @@ func (s *FileRunStore) load() error {
 		return fmt.Errorf("parse runs store: %w", err)
 	}
 	for _, run := range p.Runs {
+		normalizeRunDerivedFields(&run)
 		s.runs[run.ID] = run
 	}
 	return nil
@@ -102,6 +107,7 @@ func (s *FileRunStore) saveLocked() error {
 
 	runs := make([]Run, 0, len(s.runs))
 	for _, run := range s.runs {
+		normalizeRunDerivedFields(&run)
 		runs = append(runs, run)
 	}
 	sort.Slice(runs, func(i, j int) bool { return runs[i].CreatedAt.Before(runs[j].CreatedAt) })

@@ -168,6 +168,117 @@ func TestServer_ListRunsSupportsPaginationAndStatusFilter(t *testing.T) {
 	}
 }
 
+func TestServer_GetRunIncludesDerivedDecompositionPlanFromTrace(t *testing.T) {
+	store := NewInMemoryRunStore()
+	now := time.Now().UTC()
+	run := Run{
+		ID:        "run-plan",
+		AgentID:   "agent-1",
+		Message:   "plan",
+		Status:    "completed",
+		CreatedAt: now,
+		UpdatedAt: now,
+		Trace: map[string]any{
+			"decomposition_plan": map[string]any{
+				"delegation_mode": "suggest_only",
+				"tasks": []any{
+					map[string]any{"task_id": "discover", "assigned_role": "scout"},
+				},
+			},
+		},
+	}
+	if _, err := store.Create(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	s := NewServer(Config{BearerToken: "secret", Store: store, Executor: NopExecutor{}})
+	req := httptest.NewRequest(http.MethodGet, "/v1/runs/run-plan", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rr := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rr.Code)
+	}
+
+	var payload Run
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.DecompositionPlan == nil {
+		t.Fatalf("expected derived decomposition_plan in run payload, got %+v", payload)
+	}
+	rawTasks, ok := payload.DecompositionPlan["tasks"].([]any)
+	if !ok || len(rawTasks) != 1 {
+		t.Fatalf("expected one decomposition task, got %#v", payload.DecompositionPlan["tasks"])
+	}
+}
+
+func TestServer_ListRunsIncludesDerivedDecompositionPlanFromTrace(t *testing.T) {
+	store := NewInMemoryRunStore()
+	now := time.Now().UTC()
+	seed := []Run{
+		{
+			ID:        "run-no-plan",
+			AgentID:   "agent-1",
+			Message:   "none",
+			Status:    "completed",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "run-with-plan",
+			AgentID:   "agent-1",
+			Message:   "plan",
+			Status:    "completed",
+			CreatedAt: now.Add(1 * time.Second),
+			UpdatedAt: now.Add(1 * time.Second),
+			Trace: map[string]any{
+				"decomposition_plan": map[string]any{
+					"delegation_mode": "approve_plan",
+					"tasks":           []any{map[string]any{"task_id": "plan"}},
+				},
+			},
+		},
+	}
+	for _, run := range seed {
+		if _, err := store.Create(context.Background(), run); err != nil {
+			t.Fatalf("create run %s: %v", run.ID, err)
+		}
+	}
+
+	s := NewServer(Config{BearerToken: "secret", Store: store, Executor: NopExecutor{}})
+	req := httptest.NewRequest(http.MethodGet, "/v1/runs?limit=10&offset=0", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rr := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rr.Code)
+	}
+
+	var payload struct {
+		Runs []Run `json:"runs"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.Runs) != len(seed) {
+		t.Fatalf("expected %d runs, got %d", len(seed), len(payload.Runs))
+	}
+
+	planByID := map[string]map[string]any{}
+	for _, run := range payload.Runs {
+		planByID[run.ID] = run.DecompositionPlan
+	}
+	if planByID["run-no-plan"] != nil {
+		t.Fatalf("expected run-no-plan decomposition_plan to be nil, got %#v", planByID["run-no-plan"])
+	}
+	if planByID["run-with-plan"] == nil {
+		t.Fatalf("expected run-with-plan decomposition_plan to be present, got %#v", planByID["run-with-plan"])
+	}
+}
+
 func TestServer_ListRunsRejectsInvalidPagination(t *testing.T) {
 	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore(), Executor: NopExecutor{}})
 	req := httptest.NewRequest(http.MethodGet, "/v1/runs?limit=0", nil)

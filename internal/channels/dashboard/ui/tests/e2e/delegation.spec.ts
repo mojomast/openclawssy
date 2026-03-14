@@ -6,6 +6,7 @@ type MockRun = {
   source: string
   status: string
   updated_at: string
+  decomposition_plan?: Record<string, unknown>
   trace?: Record<string, unknown>
 }
 
@@ -372,6 +373,74 @@ test("Task graph preview renders nodes/edges with role and confidence badges and
 
   await page.getByTestId("task-graph-reject-button").click()
   await expect(page.getByTestId("task-graph-action-notice")).toContainText("rejected")
+})
+
+test("Task graph preview uses run payload decomposition plans when detail traces are missing", async ({ page }) => {
+  const state = createMockState()
+  const listPlan = {
+    delegation_mode: "suggest_only",
+    trigger_reason: "complexity threshold exceeded",
+    min_confidence: 0.7,
+    avg_confidence: 0.81,
+    all_roles_built_in: true,
+    generated_at: "2026-03-14T11:05:01Z",
+    tasks: [
+      {
+        task_id: "discover",
+        description: "Inspect current implementation",
+        assigned_role: "scout",
+        confidence: 0.9,
+        depends_on: [],
+      },
+      {
+        task_id: "patch",
+        description: "Apply focused change",
+        assigned_role: "implementer",
+        confidence: 0.8,
+        depends_on: ["discover"],
+      },
+    ],
+    dependency_dag: [{ from_task_id: "discover", to_task_id: "patch" }],
+  }
+  state.runs = [
+    {
+      id: "run_without_plan",
+      agent_id: "default",
+      source: "chat",
+      status: "completed",
+      updated_at: "2026-03-14T11:00:00Z",
+    },
+    {
+      id: "run_with_list_plan",
+      agent_id: "default",
+      source: "chat",
+      status: "completed",
+      updated_at: "2026-03-14T11:05:00Z",
+      decomposition_plan: listPlan,
+    },
+  ]
+  state.runDetails.run_with_list_plan = {
+    id: "run_with_list_plan",
+    agent_id: "default",
+    source: "chat",
+    status: "completed",
+    updated_at: "2026-03-14T11:05:00Z",
+    decomposition_plan: listPlan,
+  }
+  state.runDetails.run_without_plan = {
+    id: "run_without_plan",
+    agent_id: "default",
+    source: "chat",
+    status: "completed",
+    updated_at: "2026-03-14T11:00:00Z",
+  }
+
+  await installDelegationMocks(page, state)
+  await page.goto("/dashboard#/delegation")
+
+  await page.getByTestId("delegation-run-select").selectOption("run_with_list_plan")
+  await expect(page.getByTestId("task-graph-node-discover")).toContainText("scout")
+  await expect(page.getByTestId("task-graph-node-patch")).toContainText("implementer")
 })
 
 test("Runs detail view opens Why this happened drawer with chronological decision records", async ({ page }) => {
