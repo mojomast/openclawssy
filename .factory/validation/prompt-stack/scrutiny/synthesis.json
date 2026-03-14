@@ -1,7 +1,7 @@
 {
   "milestone": "prompt-stack",
-  "round": 1,
-  "status": "fail",
+  "round": 2,
+  "status": "pass",
   "validatorsRun": {
     "test": {
       "passed": true,
@@ -20,64 +20,27 @@
     }
   },
   "reviewsSummary": {
-    "total": 4,
-    "passed": 1,
-    "failed": 3,
-    "failedFeatures": [
-      "prompt-stack-lint",
-      "prompt-stack-api",
-      "prompt-stack-ui"
-    ]
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "failedFeatures": []
   },
-  "blockingIssues": [
-    {
-      "featureId": "prompt-stack-lint",
-      "severity": "blocking",
-      "description": "Lint rule `delegateToPattern` captures generic natural-language terms after 'delegate ... to' and raises false undefined-role errors."
-    },
-    {
-      "featureId": "prompt-stack-lint",
-      "severity": "blocking",
-      "description": "Missing-success-criteria detection treats the phrase 'completion criteria' as sufficient evidence and can suppress required warnings when no concrete criteria are defined."
-    },
-    {
-      "featureId": "prompt-stack-api",
-      "severity": "blocking",
-      "description": "Prompt stack API creates a new `VersionStore` per request while store locking is instance-local, allowing concurrent lost updates/history corruption."
-    },
-    {
-      "featureId": "prompt-stack-ui",
-      "severity": "blocking",
-      "description": "Prompt layer editor lacks the required markdown/text syntax-highlighting behavior and remains a plain textarea."
-    }
-  ],
-  "appliedUpdates": [
-    {
-      "target": "library",
-      "description": "Added architecture note that `VersionStore` mutex scope is instance-local and handlers should reuse a shared store instance for concurrent safety.",
-      "sourceFeature": "prompt-stack-api"
-    }
-  ],
+  "blockingIssues": [],
+  "appliedUpdates": [],
   "suggestedGuidanceUpdates": [
     {
       "target": ".factory/skills/backend-worker/SKILL.md",
-      "suggestion": "Clarify whether strict tests-first/red-phase ordering is mandatory or best-effort, and align enforcement text with actual mission execution expectations.",
-      "evidence": "prompt-stack-lint transcript shows implementation edits before first targeted test run, conflicting with current skill wording.",
-      "isSystemic": false
-    },
-    {
-      "target": ".factory/skills/frontend-worker/SKILL.md",
-      "suggestion": "Allow mission-level overrides for scoped Playwright runs and manual checks when AGENTS guidance explicitly marks full-suite/manual validation as non-blocking or currently unstable.",
-      "evidence": "prompt-stack-ui review found skill requires full `npx playwright test` + manual verification while mission AGENTS requires scoped specs due known unrelated failures.",
+      "suggestion": "Clarify whether tests-first red-phase ordering is mandatory or best-effort when applying focused fixes, and align wording with observed worker execution order.",
+      "evidence": "fix-prompt-stack-lint-role-and-success-criteria-detection review observed ApplyPatch operations before first targeted `go test ./internal/promptstack -run TestLint...` run in worker session 840d75e4-43cb-48f7-b419-093a4ad15912.",
       "isSystemic": true
     },
     {
-      "target": "mission AGENTS.md",
-      "suggestion": "Clarify the '~200 line React component' guideline with explicit exceptions/expectations for complex control-plane pages and preferred decomposition checkpoints.",
-      "evidence": "prompt-stack-ui implemented a 1115-line page while guidance says keep components around 200 lines; rule appears non-enforced/ambiguous.",
+      "target": ".factory/skills/frontend-worker/SKILL.md",
+      "suggestion": "Clarify whether strict tests-first red-phase ordering is required for scoped UI fixes or can be treated as best-effort when mission constraints prioritize direct patch + focused regression validation.",
+      "evidence": "fix-prompt-stack-ui-syntax-highlighting review observed code patches before first `npx playwright test tests/e2e/prompt-stack.spec.ts` run in worker session 34284e1c-e830-4dbf-973b-ab6af7a7a09a.",
       "isSystemic": true
     }
   ],
   "rejectedObservations": [],
-  "previousRound": null
+  "previousRound": ".factory/validation/prompt-stack/scrutiny/synthesis.round1.json"
 }

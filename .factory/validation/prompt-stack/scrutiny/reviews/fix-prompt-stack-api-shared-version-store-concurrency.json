@@ -1,0 +1,15 @@
+{
+  "featureId": "fix-prompt-stack-api-shared-version-store-concurrency",
+  "reviewedAt": "2026-03-14T16:27:20Z",
+  "commitId": "4893aaf830b0824a7d5f62a404f0b769d123acc1",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix resolves the prior blocking concurrency flaw by reusing a single handler-scoped VersionStore instance and adds regression coverage that exercises concurrent PUT and rollback requests while asserting monotonic, gap-free version history.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": ".factory/validation/prompt-stack/scrutiny/reviews/prompt-stack-api.json",
+  "summary": "Pass: the original blocking issue from prompt-stack-api (per-request VersionStore instantiation causing unsafe concurrent history updates) is addressed. The handler now caches a shared VersionStore and new tests verify store reuse plus concurrent update/rollback history integrity with contiguous version sequencing. No remaining blocking or non-blocking issues were identified for this fix feature."
+}
