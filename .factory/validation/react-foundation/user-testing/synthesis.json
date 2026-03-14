@@ -1,62 +1,44 @@
 {
   "milestone": "react-foundation",
-  "round": 1,
+  "round": 2,
   "status": "fail",
-  "generatedAt": "2026-03-14T03:36:47Z",
+  "generatedAt": "2026-03-14T04:34:02Z",
   "assertionsSummary": {
-    "total": 16,
-    "passed": 12,
-    "failed": 4,
+    "total": 4,
+    "passed": 2,
+    "failed": 2,
     "blocked": 0
   },
   "passedAssertions": [
-    "VAL-REACT-FND-001",
-    "VAL-REACT-FND-002",
-    "VAL-REACT-FND-005",
-    "VAL-REACT-FND-006",
-    "VAL-REACT-FND-007",
-    "VAL-REACT-FND-008",
-    "VAL-REACT-FND-010",
-    "VAL-REACT-FND-011",
-    "VAL-REACT-FND-012",
-    "VAL-REACT-FND-013",
-    "VAL-REACT-FND-015",
-    "VAL-REACT-FND-016"
+    "VAL-REACT-FND-003",
+    "VAL-REACT-FND-009"
   ],
   "failedAssertions": [
     {
-      "id": "VAL-REACT-FND-003",
-      "reason": "App does not prompt for bearer token when missing; workspace shows missing bearer token error instead."
-    },
-    {
       "id": "VAL-REACT-FND-004",
-      "reason": "Narrow-screen inspector drawer behavior/trigger not observable."
-    },
-    {
-      "id": "VAL-REACT-FND-009",
-      "reason": "Help deep-link/search/copy-link behavior does not match contract in validated flow."
+      "reason": "Narrow-screen contract behavior still not observed: nav did not collapse and inspector drawer trigger was not visible at mobile viewport during rerun."
     },
     {
       "id": "VAL-REACT-FND-014",
-      "reason": "Runs page migration placeholder lacks required loading/empty-state behavior for data pages."
+      "reason": "Runs route still renders a static migration placeholder instead of contract-compliant loading/empty-state behavior across data pages."
     }
   ],
   "blockedAssertions": [],
   "flowReports": [
-    ".factory/validation/react-foundation/user-testing/flows/react-foundation-flow-a.json",
-    ".factory/validation/react-foundation/user-testing/flows/react-foundation-flow-b.json"
+    ".factory/validation/react-foundation/user-testing/flows/react-foundation-rerun-flow-a.json",
+    ".factory/validation/react-foundation/user-testing/flows/react-foundation-rerun-flow-b.json"
   ],
   "appliedUpdates": [
     {
-      "target": "user-testing.md",
-      "description": "Added flow-validator guidance for Browser Dashboard isolation boundaries and evidence handling.",
+      "target": "services.yaml",
+      "description": "Updated openclawssy service start command to use --no-deps so validation setup is not blocked by unrelated unhealthy compose dependencies.",
       "source": "setup"
     },
     {
       "target": "user-testing.md",
-      "description": "Documented agent-browser shared-library workaround and curl fallback for legacy-route network evidence.",
+      "description": "Added guidance for missing agent-browser request capture and documented --no-deps dashboard rebuild/start path for this environment.",
       "source": "flow-report"
     }
   ],
-  "previousRound": null
+  "previousRound": ".factory/validation/react-foundation/user-testing/synthesis.round1.json"
 }

@@ -1,0 +1,62 @@
+{
+  "milestone": "react-foundation",
+  "round": 1,
+  "status": "fail",
+  "generatedAt": "2026-03-14T03:36:47Z",
+  "assertionsSummary": {
+    "total": 16,
+    "passed": 12,
+    "failed": 4,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-REACT-FND-001",
+    "VAL-REACT-FND-002",
+    "VAL-REACT-FND-005",
+    "VAL-REACT-FND-006",
+    "VAL-REACT-FND-007",
+    "VAL-REACT-FND-008",
+    "VAL-REACT-FND-010",
+    "VAL-REACT-FND-011",
+    "VAL-REACT-FND-012",
+    "VAL-REACT-FND-013",
+    "VAL-REACT-FND-015",
+    "VAL-REACT-FND-016"
+  ],
+  "failedAssertions": [
+    {
+      "id": "VAL-REACT-FND-003",
+      "reason": "App does not prompt for bearer token when missing; workspace shows missing bearer token error instead."
+    },
+    {
+      "id": "VAL-REACT-FND-004",
+      "reason": "Narrow-screen inspector drawer behavior/trigger not observable."
+    },
+    {
+      "id": "VAL-REACT-FND-009",
+      "reason": "Help deep-link/search/copy-link behavior does not match contract in validated flow."
+    },
+    {
+      "id": "VAL-REACT-FND-014",
+      "reason": "Runs page migration placeholder lacks required loading/empty-state behavior for data pages."
+    }
+  ],
+  "blockedAssertions": [],
+  "flowReports": [
+    ".factory/validation/react-foundation/user-testing/flows/react-foundation-flow-a.json",
+    ".factory/validation/react-foundation/user-testing/flows/react-foundation-flow-b.json"
+  ],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added flow-validator guidance for Browser Dashboard isolation boundaries and evidence handling.",
+      "source": "setup"
+    },
+    {
+      "target": "user-testing.md",
+      "description": "Documented agent-browser shared-library workaround and curl fallback for legacy-route network evidence.",
+      "source": "flow-report"
+    }
+  ],
+  "previousRound": null
+}

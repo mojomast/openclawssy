@@ -13,11 +13,12 @@ Testing surface, validation approach, and resource cost classification.
 - **Dev URL**: http://localhost:5175 (Vite dev server, proxies API to :8081)
 - **Tool**: agent-browser (Playwright Chromium)
 - **Auth**: Bearer token required. Default token: `change-me` (set via OPENCLAWSSY_TOKEN or config)
-- **Setup**: Dashboard is served by the openclawssy Docker container. After React changes, the container must be rebuilt (`docker compose build openclawssy && docker compose up -d openclawssy`) to serve updated assets. For development, use Vite dev server at :5175.
+- **Setup**: Dashboard is served by the openclawssy Docker container. After React changes, the container must be rebuilt (`docker compose build openclawssy && docker compose up -d --no-deps openclawssy`) to serve updated assets without blocking on unrelated unhealthy dependencies. For development, use Vite dev server at :5175.
 
 #### Browser Runtime Notes
 - If `agent-browser` startup fails with missing shared library errors (for example `libnspr4.so`), run with an isolated `AGENT_BROWSER_HOME` and prepend Playwright bundled libs to `LD_LIBRARY_PATH`.
 - For `/dashboard-legacy` verification, if browser network capture misses the request, use `curl -i http://localhost:8081/dashboard-legacy` as supplemental status evidence.
+- If agent-browser request tracking returns no captured requests for dashboard flows, collect supplemental network evidence using `curl -i` against the same local API endpoints exercised by the UI flow.
 
 ### Playwright Runtime Bootstrap (Linux)
 - The Playwright config at `internal/channels/dashboard/ui/playwright.config.js` now bootstraps `LD_LIBRARY_PATH` at process startup.

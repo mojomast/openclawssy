@@ -1,0 +1,110 @@
+{
+  "groupId": "react-foundation-rerun-flow-b",
+  "testedAt": "2026-03-14T04:29:53Z",
+  "isolation": {
+    "milestone": "react-foundation",
+    "missionDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3",
+    "surface": "Browser Dashboard",
+    "url": "http://localhost:8081/dashboard",
+    "authToken": "change-me",
+    "evidenceDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/react-foundation/rerun-flow-b"
+  },
+  "toolsUsed": [
+    "agent-browser",
+    "curl"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-REACT-FND-009",
+      "title": "Help page fully migrated",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Open /dashboard and inspect Help page",
+          "expected": "Grouped searchable topic list and topic content panes are visible",
+          "observed": "Grouped sections (Getting Started, Integrations, Settings, etc.) and split list/content layout are visible"
+        },
+        {
+          "action": "Search for 'faq' in Help search",
+          "expected": "Topic list filters to matching topic(s)",
+          "observed": "List filtered to FAQ topic and FAQ content remained active"
+        },
+        {
+          "action": "Open deep link /dashboard#/?topic=faq",
+          "expected": "FAQ topic loads directly",
+          "observed": "URL remained /dashboard#/?topic=faq and FAQ topic/content loaded with breadcrumb + TOC + related topics"
+        },
+        {
+          "action": "Click 'Copy link to topic'",
+          "expected": "Copy-link functionality is available",
+          "observed": "Button action executed and in-app feedback appeared ('Unable to copy topic link.') due headless clipboard restriction"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "react-foundation/rerun-flow-b/VAL-REACT-FND-009-topic-list.png",
+          "react-foundation/rerun-flow-b/VAL-REACT-FND-009-topic-content-secrets.png",
+          "react-foundation/rerun-flow-b/VAL-REACT-FND-009-search-filtered.png",
+          "react-foundation/rerun-flow-b/VAL-REACT-FND-009-deeplink-faq.png",
+          "react-foundation/rerun-flow-b/VAL-REACT-FND-009-copy-link-feedback.png"
+        ],
+        "consoleErrors": "none (see react-foundation/rerun-flow-b/VAL-REACT-FND-009-console-errors.txt)",
+        "network": "No help-topic API calls captured by agent-browser tracker in this run; deep-link URL captured in react-foundation/rerun-flow-b/VAL-REACT-FND-009-current-url.txt"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-REACT-FND-014",
+      "title": "Loading and empty states on all pages",
+      "status": "fail",
+      "steps": [
+        {
+          "action": "Open /dashboard#/runs",
+          "expected": "Data page shows loading indicator during fetch and meaningful empty-state behavior (not blank placeholder)",
+          "observed": "Runs renders static migration placeholder text ('Page migration in progress') without loading/empty-state contract behavior"
+        },
+        {
+          "action": "Open /dashboard#/secrets and apply non-matching filter",
+          "expected": "Meaningful empty state message is shown",
+          "observed": "Empty state message 'No keys match this search.' shown"
+        },
+        {
+          "action": "Check for console/runtime issues while validating loading/empty states",
+          "expected": "No console errors",
+          "observed": "No console errors observed"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "react-foundation/rerun-flow-b/VAL-REACT-FND-014-runs-placeholder.png",
+          "react-foundation/rerun-flow-b/VAL-REACT-FND-014-loading-state-secrets.png",
+          "react-foundation/rerun-flow-b/VAL-REACT-FND-014-empty-state-secrets-filter.png"
+        ],
+        "consoleErrors": "none (see react-foundation/rerun-flow-b/VAL-REACT-FND-014-console-errors.txt)",
+        "network": "Supplemental API checks: GET /api/admin/secrets -> 200 (react-foundation/rerun-flow-b/VAL-REACT-FND-014-network-secrets.headers.txt), GET /v1/runs?limit=10 -> 200 (react-foundation/rerun-flow-b/VAL-REACT-FND-014-network-runs.headers.txt)."
+      },
+      "issues": "Assertion remains unmet because Runs page still presents a migration placeholder instead of full loading/empty-state contract behavior across data pages."
+    }
+  ],
+  "frictions": [
+    {
+      "description": "Clipboard write is not permitted in this headless browser environment.",
+      "resolved": true,
+      "resolution": "Used in-app feedback toast as observable copy-link action evidence.",
+      "affectedAssertions": [
+        "VAL-REACT-FND-009"
+      ]
+    },
+    {
+      "description": "agent-browser request tracker returned 'No requests captured' for these flows.",
+      "resolved": true,
+      "resolution": "Captured supplemental network evidence with curl against local API endpoints.",
+      "affectedAssertions": [
+        "VAL-REACT-FND-009",
+        "VAL-REACT-FND-014"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "Validated 2 assigned assertions: 1 passed (VAL-REACT-FND-009), 1 failed (VAL-REACT-FND-014)."
+}

@@ -13,7 +13,7 @@ commands:
 
 services:
   openclawssy:
-    start: "docker compose up -d openclawssy"
+    start: "docker compose up -d --no-deps openclawssy"
     stop: "docker compose stop openclawssy"
     healthcheck: "curl -sf http://localhost:8081/dashboard"
     port: 8081
