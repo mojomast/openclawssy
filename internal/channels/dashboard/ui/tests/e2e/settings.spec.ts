@@ -303,9 +303,17 @@ test("agents category renders profile editor and subagent defaults with editable
   await expect(page.getByText("Agent Profile Editor")).toBeVisible()
   await expect(page.getByText("Subagent defaults")).toBeVisible()
   await expect(page.locator("label.settings-field:has-text('Profile agent') select")).toHaveValue("reviewer")
+  await expect(page.locator("label.settings-field:has-text('Subagent thinking mode') select")).toHaveValue("on_error")
+  await expect(page.locator("label.settings-field:has-text('Subagent allowed tools (comma separated)') input")).toHaveValue("fs.read")
 
   await page.locator("label.settings-field:has-text('Subagent timeout ms') input").fill("60000")
   await expect(page.locator(".settings-diff-table code", { hasText: "agents.subagent_defaults.timeout_ms" })).toBeVisible()
+
+  await page.locator("label.settings-field:has-text('Subagent thinking mode') select").selectOption("always")
+  await expect(page.locator(".settings-diff-table code", { hasText: "agents.subagent_defaults.thinking_mode" })).toBeVisible()
+
+  await page.locator("label.settings-field:has-text('Subagent allowed tools (comma separated)') input").fill("fs.read, code.search")
+  await expect(page.locator(".settings-diff-table code", { hasText: "agents.subagent_defaults.allowed_tools" })).toBeVisible()
 })
 
 test("advanced raw JSON editor applies valid JSON and surfaces parse errors for invalid JSON", async ({ page }) => {
@@ -329,24 +337,36 @@ test("advanced raw JSON editor applies valid JSON and surfaces parse errors for 
   await expect(page.locator(".settings-diff-table code", { hasText: "server.port" })).toBeVisible()
 })
 
-test("unsaved changes warning appears on route navigation and blocks until discard is confirmed", async ({ page }) => {
+test("unsaved changes dialog appears on route navigation and supports stay, save, and discard flows", async ({ page }) => {
   const state = createState()
   await routeSettingsApi(page, state)
 
   await page.goto("/dashboard#/settings")
   await page.locator("label.settings-field:has-text('Server port') input").fill("9191")
 
-  page.once("dialog", async (dialog) => {
-    expect(dialog.message()).toContain("unsaved settings changes")
-    await dialog.dismiss()
-  })
+  const navigationDialog = page.getByRole("dialog", { name: "Unsaved settings changes" })
+
   await page.getByRole("link", { name: "Chat" }).click()
+  await expect(navigationDialog).toBeVisible()
   await expect(page).toHaveURL(/#\/settings/)
 
-  page.once("dialog", async (dialog) => {
-    expect(dialog.message()).toContain("unsaved settings changes")
-    await dialog.accept()
-  })
+  await navigationDialog.getByRole("button", { name: "Stay on Settings" }).click()
+  await expect(navigationDialog).toHaveCount(0)
+  await expect(page).toHaveURL(/#\/settings/)
+  expect(state.patchBodies.length).toBe(0)
+
   await page.getByRole("link", { name: "Chat" }).click()
+  await expect(navigationDialog).toBeVisible()
+  await navigationDialog.getByRole("button", { name: "Save and Continue" }).click()
+  await expect.poll(() => state.patchBodies.length).toBe(1)
+  await expect(page).toHaveURL(/#\/chat/)
+
+  await page.goto("/dashboard#/settings")
+  await page.locator("label.settings-field:has-text('Server port') input").fill("9292")
+
+  await page.getByRole("link", { name: "Chat" }).click()
+  await expect(navigationDialog).toBeVisible()
+  await navigationDialog.getByRole("button", { name: "Discard changes" }).click()
+  await expect.poll(() => state.patchBodies.length).toBe(1)
   await expect(page).toHaveURL(/#\/chat/)
 })

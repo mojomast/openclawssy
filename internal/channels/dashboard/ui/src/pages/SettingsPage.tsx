@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { createApiClient, type ApiClient } from "@/lib/api"
+import { Button } from "@/components/ui/button"
 
 type JsonRecord = Record<string, any>
 
@@ -20,6 +21,11 @@ type DiffRow = {
   path: string
   beforeValue: unknown
   afterValue: unknown
+}
+
+type PendingNavigation = {
+  pathname: string
+  search: string
 }
 
 type CategoryDefinition = {
@@ -133,22 +139,29 @@ function normalizeCategory(value: string | null): CategoryKey | null {
   return match ? match.key : null
 }
 
-function routePathFromHref(href: string): string | null {
-  try {
-    const url = new URL(href, window.location.href)
-    const hash = String(url.hash || "").replace(/^#/, "")
-    if (!hash) {
-      return null
-    }
-    const [rawPath] = hash.split("?")
-    return rawPath.startsWith("/") ? rawPath : `/${rawPath}`
-  } catch {
+function isSettingsRoute(path: string | null): boolean {
+  return path === "/settings"
+}
+
+function routeTargetFromHash(hashValue: string): PendingNavigation | null {
+  const hash = String(hashValue || "").replace(/^#/, "")
+  if (!hash) {
     return null
+  }
+  const [rawPath, rawSearch = ""] = hash.split("?")
+  return {
+    pathname: rawPath.startsWith("/") ? rawPath : `/${rawPath}`,
+    search: rawSearch ? `?${rawSearch}` : "",
   }
 }
 
-function isSettingsRoute(path: string | null): boolean {
-  return path === "/settings"
+function routeTargetFromHref(hrefValue: string): PendingNavigation | null {
+  try {
+    const url = new URL(hrefValue, window.location.href)
+    return routeTargetFromHash(url.hash)
+  } catch {
+    return null
+  }
 }
 
 function parseNumber(input: string, fallback: number): number {
@@ -185,6 +198,12 @@ export function SettingsPage() {
   const [providerModels, setProviderModels] = useState<Record<string, string[]>>({})
   const [rawEditorValue, setRawEditorValue] = useState("")
   const [rawEditorError, setRawEditorError] = useState("")
+  const [pendingNavigation, setPendingNavigation] = useState<PendingNavigation | null>(null)
+  const [unsavedDialogOpen, setUnsavedDialogOpen] = useState(false)
+  const dirtyRef = useRef(false)
+  const allowNextNavigationRef = useRef(false)
+  const restoringHashRef = useRef(false)
+  const settingsRouteRef = useRef("/settings")
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -196,6 +215,7 @@ export function SettingsPage() {
       const cloned = deepClone(loaded)
       setConfig(cloned)
       setDraft(cloned)
+      dirtyRef.current = false
       setRawEditorValue(`${JSON.stringify(cloned, null, 2)}\n`)
       const profileKeys = Object.keys((loaded.agents?.profiles as JsonRecord) || {})
       if (profileKeys.length > 0 && !profileKeys.includes(selectedProfile)) {
@@ -262,8 +282,6 @@ export function SettingsPage() {
     return collectDiffRows(config, draft)
   }, [config, draft])
 
-  const hasUnsavedChanges = diffRows.length > 0
-
   const syncSearchParams = useCallback(
     (updates: { category?: CategoryKey; profile?: string }) => {
       const params = new URLSearchParams(location.search)
@@ -286,6 +304,7 @@ export function SettingsPage() {
   )
 
   const setDraftPath = useCallback((path: string, nextValue: unknown) => {
+    dirtyRef.current = true
     setDraft((previous) => {
       const baseline = isRecord(previous) ? previous : {}
       return writePath(baseline, path, nextValue)
@@ -303,9 +322,9 @@ export function SettingsPage() {
   const selectedModelValue = String(readPath(withDraftRecord, "model.name", "") || "")
   const selectableModels = Array.from(new Set([selectedModelValue, ...(providerModels[selectedProvider] || [])].filter(Boolean)))
 
-  const saveConfig = useCallback(async () => {
+  const saveConfig = useCallback(async (): Promise<boolean> => {
     if (!draft) {
-      return
+      return false
     }
     setSaving(true)
     setSaveNotice("")
@@ -315,10 +334,13 @@ export function SettingsPage() {
       const snapshot = deepClone(draft)
       setConfig(snapshot)
       setDraft(snapshot)
+      dirtyRef.current = false
       setSaveNotice("Config saved.")
+      return true
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to save config"
       setSaveError(message)
+      return false
     } finally {
       setSaving(false)
     }
@@ -373,6 +395,7 @@ export function SettingsPage() {
       }
       const cloned = deepClone(parsed)
       setDraft(cloned)
+      dirtyRef.current = true
       setRawEditorError("")
       setSaveNotice("")
       setSaveError("")
@@ -382,49 +405,117 @@ export function SettingsPage() {
     }
   }, [rawEditorValue])
 
+  const closeUnsavedDialog = useCallback(() => {
+    setUnsavedDialogOpen(false)
+    setPendingNavigation(null)
+  }, [])
+
+  const continueToPendingNavigation = useCallback(() => {
+    if (!pendingNavigation) {
+      return
+    }
+    allowNextNavigationRef.current = true
+    navigate({ pathname: pendingNavigation.pathname, search: pendingNavigation.search })
+    closeUnsavedDialog()
+  }, [closeUnsavedDialog, navigate, pendingNavigation])
+
+  const saveAndContinue = useCallback(async () => {
+    if (!pendingNavigation) {
+      return
+    }
+    const saved = await saveConfig()
+    if (!saved) {
+      return
+    }
+    continueToPendingNavigation()
+  }, [continueToPendingNavigation, pendingNavigation, saveConfig])
+
   useEffect(() => {
-    const handleLinkNavigation = (event: MouseEvent) => {
-      if (!hasUnsavedChanges) {
+    settingsRouteRef.current = `${location.pathname}${location.search}` || "/settings"
+  }, [location.pathname, location.search])
+
+  useEffect(() => {
+    const handleDocumentClick = (event: MouseEvent) => {
+      if (!dirtyRef.current) {
         return
       }
 
-      const target = event.target instanceof Element ? event.target.closest("a[href]") : null
-      if (!target) {
+      const eventTarget = event.target
+      const eventElement = eventTarget instanceof Element ? eventTarget : eventTarget instanceof Node ? eventTarget.parentElement : null
+      const linkElement = eventElement ? eventElement.closest("a[href]") : null
+      if (!linkElement) {
         return
       }
 
-      const href = target.getAttribute("href")
+      const href = linkElement.getAttribute("href")
       if (!href) {
         return
       }
 
-      const destinationPath = routePathFromHref(href)
-      if (!destinationPath || isSettingsRoute(destinationPath)) {
+      const destination = routeTargetFromHref(href)
+      if (!destination || isSettingsRoute(destination.pathname)) {
         return
       }
 
-      if (!window.confirm(UNSAVED_SETTINGS_MESSAGE)) {
-        event.preventDefault()
-        event.stopPropagation()
-      }
+      event.preventDefault()
+      event.stopPropagation()
+      setPendingNavigation(destination)
+      setUnsavedDialogOpen(true)
     }
 
+    document.addEventListener("click", handleDocumentClick, true)
+    return () => {
+      document.removeEventListener("click", handleDocumentClick, true)
+    }
+  }, [])
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      if (restoringHashRef.current) {
+        restoringHashRef.current = false
+        return
+      }
+      if (allowNextNavigationRef.current) {
+        allowNextNavigationRef.current = false
+        return
+      }
+      if (!dirtyRef.current) {
+        return
+      }
+
+      const destination = routeTargetFromHash(window.location.hash)
+      if (!destination || isSettingsRoute(destination.pathname)) {
+        return
+      }
+
+      setPendingNavigation(destination)
+      setUnsavedDialogOpen(true)
+
+      restoringHashRef.current = true
+      window.location.hash = `#${settingsRouteRef.current}`
+    }
+
+    window.addEventListener("hashchange", handleHashChange)
+    return () => {
+      window.removeEventListener("hashchange", handleHashChange)
+    }
+  }, [])
+
+  useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (!hasUnsavedChanges) {
+      if (!dirtyRef.current) {
         return
       }
       event.preventDefault()
       event.returnValue = ""
     }
 
-    document.addEventListener("click", handleLinkNavigation, true)
     window.addEventListener("beforeunload", handleBeforeUnload)
 
     return () => {
-      document.removeEventListener("click", handleLinkNavigation, true)
       window.removeEventListener("beforeunload", handleBeforeUnload)
     }
-  }, [hasUnsavedChanges])
+  }, [])
 
   useEffect(() => {
     if (!draft) {
@@ -776,6 +867,34 @@ export function SettingsPage() {
                     <option value="auto_execute">auto_execute</option>
                   </select>
                 </label>
+                <label className="settings-field">
+                  <span className="settings-field-title">Subagent thinking mode</span>
+                  <select
+                    className="settings-select"
+                    value={String(readPath(draft, "agents.subagent_defaults.thinking_mode", "on_error"))}
+                    onChange={(event) => setDraftPath("agents.subagent_defaults.thinking_mode", event.target.value)}
+                  >
+                    <option value="never">never</option>
+                    <option value="on_error">on_error</option>
+                    <option value="always">always</option>
+                  </select>
+                </label>
+                <label className="settings-field">
+                  <span className="settings-field-title">Subagent allowed tools (comma separated)</span>
+                  <input
+                    className="settings-input"
+                    value={String((readPath(draft, "agents.subagent_defaults.allowed_tools", []) as string[]).join(", "))}
+                    onChange={(event) =>
+                      setDraftPath(
+                        "agents.subagent_defaults.allowed_tools",
+                        event.target.value
+                          .split(",")
+                          .map((item) => item.trim())
+                          .filter(Boolean)
+                      )
+                    }
+                  />
+                </label>
               </>
             )}
 
@@ -942,6 +1061,34 @@ export function SettingsPage() {
           </section>
         </section>
       </div>
+
+      {unsavedDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70" onClick={closeUnsavedDialog} />
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-unsaved-dialog-title"
+            className="relative z-10 w-full max-w-lg rounded-lg border bg-background p-6 shadow-lg"
+          >
+            <h3 id="settings-unsaved-dialog-title" className="text-lg font-semibold leading-none tracking-tight">
+              Unsaved settings changes
+            </h3>
+            <p className="mt-2 text-sm text-muted-foreground">{UNSAVED_SETTINGS_MESSAGE}</p>
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button type="button" variant="outline" onClick={closeUnsavedDialog}>
+                Stay on Settings
+              </Button>
+              <Button type="button" variant="secondary" onClick={continueToPendingNavigation}>
+                Discard changes
+              </Button>
+              <Button type="button" onClick={() => void saveAndContinue()} disabled={saving || !pendingNavigation}>
+                {saving ? "Saving..." : "Save and Continue"}
+              </Button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   )
 }
