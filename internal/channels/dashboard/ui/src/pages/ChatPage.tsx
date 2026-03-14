@@ -1716,17 +1716,16 @@ export function ChatPage() {
   }, [sendMessage, shouldOfferContinueAction])
 
   const retryLastPrompt = useCallback(() => {
-    const message = safeText(stateRef.current.lastPrompt)
-    if (!message || stateRef.current.sendPending) {
+    const message = safeText(state.lastPrompt)
+    if (!message || state.sendPending) {
       return
     }
     setState((prev) => ({
       ...prev,
-      draft: message,
       debugCopyStatus: "",
     }))
-    void sendMessage()
-  }, [sendMessage])
+    void sendMessage(message)
+  }, [sendMessage, state.lastPrompt, state.sendPending])
 
   const copyDebugBundle = useCallback(async () => {
     try {

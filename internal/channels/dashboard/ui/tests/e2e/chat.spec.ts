@@ -259,6 +259,22 @@ test("sends a message, streams model_text SSE events, and finalizes on completed
   expect(state.chatPosts[0]?.message).toBe("Explain the migration")
 })
 
+test("retry always resubmits the last prompt", async ({ page }) => {
+  const state = await installChatRoutes(page)
+  await page.goto("/dashboard#/chat")
+
+  await page.getByLabel("Message composer").fill("Retry me")
+  await page.getByRole("button", { name: "Send" }).click()
+  await expect(page.getByText("Retry me")).toBeVisible()
+
+  await expect(page.getByRole("button", { name: "Retry" })).toBeEnabled()
+  await page.getByRole("button", { name: "Retry" }).click()
+
+  await expect.poll(() => state.chatPosts.length).toBe(2)
+  expect(state.chatPosts[0]?.message).toBe("Retry me")
+  expect(state.chatPosts[1]?.message).toBe("Retry me")
+})
+
 test("renders inline tool timeline cards with expand/collapse and supports timeline toggle", async ({ page }) => {
   const body =
     sseFrame({
