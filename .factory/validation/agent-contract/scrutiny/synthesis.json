@@ -1,7 +1,7 @@
 {
   "milestone": "agent-contract",
-  "round": 1,
-  "status": "fail",
+  "round": 2,
+  "status": "pass",
   "validatorsRun": {
     "test": {
       "passed": true,
@@ -10,7 +10,7 @@
     },
     "typecheck": {
       "passed": true,
-      "command": "cd \"/home/mojo/projects/openclawssy\" && cd internal/channels/dashboard/ui && npx tsc --noEmit",
+      "command": "cd \"/home/mojo/projects/openclawssy/internal/channels/dashboard/ui\" && npx tsc --noEmit",
       "exitCode": 0
     },
     "lint": {
@@ -20,46 +20,21 @@
     }
   },
   "reviewsSummary": {
-    "total": 4,
-    "passed": 2,
-    "failed": 2,
-    "failedFeatures": [
-      "agent-contract-resolver",
-      "agent-contract-ui"
-    ]
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "failedFeatures": []
   },
-  "blockingIssues": [
-    {
-      "featureId": "agent-contract-resolver",
-      "severity": "blocking",
-      "description": "Resolver applies agent profile model overrides even when agents.allow_agent_model_overrides is false, diverging from runtime policy behavior."
-    },
-    {
-      "featureId": "agent-contract-resolver",
-      "severity": "blocking",
-      "description": "Section-level inheritance tracking can remain stale because precedence only upgrades and does not downgrade after fallback replacement."
-    },
-    {
-      "featureId": "agent-contract-ui",
-      "severity": "blocking",
-      "description": "Rollback snapshots are sourced from redacted /api/admin/config payloads; restoring them can erase secret/token values instead of restoring true prior state."
-    }
-  ],
-  "appliedUpdates": [
-    {
-      "target": "library",
-      "description": "Updated .factory/library/architecture.md to document runtime model-override gating via agents.allow_agent_model_overrides and to document that GET /api/admin/config is redacted and unsafe for rollback snapshots.",
-      "sourceFeature": "agent-contract-resolver"
-    }
-  ],
+  "blockingIssues": [],
+  "appliedUpdates": [],
   "suggestedGuidanceUpdates": [
     {
-      "target": ".factory/skills/frontend-worker/SKILL.md",
-      "suggestion": "Align Step 5 validator guidance with mission-level known pre-existing Playwright failures by allowing scoped e2e specs when full-suite failures are unrelated to the assigned feature.",
-      "evidence": "agent-contract-ui review observed predictable skill-procedure deviation because SKILL.md requires full Playwright suite while mission AGENTS.md explicitly instructs scoped specs for in-progress migration features.",
+      "target": ".factory/skills/fullstack-worker/SKILL.md",
+      "suggestion": "Adjust Playwright validation guidance to allow scoped specs when mission guidance explicitly documents known unrelated full-suite failures.",
+      "evidence": "fix-agent-contract-ui-safe-rollback-snapshots review found a procedure mismatch: fullstack-worker step guidance expects full Playwright suite, while mission AGENTS.md directs scoped specs due pre-existing unrelated failures.",
       "isSystemic": true
     }
   ],
   "rejectedObservations": [],
-  "previousRound": null
+  "previousRound": ".factory/validation/agent-contract/scrutiny/synthesis.round1.json"
 }
