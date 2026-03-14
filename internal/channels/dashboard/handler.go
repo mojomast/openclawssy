@@ -120,8 +120,7 @@ const (
 
 var builtInSkillCatalog = skillcatalog.Catalog()
 
-//go:embed ui/*
-//go:embed ui/dist/*
+//go:embed ui/dist ui/index.html ui/app.js ui/styles.css ui/help ui/src
 var dashboardUIFS embed.FS
 
 func New(rootDir string, store httpchannel.RunStore, schedulerStore ...*scheduler.Store) *Handler {
