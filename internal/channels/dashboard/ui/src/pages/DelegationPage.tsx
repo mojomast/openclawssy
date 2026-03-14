@@ -13,6 +13,10 @@ type RunSummary = {
   updatedAt: string
 }
 
+const modernDelegationModes = ["suggest_only", "approve_plan", "auto_trusted", "full_autonomous"] as const
+const legacyDelegationModes = ["prompt_only", "tool_gated", "auto_execute"] as const
+const supportedDelegationModes = [...modernDelegationModes, ...legacyDelegationModes]
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null
@@ -162,7 +166,7 @@ function extractPlanFromRunDetail(value: unknown): DecompositionPlan | null {
 function parseDelegationMode(rawConfig: Record<string, unknown>): string {
   const agents = asRecord(rawConfig.agents)
   const mode = asText(agents?.delegation_mode).trim().toLowerCase()
-  if (["suggest_only", "approve_plan", "auto_trusted", "full_autonomous"].includes(mode)) {
+  if (supportedDelegationModes.includes(mode as (typeof supportedDelegationModes)[number])) {
     return mode
   }
   return "suggest_only"
@@ -381,10 +385,16 @@ export function DelegationPage() {
                 disabled={loading || saving}
                 onChange={(event) => setMode(event.target.value)}
               >
-                <option value="suggest_only">suggest_only</option>
-                <option value="approve_plan">approve_plan</option>
-                <option value="auto_trusted">auto_trusted</option>
-                <option value="full_autonomous">full_autonomous</option>
+                {modernDelegationModes.map((modeName) => (
+                  <option key={modeName} value={modeName}>
+                    {modeName}
+                  </option>
+                ))}
+                {legacyDelegationModes.map((modeName) => (
+                  <option key={modeName} value={modeName}>
+                    {modeName} (legacy)
+                  </option>
+                ))}
               </select>
             </label>
 

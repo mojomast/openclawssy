@@ -33,11 +33,11 @@ type MockState = {
   configPatchBodies: Record<string, unknown>[]
 }
 
-function createMockState(): MockState {
+function createMockState(delegationMode = "suggest_only"): MockState {
   return {
     config: {
       agents: {
-        delegation_mode: "suggest_only",
+        delegation_mode: delegationMode,
         delegation_threshold: 3,
         delegation_cooldown_iterations: 12,
         auto_delegate: true,
@@ -330,6 +330,25 @@ test("Delegation policy editor shows mode/threshold/cooldown/toggle and saves th
 
   await expect(page.getByTestId("delegation-save-notice")).toContainText("saved")
 })
+
+for (const legacyMode of ["prompt_only", "tool_gated", "auto_execute"] as const) {
+  test(`Delegation policy editor preserves legacy mode ${legacyMode} on save`, async ({ page }) => {
+    const state = createMockState(legacyMode)
+    await installDelegationMocks(page, state)
+
+    await page.goto("/dashboard#/delegation")
+
+    await expect(page.getByTestId("delegation-mode-select")).toHaveValue(legacyMode)
+
+    await page.getByTestId("delegation-save-button").click()
+
+    await expect.poll(() => state.configPatchBodies.length).toBe(1)
+    const agents = (state.configPatchBodies[0].agents || {}) as Record<string, unknown>
+    expect(agents.delegation_mode).toBe(legacyMode)
+
+    await expect(page.getByTestId("delegation-save-notice")).toContainText("saved")
+  })
+}
 
 test("Task graph preview renders nodes/edges with role and confidence badges and shows approve/reject actions", async ({ page }) => {
   const state = createMockState()
