@@ -20,7 +20,7 @@ import {
   // New pages (control plane)
   AgentContractPage,
   PromptStackPage,
-  RolesPage,
+  RoleTemplatePage,
   DelegationPage,
   EvalPage,
 } from './pages'
@@ -51,7 +51,7 @@ function App() {
           {/* 5 new control plane pages */}
           <Route path="agent-contract" element={<AgentContractPage />} />
           <Route path="prompt-stack" element={<PromptStackPage />} />
-          <Route path="roles" element={<RolesPage />} />
+          <Route path="roles" element={<RoleTemplatePage />} />
           <Route path="delegation" element={<DelegationPage />} />
           <Route path="eval" element={<EvalPage />} />
         </Route>

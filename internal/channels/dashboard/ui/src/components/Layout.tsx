@@ -42,7 +42,7 @@ const navSections: NavSection[] = [
     items: [
       { path: '/agent-contract', label: 'Agent Contract' },
       { path: '/prompt-stack', label: 'Prompt Stack' },
-      { path: '/roles', label: 'Roles' },
+      { path: '/roles', label: 'Role Templates' },
       { path: '/delegation', label: 'Delegation' },
       { path: '/eval', label: 'Eval' },
     ],

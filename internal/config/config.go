@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"openclawssy/internal/roles"
 )
 
 type Config struct {
@@ -147,6 +149,7 @@ type AgentsConfig struct {
 	AllowAgentModelOverrides bool                    `json:"allow_agent_model_overrides"`
 	SelfImprovementEnabled   bool                    `json:"self_improvement_enabled"`
 	Profiles                 map[string]AgentProfile `json:"profiles,omitempty"`
+	CustomRoleTemplates      []roles.RoleTemplate    `json:"custom_role_templates,omitempty"`
 	// Delegation settings
 	AutoDelegate           bool   `json:"auto_delegate,omitempty"`
 	DelegationMode         string `json:"delegation_mode,omitempty"`
@@ -712,6 +715,10 @@ func (c Config) Validate() error {
 		if profile.Model.TimeoutMS < 0 || profile.Model.TimeoutMS > 600000 {
 			return fmt.Errorf("agents.profiles.%s.model.timeout_ms must be between 0 and 600000", agentID)
 		}
+	}
+
+	if _, err := roles.NewRoleStore(c.Agents.CustomRoleTemplates); err != nil {
+		return fmt.Errorf("agents.custom_role_templates: %w", err)
 	}
 
 	// Validate subagent restriction defaults

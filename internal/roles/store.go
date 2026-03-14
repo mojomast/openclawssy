@@ -65,6 +65,22 @@ func (s *RoleStore) List() []RoleTemplate {
 	return all
 }
 
+func (s *RoleStore) Custom() []RoleTemplate {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	custom := make([]RoleTemplate, 0, len(s.custom))
+	for _, template := range s.custom {
+		custom = append(custom, cloneTemplate(template))
+	}
+
+	sort.Slice(custom, func(i, j int) bool {
+		return custom[i].Name < custom[j].Name
+	})
+
+	return custom
+}
+
 func (s *RoleStore) Get(name string) (RoleTemplate, bool) {
 	normalizedName := normalizeRoleName(name)
 	if normalizedName == "" {

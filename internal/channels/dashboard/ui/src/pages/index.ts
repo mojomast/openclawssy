@@ -20,6 +20,6 @@ export { DashboardsPage } from './DashboardsPage'
 // New pages (5 control plane)
 export { AgentContractPage } from './AgentContractPage'
 export { PromptStackPage } from './PromptStackPage'
-export { RolesPage } from './RolesPage'
+export { RoleTemplatePage } from './RoleTemplatePage'
 export { DelegationPage } from './DelegationPage'
 export { EvalPage } from './EvalPage'
