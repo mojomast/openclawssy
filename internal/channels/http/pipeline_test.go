@@ -29,6 +29,10 @@ type captureInputExecutor struct {
 	lastInput ExecutionInput
 }
 
+type cancelFallbackExecutor struct {
+	started chan struct{}
+}
+
 func (f *flakyRetryableExecutor) Execute(_ context.Context, _ ExecutionInput) (ExecutionResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -61,6 +65,22 @@ func (c *captureInputExecutor) Execute(_ context.Context, input ExecutionInput) 
 	c.lastInput = input
 	c.mu.Unlock()
 	return ExecutionResult{Output: "done"}, nil
+}
+
+func (c cancelFallbackExecutor) Execute(ctx context.Context, _ ExecutionInput) (ExecutionResult, error) {
+	select {
+	case <-c.started:
+	default:
+		close(c.started)
+	}
+	<-ctx.Done()
+	return ExecutionResult{
+		Output:    "fallback output after cancel",
+		Provider:  "test-provider",
+		Model:     "test-model",
+		ToolCalls: 2,
+		Trace:     map[string]any{"cancel_seen": true},
+	}, nil
 }
 
 func TestQueueRunPersistsSessionAndTrace(t *testing.T) {
@@ -203,6 +223,80 @@ func TestQueueRunWritesFallbackOutputWhenExecutorReturnsEmptyText(t *testing.T) 
 			t.Fatalf("run did not complete in time, last status=%q", run.Status)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestQueueRunCanceledWhenExecutorReturnsNilErrorAfterContextCancel(t *testing.T) {
+	store := NewInMemoryRunStore()
+	eventBus := NewRunEventBus(16)
+	tracker := NewActiveRunTracker()
+	exec := cancelFallbackExecutor{started: make(chan struct{})}
+
+	queued, err := QueueRunWithOptions(
+		context.Background(),
+		store,
+		exec,
+		"agent-1",
+		"cancel me",
+		"dashboard",
+		"chat_123",
+		"",
+		QueueRunOptions{EventBus: eventBus, Tracker: tracker},
+	)
+	if err != nil {
+		t.Fatalf("queue run: %v", err)
+	}
+
+	select {
+	case <-exec.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for executor to start")
+	}
+
+	if err := tracker.Cancel(queued.ID); err != nil {
+		t.Fatalf("cancel run: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := WaitForQueuedRuns(ctx); err != nil {
+		t.Fatalf("wait for queued runs: %v", err)
+	}
+
+	run, err := store.Get(context.Background(), queued.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if run.Status != "canceled" {
+		t.Fatalf("expected canceled status, got %+v", run)
+	}
+	if run.Error != "run canceled" {
+		t.Fatalf("expected run canceled error, got %+v", run)
+	}
+	if run.Provider != "test-provider" || run.Model != "test-model" || run.ToolCalls != 2 {
+		t.Fatalf("expected result metadata to persist on canceled run, got %+v", run)
+	}
+	if run.Trace == nil || run.Trace["cancel_seen"] != true {
+		t.Fatalf("expected cancellation trace metadata, got %#v", run.Trace)
+	}
+
+	ch, unsubscribe := eventBus.Subscribe(queued.ID, 0)
+	defer unsubscribe()
+	seenCanceled := false
+	seenCompleted := false
+	for event := range ch {
+		switch event.Type {
+		case RunEventCanceled:
+			seenCanceled = true
+		case RunEventCompleted:
+			seenCompleted = true
+		}
+	}
+	if !seenCanceled {
+		t.Fatal("expected canceled terminal event")
+	}
+	if seenCompleted {
+		t.Fatal("did not expect completed terminal event for canceled run")
 	}
 }
 

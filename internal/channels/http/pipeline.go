@@ -100,6 +100,7 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 	}
 
 	result, err := executeWithRetry(ctx, executor, input)
+	err = coerceContextCancellation(ctx, err)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			run.Status = "canceled"
@@ -155,6 +156,19 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 	}
 	run.UpdatedAt = time.Now().UTC()
 	_ = store.Update(ctx, run)
+}
+
+func coerceContextCancellation(ctx context.Context, err error) error {
+	if err != nil {
+		return err
+	}
+	if ctx == nil {
+		return nil
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return context.Canceled
+	}
+	return nil
 }
 
 func publishQueueRunEvent(bus *RunEventBus, runID string, eventType RunEventType, data map[string]any) {
