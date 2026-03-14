@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"time"
 )
@@ -69,7 +70,7 @@ func runCase(ctx context.Context, testCase TestCase) TestResult {
 	result := TestResult{}
 
 	if testCase.Setup != nil {
-		if err := testCase.Setup(ctx); err != nil {
+		if err := runSetup(ctx, testCase.Setup); err != nil {
 			result.Passed = false
 			result.Error = fmt.Sprintf("%v: %v", ErrSuiteSetup, err)
 		}
@@ -80,12 +81,18 @@ func runCase(ctx context.Context, testCase TestCase) TestResult {
 			result.Passed = false
 			result.Error = ErrNoRunFunction.Error()
 		} else {
-			result = testCase.Run(ctx)
+			runResult, err := runTestCase(ctx, testCase.Run)
+			if err != nil {
+				result.Passed = false
+				result.Error = err.Error()
+			} else {
+				result = runResult
+			}
 		}
 	}
 
 	if testCase.Cleanup != nil {
-		if err := testCase.Cleanup(ctx); err != nil {
+		if err := runCleanup(ctx, testCase.Cleanup); err != nil {
 			cleanupMsg := fmt.Sprintf("%v: %v", ErrSuiteCleanup, err)
 			if strings.TrimSpace(result.Error) == "" {
 				result.Error = cleanupMsg
@@ -108,4 +115,43 @@ func runCase(ctx context.Context, testCase TestCase) TestResult {
 	}
 
 	return result
+}
+
+func runSetup(ctx context.Context, setup SetupFunc) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = callbackPanicError("setup", recovered)
+		}
+	}()
+
+	return setup(ctx)
+}
+
+func runTestCase(ctx context.Context, run RunFunc) (result TestResult, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = callbackPanicError("run", recovered)
+		}
+	}()
+
+	return run(ctx), nil
+}
+
+func runCleanup(ctx context.Context, cleanup CleanupFunc) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = callbackPanicError("cleanup", recovered)
+		}
+	}()
+
+	return cleanup(ctx)
+}
+
+func callbackPanicError(stage string, recovered any) error {
+	stack := strings.TrimSpace(string(debug.Stack()))
+	if stack == "" {
+		return fmt.Errorf("panic recovered in %s callback: %v", stage, recovered)
+	}
+
+	return fmt.Errorf("panic recovered in %s callback: %v\nstack:\n%s", stage, recovered, stack)
 }
