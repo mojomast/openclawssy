@@ -1,0 +1,26 @@
+{
+  "featureId": "fix-react-migration-sandbox-api-contract-parity",
+  "reviewedAt": "2026-03-14T07:53:30Z",
+  "commitId": "521d8e6",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Commit 521d8e6 directly fixes the two blocking API-contract mismatches from the original sandbox migration commit b071a75: status rendering no longer depends on a missing provider field, and image rows now map backend repository/size keys. The associated sandbox e2e mocks/assertions were updated to backend field names, so the fix closes both production and test-contract gaps identified in the prior failed review.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The frontend-worker skill has contradictory validation guidance for migration work: step 5 requires running the full Playwright suite, while the migration note says to use scoped specs for assigned pages due known unrelated failures. This causes avoidable 'procedure deviation' noise even when workers follow mission policy.",
+      "evidence": ".factory/skills/frontend-worker/SKILL.md:81-85 requires full suite; .factory/skills/frontend-worker/SKILL.md:142-144 says scoped migration specs are expected; handoff 2026-03-14T07-45-19-528Z__fix-react-migration-sandbox-api-contract-parity__b635523a-0333-4e68-a470-b8d3ca143803.json:71-76 marks followedProcedure=false for using scoped spec."
+    },
+    {
+      "area": "conventions",
+      "observation": "React migration verification command ordering can be misleading for Playwright because e2e serves prebuilt dist assets; running Playwright before rebuilding dist can test stale UI code and create false negatives.",
+      "evidence": "Mission features.json lists this feature's verification as tsc -> playwright -> vite build (features.json:1562-1564). Playwright config serves tests/e2e/server.mjs, which serves ui/dist files. The handoff records an initial Playwright failure caused by stale prebuilt dist assets before a build (handoff file:31-33)."
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/react-migration/scrutiny/reviews/react-migrate-sandbox.json",
+  "summary": "Reviewed the fix feature transcript skeleton plus both relevant diffs (original failure b071a75 and fix 521d8e6). The fix adequately addresses the prior blocking sandbox API-contract issues and updates test mocks/assertions to match backend schema, so this fix review passes."
+}
