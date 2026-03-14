@@ -1,6 +1,118 @@
 import { expect, test, type Page, type Route } from "@playwright/test"
 
-async function installEvalMocks(page: Page): Promise<void> {
+const defaultRuns = [
+  {
+    id: 42,
+    suite: "basic",
+    timestamp: "2026-03-14T19:00:00Z",
+    total: 2,
+    passed: 1,
+    failed: 1,
+    status: "fail",
+    results: [
+      {
+        name: "case-pass",
+        result: {
+          passed: true,
+          expected: "ok",
+          actual: "ok",
+          duration_ms: 11,
+        },
+      },
+      {
+        name: "case-regression",
+        result: {
+          passed: false,
+          expected: "stable",
+          actual: "changed",
+          duration_ms: 13,
+          error: "mismatch",
+        },
+      },
+    ],
+    metrics: {
+      completion_rate: 0.5,
+      tool_misuse_rate: 0.25,
+      delegation_precision: 0.75,
+      unnecessary_delegation_rate: 0,
+      token_cost: 128,
+      time_to_completion: 2400,
+    },
+    baseline: {
+      available: true,
+      timestamp: "2026-03-14T18:50:00Z",
+      regressions: [
+        {
+          test_name: "case-regression",
+          baseline: {
+            passed: true,
+            expected: "stable",
+            actual: "stable",
+            duration_ms: 10,
+          },
+          latest: {
+            passed: false,
+            expected: "stable",
+            actual: "changed",
+            duration_ms: 13,
+            error: "mismatch",
+          },
+        },
+      ],
+    },
+  },
+  {
+    id: 41,
+    suite: "tool_choice",
+    timestamp: "2026-03-14T18:40:00Z",
+    total: 2,
+    passed: 2,
+    failed: 0,
+    status: "pass",
+    results: [
+      {
+        name: "choose-fs-read",
+        result: {
+          passed: true,
+          expected: "tool:fs.read",
+          actual: "tool:fs.read",
+          duration_ms: 9,
+        },
+      },
+      {
+        name: "choose-web-search",
+        result: {
+          passed: true,
+          expected: "tool:web.search",
+          actual: "tool:web.search",
+          duration_ms: 10,
+        },
+      },
+    ],
+    metrics: {
+      completion_rate: 1,
+      tool_misuse_rate: 0,
+      delegation_precision: 1,
+      unnecessary_delegation_rate: 0,
+      token_cost: 90,
+      time_to_completion: 1900,
+    },
+    baseline: {
+      available: false,
+      regressions: [],
+    },
+  },
+]
+
+type EvalMockOptions = {
+  runs?: unknown[]
+  failEvalRequests?: number
+}
+
+async function installEvalMocks(page: Page, options: EvalMockOptions = {}): Promise<void> {
+  let remainingFailures = options.failEvalRequests ?? 0
+  const runs = options.runs ?? defaultRuns
+
   await page.route("**/*", async (route: Route) => {
     const request = route.request()
     const method = request.method()
@@ -21,111 +133,15 @@ async function installEvalMocks(page: Page): Promise<void> {
     }
 
     if (pathname === "/api/admin/eval/results" && method === "GET") {
+      if (remainingFailures > 0) {
+        remainingFailures -= 1
+        await json({ error: { message: "backend unavailable" } }, 500)
+        return
+      }
+
       await json({
-        runs: [
-          {
-            id: 42,
-            suite: "basic",
-            timestamp: "2026-03-14T19:00:00Z",
-            total: 2,
-            passed: 1,
-            failed: 1,
-            status: "fail",
-            results: [
-              {
-                name: "case-pass",
-                result: {
-                  passed: true,
-                  expected: "ok",
-                  actual: "ok",
-                  duration_ms: 11,
-                },
-              },
-              {
-                name: "case-regression",
-                result: {
-                  passed: false,
-                  expected: "stable",
-                  actual: "changed",
-                  duration_ms: 13,
-                  error: "mismatch",
-                },
-              },
-            ],
-            metrics: {
-              completion_rate: 0.5,
-              tool_misuse_rate: 0.25,
-              delegation_precision: 0.75,
-              unnecessary_delegation_rate: 0,
-              token_cost: 128,
-              time_to_completion: 2400,
-            },
-            baseline: {
-              available: true,
-              timestamp: "2026-03-14T18:50:00Z",
-              regressions: [
-                {
-                  test_name: "case-regression",
-                  baseline: {
-                    passed: true,
-                    expected: "stable",
-                    actual: "stable",
-                    duration_ms: 10,
-                  },
-                  latest: {
-                    passed: false,
-                    expected: "stable",
-                    actual: "changed",
-                    duration_ms: 13,
-                    error: "mismatch",
-                  },
-                },
-              ],
-            },
-          },
-          {
-            id: 41,
-            suite: "tool_choice",
-            timestamp: "2026-03-14T18:40:00Z",
-            total: 2,
-            passed: 2,
-            failed: 0,
-            status: "pass",
-            results: [
-              {
-                name: "choose-fs-read",
-                result: {
-                  passed: true,
-                  expected: "tool:fs.read",
-                  actual: "tool:fs.read",
-                  duration_ms: 9,
-                },
-              },
-              {
-                name: "choose-web-search",
-                result: {
-                  passed: true,
-                  expected: "tool:web.search",
-                  actual: "tool:web.search",
-                  duration_ms: 10,
-                },
-              },
-            ],
-            metrics: {
-              completion_rate: 1,
-              tool_misuse_rate: 0,
-              delegation_precision: 1,
-              unnecessary_delegation_rate: 0,
-              token_cost: 90,
-              time_to_completion: 1900,
-            },
-            baseline: {
-              available: false,
-              regressions: [],
-            },
-          },
-        ],
-        count: 2,
+        runs,
+        count: runs.length,
       })
       return
     }
@@ -176,4 +192,28 @@ test("Eval Results page shows history, expandable details, metrics, and red regr
   await expect(regressionRow).toBeVisible()
   await expect(regressionRow).toContainText("case-regression")
   await expect(regressionRow).toHaveClass(/text-red/)
+})
+
+test("Eval Results page shows empty state when no runs are returned", async ({ page }) => {
+  await installEvalMocks(page, { runs: [] })
+
+  await page.goto("/dashboard#/help")
+  await page.getByRole("link", { name: "Eval" }).click()
+
+  await expect(page).toHaveURL(/#\/eval$/)
+  await expect(page.getByText("No eval results found.")).toBeVisible()
+  await expect(page.getByTestId("eval-history-table")).toHaveCount(0)
+})
+
+test("Eval Results page surfaces API errors and refreshes successfully after retry", async ({ page }) => {
+  await installEvalMocks(page, { failEvalRequests: 1 })
+
+  await page.goto("/dashboard#/help")
+  await page.getByRole("link", { name: "Eval" }).click()
+
+  await expect(page.getByText("Failed to load eval results: backend unavailable")).toBeVisible()
+  await page.getByRole("button", { name: "Retry" }).click()
+
+  await expect(page.getByTestId("eval-history-table")).toBeVisible()
+  await expect(page.getByTestId("eval-run-row-42")).toContainText("basic")
 })
