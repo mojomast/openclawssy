@@ -1323,6 +1323,102 @@ func TestMonitorRunsEndpointListsMainAndSubagentAuditRuns(t *testing.T) {
 	}
 }
 
+func TestMonitorRunsEndpointSkipsUnreadableAuditFiles(t *testing.T) {
+	root := t.TempDir()
+
+	alphaAuditDir := filepath.Join(root, ".openclawssy", "agents", "alpha", "audit")
+	if err := os.MkdirAll(alphaAuditDir, 0o755); err != nil {
+		t.Fatalf("mkdir alpha audit dir: %v", err)
+	}
+	alphaAudit := `{"ts":"2026-03-05T10:00:00Z","type":"run.start","run_id":"run-alpha","agent_id":"alpha","payload":{"source":"dashboard","message":"main task"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(alphaAuditDir, "events.jsonl"), []byte(alphaAudit), 0o600); err != nil {
+		t.Fatalf("write alpha audit log: %v", err)
+	}
+
+	blockedAuditDir := filepath.Join(root, ".openclawssy", "agents", "blocked", "audit")
+	if err := os.MkdirAll(blockedAuditDir, 0o755); err != nil {
+		t.Fatalf("mkdir blocked audit dir: %v", err)
+	}
+	blockedPath := filepath.Join(blockedAuditDir, "events.jsonl")
+	if err := os.WriteFile(blockedPath, []byte(alphaAudit), 0o600); err != nil {
+		t.Fatalf("write blocked audit log: %v", err)
+	}
+	if err := os.Chmod(blockedPath, 0o000); err != nil {
+		t.Fatalf("chmod blocked audit log: %v", err)
+	}
+	defer func() { _ = os.Chmod(blockedPath, 0o600) }()
+
+	if probe, err := os.Open(blockedPath); err == nil {
+		_ = probe.Close()
+		t.Skip("unable to simulate permission-denied audit file on this platform/user")
+	} else if !errors.Is(err, os.ErrPermission) {
+		t.Skipf("expected permission error probe; got: %v", err)
+	}
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/monitor/runs", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Runs []monitorRunRecord `json:"runs"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload.Runs) != 1 {
+		t.Fatalf("expected one readable run, got %+v", payload.Runs)
+	}
+	if payload.Runs[0].RunID != "run-alpha" {
+		t.Fatalf("expected readable alpha run, got %+v", payload.Runs[0])
+	}
+}
+
+func TestMonitorRunsEndpointToleratesOversizedAuditLines(t *testing.T) {
+	root := t.TempDir()
+	auditDir := filepath.Join(root, ".openclawssy", "agents", "alpha", "audit")
+	if err := os.MkdirAll(auditDir, 0o755); err != nil {
+		t.Fatalf("mkdir audit dir: %v", err)
+	}
+
+	oversizedInvalidLine := strings.Repeat("x", 2*1024*1024)
+	auditBody := oversizedInvalidLine + "\n" + strings.Join([]string{
+		`{"ts":"2026-03-05T10:05:00Z","type":"run.start","run_id":"run-good","agent_id":"alpha","payload":{"source":"dashboard","message":"after oversized"}}`,
+		`{"ts":"2026-03-05T10:05:04Z","type":"run.end","run_id":"run-good","agent_id":"alpha","payload":{}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(auditDir, "events.jsonl"), []byte(auditBody), 0o600); err != nil {
+		t.Fatalf("write audit log: %v", err)
+	}
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/monitor/runs", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Runs []monitorRunRecord `json:"runs"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload.Runs) != 1 {
+		t.Fatalf("expected one parsed run after oversized line, got %+v", payload.Runs)
+	}
+	if payload.Runs[0].RunID != "run-good" || payload.Runs[0].Status != "completed" {
+		t.Fatalf("expected completed run-good record, got %+v", payload.Runs[0])
+	}
+}
+
 func TestListChatSessionsEndpointInvalidLimit(t *testing.T) {
 	root := t.TempDir()
 	h := New(root, httpchannel.NewInMemoryRunStore())

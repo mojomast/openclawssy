@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"bufio"
+	"bytes"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -1572,7 +1573,7 @@ func (h *Handler) collectMonitorRuns(limit int, agentFilter string) ([]monitorRu
 			continue
 		}
 		if err := h.collectMonitorRunsForAgent(filepath.Join(agentsDir, agentID, "audit", "events.jsonl"), byRunID); err != nil {
-			return nil, err
+			continue
 		}
 	}
 	runs := make([]monitorRunRecord, 0, len(byRunID))
@@ -1596,67 +1597,75 @@ func (h *Handler) collectMonitorRuns(limit int, agentFilter string) ([]monitorRu
 func (h *Handler) collectMonitorRunsForAgent(auditPath string, byRunID map[string]monitorRunRecord) error {
 	file, err := os.Open(auditPath)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
 			return nil
 		}
 		return err
 	}
 	defer file.Close()
-	scanner := bufio.NewScanner(file)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 1024*1024)
-	for scanner.Scan() {
-		var event struct {
-			Timestamp time.Time      `json:"ts"`
-			Type      string         `json:"type"`
-			RunID     string         `json:"run_id"`
-			AgentID   string         `json:"agent_id"`
-			Payload   map[string]any `json:"payload"`
+	reader := bufio.NewReader(file)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			line = bytes.TrimSpace(line)
 		}
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			continue
-		}
-		runID := strings.TrimSpace(event.RunID)
-		agentID := strings.TrimSpace(event.AgentID)
-		if runID == "" || agentID == "" {
-			continue
-		}
-		record := byRunID[runID]
-		record.RunID = runID
-		record.AgentID = agentID
-		if h.runCanceller != nil && h.runCanceller.IsTracked(runID) {
-			record.Tracked = true
-		}
-		switch strings.TrimSpace(event.Type) {
-		case "run.start":
-			record.StartedAt = event.Timestamp.UTC().Format(time.RFC3339)
-			record.TaskID = firstStringFromMap(event.Payload, "task_id")
-			record.Source = firstStringFromMap(event.Payload, "source")
-			record.Message = firstStringFromMap(event.Payload, "message")
-			record.ModelProvider = firstStringFromMap(event.Payload, "model_provider")
-			record.ModelName = firstStringFromMap(event.Payload, "model_name")
-			record.SessionID = firstStringFromMap(event.Payload, "session_id")
-			if record.Tracked || record.Status == "" {
-				record.Status = "running"
+		if len(line) > 0 {
+			var event struct {
+				Timestamp time.Time      `json:"ts"`
+				Type      string         `json:"type"`
+				RunID     string         `json:"run_id"`
+				AgentID   string         `json:"agent_id"`
+				Payload   map[string]any `json:"payload"`
 			}
-		case "run.end":
-			record.CompletedAt = event.Timestamp.UTC().Format(time.RFC3339)
-			record.ArtifactPath = firstStringFromMap(event.Payload, "artifact_path")
-			record.CheckpointPath = firstStringFromMap(event.Payload, "checkpoint_path")
-			record.Error = firstStringFromMap(event.Payload, "error")
-			if record.Error != "" {
-				record.Status = "failed"
-			} else {
-				record.Status = "completed"
+			if err := json.Unmarshal(line, &event); err == nil {
+				runID := strings.TrimSpace(event.RunID)
+				agentID := strings.TrimSpace(event.AgentID)
+				if runID != "" && agentID != "" {
+					record := byRunID[runID]
+					record.RunID = runID
+					record.AgentID = agentID
+					if h.runCanceller != nil && h.runCanceller.IsTracked(runID) {
+						record.Tracked = true
+					}
+					switch strings.TrimSpace(event.Type) {
+					case "run.start":
+						record.StartedAt = event.Timestamp.UTC().Format(time.RFC3339)
+						record.TaskID = firstStringFromMap(event.Payload, "task_id")
+						record.Source = firstStringFromMap(event.Payload, "source")
+						record.Message = firstStringFromMap(event.Payload, "message")
+						record.ModelProvider = firstStringFromMap(event.Payload, "model_provider")
+						record.ModelName = firstStringFromMap(event.Payload, "model_name")
+						record.SessionID = firstStringFromMap(event.Payload, "session_id")
+						if record.Tracked || record.Status == "" {
+							record.Status = "running"
+						}
+					case "run.end":
+						record.CompletedAt = event.Timestamp.UTC().Format(time.RFC3339)
+						record.ArtifactPath = firstStringFromMap(event.Payload, "artifact_path")
+						record.CheckpointPath = firstStringFromMap(event.Payload, "checkpoint_path")
+						record.Error = firstStringFromMap(event.Payload, "error")
+						if record.Error != "" {
+							record.Status = "failed"
+						} else {
+							record.Status = "completed"
+						}
+					}
+					record.Role = classifyMonitorRunRole(record.Source)
+					if record.Status == "" {
+						record.Status = "running"
+					}
+					byRunID[runID] = record
+				}
 			}
 		}
-		record.Role = classifyMonitorRunRole(record.Source)
-		if record.Status == "" {
-			record.Status = "running"
+		if errors.Is(readErr, io.EOF) {
+			break
 		}
-		byRunID[runID] = record
+		if readErr != nil {
+			return readErr
+		}
 	}
-	return scanner.Err()
+	return nil
 }
 
 func firstStringFromMap(values map[string]any, keys ...string) string {
