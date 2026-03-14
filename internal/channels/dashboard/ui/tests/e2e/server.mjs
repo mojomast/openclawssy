@@ -4,6 +4,7 @@ import path from "node:path";
 
 const port = Number(process.env.PORT || 4173);
 const root = process.cwd();
+const distRoot = path.join(root, "dist");
 
 function contentType(filePath) {
   const ext = path.extname(filePath).toLowerCase();
@@ -15,24 +16,29 @@ function contentType(filePath) {
   return "application/octet-stream";
 }
 
-function safePath(relativePath) {
-  const target = path.resolve(root, relativePath);
-  const normalizedRoot = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
-  if (target === root || target.startsWith(normalizedRoot)) {
+function safePath(base, relativePath) {
+  const target = path.resolve(base, relativePath);
+  const normalizedBase = base.endsWith(path.sep) ? base : `${base}${path.sep}`;
+  if (target === base || target.startsWith(normalizedBase)) {
     return target;
   }
   return "";
 }
 
-async function serveFile(res, filePath) {
-  try {
-    const body = await readFile(filePath);
-    res.writeHead(200, { "Content-Type": contentType(filePath) });
-    res.end(body);
-  } catch (_error) {
-    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end("not found");
+async function serveFirstExisting(res, candidates) {
+  for (const filePath of candidates) {
+    try {
+      const body = await readFile(filePath);
+      res.writeHead(200, { "Content-Type": contentType(filePath) });
+      res.end(body);
+      return;
+    } catch (_error) {
+      // try next candidate
+    }
   }
+
+  res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+  res.end("not found");
 }
 
 createServer(async (req, res) => {
@@ -47,18 +53,19 @@ createServer(async (req, res) => {
   const pathname = decodeURIComponent(url.pathname);
 
   if (pathname === "/dashboard" || pathname === "/dashboard/") {
-    await serveFile(res, path.join(root, "index.html"));
+    await serveFirstExisting(res, [path.join(distRoot, "index.html"), path.join(root, "index.html")]);
     return;
   }
   if (pathname.startsWith("/dashboard/static/")) {
     const relative = pathname.slice("/dashboard/static/".length);
-    const full = safePath(relative);
-    if (!full) {
+    const distFile = safePath(distRoot, relative);
+    const rootFile = safePath(root, relative);
+    if (!distFile || !rootFile) {
       res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("bad path");
       return;
     }
-    await serveFile(res, full);
+    await serveFirstExisting(res, [distFile, rootFile]);
     return;
   }
 
