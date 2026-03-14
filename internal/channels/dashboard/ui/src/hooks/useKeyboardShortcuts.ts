@@ -1,40 +1,116 @@
-import { useEffect, useCallback } from 'react'
+import { useEffect, useCallback, useMemo, useRef } from 'react'
 
 interface ShortcutMap {
   [key: string]: () => void
 }
 
-export function useKeyboardShortcuts(shortcuts: ShortcutMap) {
-  const handleKeyDown = useCallback(
-    (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase()
-      const isModifierPressed = event.metaKey || event.ctrlKey
+interface ParsedShortcut {
+  keys: string[]
+  hasModifier: boolean
+  hasShift: boolean
+  hasAlt: boolean
+  handler: () => void
+}
 
-      for (const [shortcut, handler] of Object.entries(shortcuts)) {
+interface ActiveSequence {
+  shortcut: ParsedShortcut
+  nextIndex: number
+  expiresAt: number
+}
+
+const SEQUENCE_TIMEOUT_MS = 750
+
+export function useKeyboardShortcuts(shortcuts: ShortcutMap) {
+  const activeSequenceRef = useRef<ActiveSequence | null>(null)
+
+  const parsedShortcuts = useMemo<ParsedShortcut[]>(() => {
+    return Object.entries(shortcuts)
+      .map(([shortcut, handler]) => {
         const parts = shortcut.toLowerCase().split('+')
         const hasModifier = parts.includes('cmd') || parts.includes('ctrl')
         const hasShift = parts.includes('shift')
         const hasAlt = parts.includes('alt')
-
-        const mainKey = parts.find(
-          (p) => !['cmd', 'ctrl', 'shift', 'alt'].includes(p)
+        const keys = parts.filter(
+          (part) => !['cmd', 'ctrl', 'shift', 'alt'].includes(part)
         )
 
-        if (!mainKey) continue
+        return {
+          keys,
+          hasModifier,
+          hasShift,
+          hasAlt,
+          handler,
+        }
+      })
+      .filter((shortcut) => shortcut.keys.length > 0)
+  }, [shortcuts])
 
-        const modifierMatch = hasModifier === isModifierPressed
-        const shiftMatch = hasShift === event.shiftKey
-        const altMatch = hasAlt === event.altKey
-        const keyMatch = key === mainKey
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      const now = Date.now()
+      const key = event.key.toLowerCase()
+      const isModifierPressed = event.metaKey || event.ctrlKey
 
-        if (modifierMatch && shiftMatch && altMatch && keyMatch) {
+      const modifiersMatch = (shortcut: ParsedShortcut) =>
+        shortcut.hasModifier === isModifierPressed &&
+        shortcut.hasShift === event.shiftKey &&
+        shortcut.hasAlt === event.altKey
+
+      const activeSequence = activeSequenceRef.current
+      if (activeSequence && activeSequence.expiresAt <= now) {
+        activeSequenceRef.current = null
+      }
+
+      const pendingSequence = activeSequenceRef.current
+      if (pendingSequence) {
+        const expectedKey = pendingSequence.shortcut.keys[pendingSequence.nextIndex]
+        if (modifiersMatch(pendingSequence.shortcut) && key === expectedKey) {
+          if (pendingSequence.nextIndex === pendingSequence.shortcut.keys.length - 1) {
+            event.preventDefault()
+            activeSequenceRef.current = null
+            pendingSequence.shortcut.handler()
+            return
+          }
+
+          activeSequenceRef.current = {
+            shortcut: pendingSequence.shortcut,
+            nextIndex: pendingSequence.nextIndex + 1,
+            expiresAt: now + SEQUENCE_TIMEOUT_MS,
+          }
+          return
+        }
+
+        activeSequenceRef.current = null
+      }
+
+      for (const shortcut of parsedShortcuts) {
+        if (shortcut.keys.length !== 1) {
+          continue
+        }
+
+        if (modifiersMatch(shortcut) && key === shortcut.keys[0]) {
           event.preventDefault()
-          handler()
+          shortcut.handler()
+          return
+        }
+      }
+
+      for (const shortcut of parsedShortcuts) {
+        if (shortcut.keys.length <= 1) {
+          continue
+        }
+
+        if (modifiersMatch(shortcut) && key === shortcut.keys[0]) {
+          activeSequenceRef.current = {
+            shortcut,
+            nextIndex: 1,
+            expiresAt: now + SEQUENCE_TIMEOUT_MS,
+          }
           return
         }
       }
     },
-    [shortcuts]
+    [parsedShortcuts]
   )
 
   useEffect(() => {

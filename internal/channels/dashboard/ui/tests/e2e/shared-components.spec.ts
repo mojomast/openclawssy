@@ -93,6 +93,22 @@ test.describe('Shared Components', () => {
     await expect(searchInput).toBeFocused()
   })
 
+  test('g alone does not navigate', async ({ page }) => {
+    await page.keyboard.press('g')
+
+    await expect(page).toHaveURL(/.*\/help/)
+    await expect(page.getByRole('heading', { name: 'Help Center', exact: true })).toBeVisible()
+  })
+
+  test('g then c outside timeout does not navigate', async ({ page }) => {
+    await page.keyboard.press('g')
+    await page.waitForTimeout(900)
+    await page.keyboard.press('c')
+
+    await expect(page).toHaveURL(/.*\/help/)
+    await expect(page.getByRole('heading', { name: 'Help Center', exact: true })).toBeVisible()
+  })
+
   test('g+c keyboard shortcut navigates to chat', async ({ page }) => {
     await page.keyboard.press('g')
     await page.keyboard.press('c')
