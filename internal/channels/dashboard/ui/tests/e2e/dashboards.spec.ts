@@ -316,8 +316,10 @@ test("dashboard sidebar supports create, duplicate, delete, reorder, and auto-sa
   await expect.poll(() => state.putCalls.length).toBeGreaterThan(0)
 
   const copyRow = page.locator("[data-testid^='dashboard-tab-row-']", { hasText: "Ops Board Copy" }).first()
-  page.once("dialog", (dialog) => dialog.accept())
   await copyRow.getByRole("button", { name: "Delete" }).click()
+  await expect(page.getByTestId("dashboard-delete-dialog")).toBeVisible()
+  await expect(page.locator("[data-testid^='dashboard-tab-row-']", { hasText: "Ops Board Copy" })).toHaveCount(1)
+  await page.getByRole("button", { name: "Delete dashboard" }).click()
   await expect(page.locator("[data-testid^='dashboard-tab-row-']", { hasText: "Ops Board Copy" })).toHaveCount(0)
 })
 
@@ -330,7 +332,23 @@ test("widget picker adds widgets and context menu supports configure, duplicate,
   await page.getByLabel("Search widgets").fill("runs")
   await page.getByTestId("widget-picker-option-runs-recent").click()
 
+  await page.getByTestId("toolbar-add-widget").click()
+  await page.getByLabel("Search widgets").fill("scheduler")
+  await page.getByTestId("widget-picker-option-scheduler-jobs").click()
+
   await expect(page.locator("[data-widget-key='runs.recent']")).toHaveCount(1)
+  await expect(page.locator("[data-widget-key='scheduler.jobs']")).toHaveCount(1)
+
+  const schedulerCard = page.locator("[data-widget-key='scheduler.jobs']").first()
+  await schedulerCard.getByRole("button", { name: "Widget menu Scheduler: Jobs" }).click()
+  await expect(schedulerCard.getByRole("button", { name: "Open source tab" })).toBeVisible()
+  await expect(schedulerCard.getByRole("button", { name: "Duplicate widget" })).toBeVisible()
+  await expect(schedulerCard.getByRole("button", { name: "Configure" })).toBeVisible()
+  await expect(schedulerCard.getByRole("button", { name: "Remove widget" })).toBeVisible()
+  await schedulerCard.getByRole("button", { name: "Configure" }).click()
+  await expect(page.getByTestId("widget-configure-fallback-dialog")).toBeVisible()
+  await expect(page.getByText("Scheduler: Jobs does not expose custom settings yet.")).toBeVisible()
+  await page.getByTestId("widget-configure-fallback-close").click()
 
   const menuButton = page.getByRole("button", { name: "Widget menu Runs: Recent" }).first()
   await menuButton.click()

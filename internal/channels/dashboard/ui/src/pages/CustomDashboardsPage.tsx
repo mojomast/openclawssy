@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { ApiError, api } from "@/lib/api"
 
@@ -785,15 +786,13 @@ function WidgetCard({
               >
                 Duplicate widget
               </button>
-              {spec.configure ? (
-                <button
-                  type="button"
-                  className="block w-full rounded-sm px-2 py-1 text-left text-sm hover:bg-muted"
-                  onClick={onConfigure}
-                >
-                  Configure
-                </button>
-              ) : null}
+              <button
+                type="button"
+                className="block w-full rounded-sm px-2 py-1 text-left text-sm hover:bg-muted"
+                onClick={onConfigure}
+              >
+                Configure
+              </button>
               <button
                 type="button"
                 className="block w-full rounded-sm px-2 py-1 text-left text-sm hover:bg-muted"
@@ -870,6 +869,8 @@ export function CustomDashboardsPage() {
   const [widgetPickerOpen, setWidgetPickerOpen] = useState(false)
   const [widgetPickerQuery, setWidgetPickerQuery] = useState("")
   const [widgetMenuFor, setWidgetMenuFor] = useState("")
+  const [pendingDashboardDelete, setPendingDashboardDelete] = useState<{ id: string; name: string } | null>(null)
+  const [configureFallbackMessage, setConfigureFallbackMessage] = useState<{ title: string; description: string } | null>(null)
 
   const dashboardsRef = useRef<DashboardRecord[]>([])
   const selectedIDRef = useRef("")
@@ -1102,13 +1103,9 @@ export function CustomDashboardsPage() {
   }, [markDirty])
 
   const deleteDashboard = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<boolean> => {
       if (dashboardsRef.current.length <= 1) {
-        return
-      }
-
-      if (!window.confirm("Delete this custom dashboard?")) {
-        return
+        return false
       }
 
       try {
@@ -1125,12 +1122,25 @@ export function CustomDashboardsPage() {
           }
           return next[0]?.id || ""
         })
+        return true
       } catch (err) {
         setError(extractErrorMessage(err))
+        return false
       }
     },
     [markDirty]
   )
+
+  const requestDeleteDashboard = useCallback((id: string) => {
+    if (dashboardsRef.current.length <= 1) {
+      return
+    }
+    const target = dashboardsRef.current.find((item) => item.id === id)
+    if (!target) {
+      return
+    }
+    setPendingDashboardDelete({ id: target.id, name: target.name })
+  }, [])
 
   const duplicateDashboard = useCallback(
     (id: string) => {
@@ -1221,16 +1231,30 @@ export function CustomDashboardsPage() {
 
   const configureWidget = useCallback(
     (widgetID: string) => {
+      const dashboard = dashboardsRef.current.find((item) => item.id === selectedIDRef.current)
+      const target = dashboard?.layout.find((item) => item.widget_instance_id === widgetID)
+      if (!target) {
+        return
+      }
+      const spec = WIDGET_MAP.get(target.widget_key)
+      if (!spec) {
+        return
+      }
+      if (!spec.configure) {
+        setConfigureFallbackMessage({
+          title: "No settings for this widget",
+          description: `${spec.label} does not expose custom settings yet.`,
+        })
+        return
+      }
+      const configure = spec.configure
+
       mutateSelectedDashboard((dashboard) => {
         const target = dashboard.layout.find((item) => item.widget_instance_id === widgetID)
         if (!target) {
           return
         }
-        const spec = WIDGET_MAP.get(target.widget_key)
-        if (!spec?.configure) {
-          return
-        }
-        const nextState = spec.configure({ ...target.widget_state })
+        const nextState = configure({ ...target.widget_state })
         if (!nextState) {
           return
         }
@@ -1397,7 +1421,7 @@ export function CustomDashboardsPage() {
                         size="sm"
                         variant="outline"
                         disabled={dashboards.length <= 1}
-                        onClick={() => void deleteDashboard(dashboard.id)}
+                        onClick={() => requestDeleteDashboard(dashboard.id)}
                       >
                         Delete
                       </Button>
@@ -1557,6 +1581,68 @@ export function CustomDashboardsPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog
+        open={Boolean(pendingDashboardDelete)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingDashboardDelete(null)
+          }
+        }}
+      >
+        <DialogContent data-testid="dashboard-delete-dialog">
+          <DialogHeader>
+            <DialogTitle>Delete dashboard?</DialogTitle>
+            <DialogDescription>
+              {pendingDashboardDelete ? `Delete "${pendingDashboardDelete.name}"? This cannot be undone.` : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setPendingDashboardDelete(null)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => {
+                const candidate = pendingDashboardDelete
+                if (!candidate) {
+                  return
+                }
+                void (async () => {
+                  const deleted = await deleteDashboard(candidate.id)
+                  if (deleted) {
+                    setPendingDashboardDelete(null)
+                  }
+                })()
+              }}
+            >
+              Delete dashboard
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(configureFallbackMessage)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setConfigureFallbackMessage(null)
+          }
+        }}
+      >
+        <DialogContent data-testid="widget-configure-fallback-dialog">
+          <DialogHeader>
+            <DialogTitle>{configureFallbackMessage?.title || "No settings available"}</DialogTitle>
+            <DialogDescription>{configureFallbackMessage?.description || ""}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" data-testid="widget-configure-fallback-close" onClick={() => setConfigureFallbackMessage(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
