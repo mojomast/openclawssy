@@ -16,9 +16,17 @@ Testing surface, validation approach, and resource cost classification.
 - **Setup**: Dashboard is served by the openclawssy Docker container. After React changes, the container must be rebuilt (`docker compose build openclawssy && docker compose up -d --no-deps openclawssy`) to serve updated assets without blocking on unrelated unhealthy dependencies. For development, use Vite dev server at :5175.
 
 #### Browser Runtime Notes
-- If `agent-browser` startup fails with missing shared library errors (for example `libnspr4.so`), run with an isolated `AGENT_BROWSER_HOME` and prepend Playwright bundled libs to `LD_LIBRARY_PATH`.
-- If shared-library issues persist, start an isolated Chromium instance with the same `LD_LIBRARY_PATH` and connect `agent-browser` through a dedicated CDP port (for example `9333`) using a non-default session id.
-- If agent-browser startup fails due to stale session/daemon state, run `agent-browser session list`, close stale sessions, and retry with a fresh session id.
+- Use `.factory/scripts/agent-browser-bootstrap.sh` for browser validation actions instead of calling `agent-browser` directly.
+- Required pattern:
+  - `.factory/scripts/agent-browser-bootstrap.sh --session "<non-default-session>" open "http://localhost:8081/dashboard"`
+  - `.factory/scripts/agent-browser-bootstrap.sh --session "<non-default-session>" snapshot`
+  - `.factory/scripts/agent-browser-bootstrap.sh --session "<non-default-session>" close`
+- The wrapper codifies runtime bootstrap in this environment:
+  - prepends `/home/mojo/.cache/playwright-libs/root/usr/lib/x86_64-linux-gnu` to `LD_LIBRARY_PATH` when available,
+  - retries normal agent-browser launch first,
+  - falls back deterministically to isolated Chromium CDP (session-derived port in `9440-9479`) on launcher/shared-library failures (including missing `libnspr4`).
+- Optional smoke probe: set `AGENT_BROWSER_BOOTSTRAP_FORCE_CDP=1` for one command to validate deterministic CDP fallback wiring without ad-hoc command edits.
+- If agent-browser still fails due stale daemon/session state, run `agent-browser session list`, close stale sessions, and retry with a fresh non-default session id.
 - For `/dashboard-legacy` verification, if browser network capture misses the request, use `curl -i http://localhost:8081/dashboard-legacy` as supplemental status evidence.
 - If agent-browser request tracking returns no captured requests for dashboard flows, collect supplemental network evidence using `curl -i` against the same local API endpoints exercised by the UI flow.
 - For decision-ledger UI checks, create a fresh run first (`POST /v1/runs`) and deep-link to `/#/runs/<run-id>` for deterministic "Why this happened" validation against known decision records.

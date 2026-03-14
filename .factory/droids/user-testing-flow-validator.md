@@ -44,6 +44,22 @@ To avoid inactivity timeout and parent fallback work:
 - For shell commands, keep command timeout bounded (generally <= 120s) and split work when needed.
 - Persist partial progress frequently so a crash/timeout does not lose completed work.
 
+### Browser runtime bootstrap (MANDATORY for browser-assigned flows)
+
+If your assigned flow uses browser validation, do **not** invoke `agent-browser` directly.
+
+1. Choose a **non-default** session id (for example `flow-<group-id>`).
+2. Use the bootstrap wrapper for every browser action:
+   - `.factory/scripts/agent-browser-bootstrap.sh --session "<session>" open "http://localhost:8081/dashboard"`
+   - `.factory/scripts/agent-browser-bootstrap.sh --session "<session>" snapshot`
+   - `.factory/scripts/agent-browser-bootstrap.sh --session "<session>" click "<selector>"`
+3. The wrapper automatically:
+   - prepends Playwright fallback libs (`/home/mojo/.cache/playwright-libs/root/usr/lib/x86_64-linux-gnu`) when present,
+   - attempts normal `agent-browser` startup first,
+   - then applies deterministic Chromium CDP fallback on startup/runtime-linker failures.
+4. At the end of the flow, close via wrapper so fallback processes are cleaned up:
+   - `.factory/scripts/agent-browser-bootstrap.sh --session "<session>" close`
+
 ## 1) Read your assigned assertions
 
 Read `{missionDir}/validation-contract.md` and find each assigned assertion ID.
