@@ -15,7 +15,8 @@ type ContractState = {
   resolvedByAgent: Record<string, ContractResponse>
   config: Record<string, unknown>
   diffRequests: string[]
-  patchBodies: Array<Record<string, unknown>>
+  rollbackSnapshots: Array<{ id: string; created_at: string; config: Record<string, unknown> }>
+  restoreRequests: string[]
 }
 
 function deepClone<T>(value: T): T {
@@ -206,6 +207,12 @@ function createState(): ContractState {
     },
     config: {
       model: { provider: "hatz", name: "glm-4.5" },
+      providers: {
+        openai: { api_key: "openai-secret" },
+      },
+      discord: {
+        token: "discord-secret",
+      },
       agents: {
         profiles: {
           reviewer: { model: { provider: "openai", name: "gpt-4o-mini", timeout_ms: 90000 } },
@@ -213,7 +220,8 @@ function createState(): ContractState {
       },
     },
     diffRequests: [],
-    patchBodies: [],
+    rollbackSnapshots: [],
+    restoreRequests: [],
   }
 }
 
@@ -280,9 +288,35 @@ async function installContractMocks(page: Page, state: ContractState) {
 
     if (pathname === "/api/admin/config" && method === "PATCH") {
       const body = JSON.parse(request.postData() || "{}") as Record<string, unknown>
-      state.patchBodies.push(body)
       state.config = deepClone(body)
       await json({ ok: true, config: body })
+      return
+    }
+
+    const rollbackSaveMatch = pathname.match(/^\/api\/admin\/agents\/([^/]+)\/rollback-snapshot\/?$/)
+    if (rollbackSaveMatch && method === "POST") {
+      const snapshot = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        created_at: new Date().toISOString(),
+        config: deepClone(state.config),
+      }
+      state.rollbackSnapshots = [snapshot, ...state.rollbackSnapshots].slice(0, 10)
+      await json({ ok: true, snapshot: { id: snapshot.id, created_at: snapshot.created_at } })
+      return
+    }
+
+    const rollbackRestoreMatch = pathname.match(/^\/api\/admin\/agents\/([^/]+)\/rollback-restore\/?$/)
+    if (rollbackRestoreMatch && method === "POST") {
+      const body = JSON.parse(request.postData() || "{}") as { snapshot_id?: string }
+      const snapshotID = (body.snapshot_id || "").trim()
+      const snapshot = state.rollbackSnapshots.find((item) => item.id === snapshotID)
+      if (!snapshot) {
+        await json({ error: { code: "contract.snapshot_not_found", message: "snapshot not found" } }, 404)
+        return
+      }
+      state.restoreRequests.push(snapshotID)
+      state.config = deepClone(snapshot.config)
+      await json({ ok: true })
       return
     }
 
@@ -356,9 +390,10 @@ test("diff view compares against global and another agent", async ({ page }) => 
   await expect.poll(() => state.diffRequests.at(-1)).toBe("reviewer:ops")
 })
 
-test("rollback snapshots can be saved and restored via config PATCH", async ({ page }) => {
+test("rollback snapshots are server-backed and restore preserves secret fields", async ({ page }) => {
   const state = createState()
   await installContractMocks(page, state)
+  const baselineConfig = deepClone(state.config)
 
   await page.goto("/dashboard#/agent-contract")
   await page.getByRole("button", { name: "Save rollback snapshot" }).click()
@@ -366,8 +401,18 @@ test("rollback snapshots can be saved and restored via config PATCH", async ({ p
   await expect(page.getByText("Snapshot saved.")).toBeVisible()
   await expect(page.getByRole("button", { name: "Restore" })).toBeVisible()
 
+  state.config = {
+    model: { provider: "openai", name: "gpt-4o-mini" },
+    providers: {
+      openai: { api_key: "mutated-secret" },
+    },
+    discord: {
+      token: "mutated-token",
+    },
+  }
+
   await page.getByRole("button", { name: "Restore" }).click()
-  await expect.poll(() => state.patchBodies.length).toBe(1)
+  await expect.poll(() => state.restoreRequests.length).toBe(1)
   await expect(page.getByText("Rollback restored successfully.")).toBeVisible()
-  expect(state.patchBodies[0]).toEqual(state.config)
+  expect(state.config).toEqual(baselineConfig)
 })

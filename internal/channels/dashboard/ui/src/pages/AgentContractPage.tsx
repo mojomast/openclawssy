@@ -23,7 +23,6 @@ type DiffRow = {
 type Snapshot = {
   id: string
   createdAt: string
-  config: Record<string, unknown>
 }
 
 const CONTRACT_SECTIONS = [
@@ -338,30 +337,43 @@ export function AgentContractPage() {
   const saveSnapshot = useCallback(async () => {
     setSnapshotMessage("")
     setRollbackError("")
+    if (!selectedAgent) {
+      setRollbackError("Select an agent before saving a rollback snapshot.")
+      return
+    }
     try {
-      const payload = await api.get<unknown>("/api/admin/config")
-      const config = asRecord(payload)
-      if (!config) {
-        throw new Error("Config payload was not an object")
+      const payload = await api.post<{
+        snapshot?: { id?: unknown; created_at?: unknown }
+      }>(`/api/admin/agents/${encodeURIComponent(selectedAgent)}/rollback-snapshot`, {})
+      const snapshotPayload = asRecord(payload.snapshot)
+      const id = asText(snapshotPayload?.id).trim()
+      const createdAt = asText(snapshotPayload?.created_at).trim()
+      if (!id || !createdAt) {
+        throw new Error("Snapshot response was missing snapshot metadata")
       }
       const snapshot: Snapshot = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        createdAt: new Date().toISOString(),
-        config,
+        id,
+        createdAt,
       }
       setSnapshots((previous) => [snapshot, ...previous].slice(0, 10))
       setSnapshotMessage("Snapshot saved.")
     } catch (error) {
       setRollbackError(`Failed to save snapshot: ${extractErrorMessage(error)}`)
     }
-  }, [])
+  }, [selectedAgent])
 
   const restoreSnapshot = useCallback(async (snapshot: Snapshot) => {
     setSnapshotMessage("")
     setRollbackError("")
+    if (!selectedAgent) {
+      setRollbackError("Select an agent before restoring a rollback snapshot.")
+      return
+    }
     setRollingBackSnapshotID(snapshot.id)
     try {
-      await api.patch("/api/admin/config", snapshot.config)
+      await api.post(`/api/admin/agents/${encodeURIComponent(selectedAgent)}/rollback-restore`, {
+        snapshot_id: snapshot.id,
+      })
       setSnapshotMessage("Rollback restored successfully.")
       if (selectedAgent) {
         await loadResolvedContract(selectedAgent)
@@ -401,6 +413,9 @@ export function AgentContractPage() {
                 onChange={(event) => {
                   setSelectedAgent(event.target.value)
                   setDiffBase("global")
+                  setSnapshots([])
+                  setSnapshotMessage("")
+                  setRollbackError("")
                 }}
               >
                 {agents.map((agentID) => (
@@ -457,7 +472,13 @@ export function AgentContractPage() {
 
             <div className="space-y-1 text-sm">
               <span>Rollback</span>
-              <Button type="button" size="sm" variant="outline" onClick={() => void saveSnapshot()}>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={!selectedAgent}
+                onClick={() => void saveSnapshot()}
+              >
                 Save rollback snapshot
               </Button>
             </div>

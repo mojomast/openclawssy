@@ -8,10 +8,19 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"openclawssy/internal/config"
 	agentcontract "openclawssy/internal/contract"
 )
+
+const maxRollbackSnapshotsPerAgent = 10
+
+type agentRollbackSnapshot struct {
+	ID        string
+	CreatedAt time.Time
+	Config    config.Config
+}
 
 type contractFieldDiff struct {
 	Field        string `json:"field"`
@@ -57,9 +66,103 @@ func (h *Handler) handleAgentContractAPI(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		h.getAgentContractDiff(w, r, agentID)
+	case "rollback-snapshot":
+		if r.Method != http.MethodPost {
+			writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
+			return
+		}
+		h.createAgentRollbackSnapshot(w, agentID)
+	case "rollback-restore":
+		if r.Method != http.MethodPost {
+			writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
+			return
+		}
+		h.restoreAgentRollbackSnapshot(w, r, agentID)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (h *Handler) createAgentRollbackSnapshot(w http.ResponseWriter, agentID string) {
+	cfg, err := h.loadDashboardConfig()
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "config.load_failed", err.Error(), nil)
+		return
+	}
+
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "contract.snapshot_failed", "failed to encode config snapshot", nil)
+		return
+	}
+	var cloned config.Config
+	if err := json.Unmarshal(raw, &cloned); err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "contract.snapshot_failed", "failed to decode config snapshot", nil)
+		return
+	}
+
+	now := time.Now().UTC()
+	snapshot := agentRollbackSnapshot{
+		ID:        fmt.Sprintf("%d", now.UnixNano()),
+		CreatedAt: now,
+		Config:    cloned,
+	}
+
+	h.rollbackMu.Lock()
+	existing := append([]agentRollbackSnapshot{snapshot}, h.rollbackByAgent[agentID]...)
+	if len(existing) > maxRollbackSnapshotsPerAgent {
+		existing = existing[:maxRollbackSnapshotsPerAgent]
+	}
+	h.rollbackByAgent[agentID] = existing
+	h.rollbackMu.Unlock()
+
+	writeJSON(w, map[string]any{
+		"ok": true,
+		"snapshot": map[string]any{
+			"id":         snapshot.ID,
+			"created_at": snapshot.CreatedAt.Format(time.RFC3339Nano),
+		},
+	})
+}
+
+func (h *Handler) restoreAgentRollbackSnapshot(w http.ResponseWriter, r *http.Request, agentID string) {
+	var req struct {
+		SnapshotID string `json:"snapshot_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeDashboardError(w, http.StatusBadRequest, "contract.invalid_json", "invalid json body", nil)
+		return
+	}
+	snapshotID := strings.TrimSpace(req.SnapshotID)
+	if snapshotID == "" {
+		writeDashboardError(w, http.StatusBadRequest, "contract.missing_snapshot_id", "snapshot_id is required", nil)
+		return
+	}
+
+	h.rollbackMu.Lock()
+	snapshots := h.rollbackByAgent[agentID]
+	var match agentRollbackSnapshot
+	found := false
+	for _, snapshot := range snapshots {
+		if snapshot.ID == snapshotID {
+			match = snapshot
+			found = true
+			break
+		}
+	}
+	h.rollbackMu.Unlock()
+
+	if !found {
+		writeDashboardError(w, http.StatusNotFound, "contract.snapshot_not_found", "snapshot not found", nil)
+		return
+	}
+
+	if err := saveDashboardConfig(filepath.Join(h.rootDir, ".openclawssy", "config.json"), match.Config); err != nil {
+		writeConfigValidationError(w, err, match.Config)
+		return
+	}
+
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func parseAgentContractRoute(requestPath string) (agentID string, action string, ok bool) {

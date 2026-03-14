@@ -191,6 +191,96 @@ func TestContractDiffEndpointSupportsOtherAgentBase(t *testing.T) {
 	}
 }
 
+func TestContractRollbackSnapshotRestorePreservesSecrets(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Providers.OpenAI.APIKey = "openai-secret"
+	cfg.Discord.Token = "discord-secret"
+	cfg.Model.Provider = "hatz"
+	cfg.Model.Name = "glm-4.5"
+	writeContractDashboardConfig(t, root, cfg)
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	snapshotReq := httptest.NewRequest(http.MethodPost, "/api/admin/agents/default/rollback-snapshot", bytes.NewBufferString(`{}`))
+	snapshotReq.Header.Set("Content-Type", "application/json")
+	snapshotRR := httptest.NewRecorder()
+	mux.ServeHTTP(snapshotRR, snapshotReq)
+
+	if snapshotRR.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusOK, snapshotRR.Code, snapshotRR.Body.String())
+	}
+
+	var snapshotPayload struct {
+		Snapshot struct {
+			ID string `json:"id"`
+		} `json:"snapshot"`
+	}
+	if err := json.Unmarshal(snapshotRR.Body.Bytes(), &snapshotPayload); err != nil {
+		t.Fatalf("decode snapshot response: %v", err)
+	}
+	if snapshotPayload.Snapshot.ID == "" {
+		t.Fatalf("expected snapshot id, got empty payload: %s", snapshotRR.Body.String())
+	}
+
+	mutated := cfg
+	mutated.Providers.OpenAI.APIKey = ""
+	mutated.Discord.Token = ""
+	mutated.Model.Provider = "openai"
+	mutated.Model.Name = "gpt-4o-mini"
+	writeContractDashboardConfig(t, root, mutated)
+
+	restoreReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/admin/agents/default/rollback-restore",
+		bytes.NewBufferString(`{"snapshot_id":"`+snapshotPayload.Snapshot.ID+`"}`),
+	)
+	restoreReq.Header.Set("Content-Type", "application/json")
+	restoreRR := httptest.NewRecorder()
+	mux.ServeHTTP(restoreRR, restoreReq)
+
+	if restoreRR.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusOK, restoreRR.Code, restoreRR.Body.String())
+	}
+
+	restored, err := config.LoadOrDefault(filepath.Join(root, ".openclawssy", "config.json"))
+	if err != nil {
+		t.Fatalf("load restored config: %v", err)
+	}
+	if restored.Providers.OpenAI.APIKey != "openai-secret" {
+		t.Fatalf("expected openai api key restored, got %q", restored.Providers.OpenAI.APIKey)
+	}
+	if restored.Discord.Token != "discord-secret" {
+		t.Fatalf("expected discord token restored, got %q", restored.Discord.Token)
+	}
+	if restored.Model.Provider != "hatz" || restored.Model.Name != "glm-4.5" {
+		t.Fatalf("expected model restored to hatz/glm-4.5, got %s/%s", restored.Model.Provider, restored.Model.Name)
+	}
+}
+
+func TestContractRollbackRestoreSnapshotNotFound(t *testing.T) {
+	root := t.TempDir()
+	writeContractDashboardConfig(t, root, config.Default())
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/agents/default/rollback-restore", bytes.NewBufferString(`{"snapshot_id":"missing"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusNotFound, rr.Code, rr.Body.String())
+	}
+	if got := contractErrorCode(t, rr.Body.Bytes()); got != "contract.snapshot_not_found" {
+		t.Fatalf("expected error code contract.snapshot_not_found, got %q", got)
+	}
+}
+
 type contractDiffFieldPayload struct {
 	Field        string `json:"field"`
 	TargetValue  any    `json:"target_value"`

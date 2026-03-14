@@ -35,12 +35,14 @@ import (
 )
 
 type Handler struct {
-	rootDir        string
-	store          httpchannel.RunStore
-	schedulerStore *scheduler.Store
-	runCanceller   dashboardRunCanceller
-	monitorRunMu   sync.Mutex
-	monitorRuns    map[string]monitorRunState
+	rootDir         string
+	store           httpchannel.RunStore
+	schedulerStore  *scheduler.Store
+	runCanceller    dashboardRunCanceller
+	monitorRunMu    sync.Mutex
+	monitorRuns     map[string]monitorRunState
+	rollbackMu      sync.Mutex
+	rollbackByAgent map[string][]agentRollbackSnapshot
 }
 
 type dashboardRunCanceller interface {
@@ -149,11 +151,12 @@ func New(rootDir string, store httpchannel.RunStore, schedulerStore ...*schedule
 
 func NewWithOptions(rootDir string, store httpchannel.RunStore, opts Options) *Handler {
 	return &Handler{
-		rootDir:        rootDir,
-		store:          store,
-		schedulerStore: opts.SchedulerStore,
-		runCanceller:   opts.RunCanceller,
-		monitorRuns:    make(map[string]monitorRunState),
+		rootDir:         rootDir,
+		store:           store,
+		schedulerStore:  opts.SchedulerStore,
+		runCanceller:    opts.RunCanceller,
+		monitorRuns:     make(map[string]monitorRunState),
+		rollbackByAgent: make(map[string][]agentRollbackSnapshot),
 	}
 }
 
