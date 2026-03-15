@@ -468,6 +468,48 @@ func TestAdminConfigEndpointRedactsSecrets(t *testing.T) {
 	}
 }
 
+func TestAdminStatusIncludesEffectiveRuntimeConfig(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, ".openclawssy", "config.json")
+	cfg := config.Default()
+	if err := config.Save(configPath, cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	effective := cfg
+	effective.Server.BindAddress = "0.0.0.0"
+	effective.Server.Port = 8082
+	effective.Workspace.Root = "/app/workspace"
+	effective.Output.ThinkingMode = config.ThinkingModeNever
+	effective.Engine.MaxConcurrentRuns = 64
+
+	h := NewWithOptions(root, httpchannel.NewInMemoryRunStore(), Options{EffectiveConfig: &effective})
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/status", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rr.Code)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	runtimePayload, ok := out["runtime"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected runtime payload, got %#v", out)
+	}
+	serverPayload, ok := runtimePayload["server"].(map[string]any)
+	if !ok || serverPayload["bind_address"] != "0.0.0.0" {
+		t.Fatalf("expected runtime server bind_address override, got %#v", runtimePayload)
+	}
+	if gotPort, ok := serverPayload["port"].(float64); !ok || int(gotPort) != 8082 {
+		t.Fatalf("expected runtime server port 8082, got %#v", serverPayload["port"])
+	}
+}
+
 func TestAdminConfigPatchMergesAndValidateReturnsFieldErrors(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".openclawssy"), 0o755); err != nil {

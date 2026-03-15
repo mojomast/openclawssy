@@ -195,6 +195,11 @@ async function fetchConfig(client: ApiClient): Promise<JsonRecord> {
   return isRecord(response) ? response : {}
 }
 
+async function fetchStatus(client: ApiClient): Promise<JsonRecord> {
+  const response = await client.get<JsonRecord>("/api/admin/status")
+  return isRecord(response) ? response : {}
+}
+
 export function SettingsPage() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -228,7 +233,38 @@ export function SettingsPage() {
     setSaveError("")
     try {
       const loaded = await fetchConfig(apiClient)
+      const status = await fetchStatus(apiClient)
       const cloned = deepClone(loaded)
+      const runtime = isRecord(status.runtime) ? status.runtime : null
+      const runtimeServer = isRecord(runtime?.server) ? runtime.server : null
+      const runtimeWorkspace = isRecord(runtime?.workspace) ? runtime.workspace : null
+      const runtimeOutput = isRecord(runtime?.output) ? runtime.output : null
+      const runtimeEngine = isRecord(runtime?.engine) ? runtime.engine : null
+      if (runtimeServer) {
+        cloned.server = {
+          ...(isRecord(cloned.server) ? cloned.server : {}),
+          bind_address: readPath(runtimeServer, "bind_address", readPath(cloned, "server.bind_address", "")),
+          port: readPath(runtimeServer, "port", readPath(cloned, "server.port", 0)),
+        }
+      }
+      if (runtimeWorkspace) {
+        cloned.workspace = {
+          ...(isRecord(cloned.workspace) ? cloned.workspace : {}),
+          root: readPath(runtimeWorkspace, "root", readPath(cloned, "workspace.root", "")),
+        }
+      }
+      if (runtimeOutput) {
+        cloned.output = {
+          ...(isRecord(cloned.output) ? cloned.output : {}),
+          thinking_mode: readPath(runtimeOutput, "thinking_mode", readPath(cloned, "output.thinking_mode", "never")),
+        }
+      }
+      if (runtimeEngine) {
+        cloned.engine = {
+          ...(isRecord(cloned.engine) ? cloned.engine : {}),
+          max_concurrent_runs: readPath(runtimeEngine, "max_concurrent_runs", readPath(cloned, "engine.max_concurrent_runs", 0)),
+        }
+      }
       setConfig(cloned)
       setDraft(cloned)
       dirtyRef.current = false

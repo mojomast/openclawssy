@@ -40,6 +40,7 @@ type Handler struct {
 	store           httpchannel.RunStore
 	schedulerStore  *scheduler.Store
 	runCanceller    dashboardRunCanceller
+	effectiveConfig *config.Config
 	monitorRunMu    sync.Mutex
 	monitorRuns     map[string]monitorRunState
 	promptStackMu   sync.Mutex
@@ -54,8 +55,9 @@ type dashboardRunCanceller interface {
 }
 
 type Options struct {
-	SchedulerStore *scheduler.Store
-	RunCanceller   dashboardRunCanceller
+	SchedulerStore  *scheduler.Store
+	RunCanceller    dashboardRunCanceller
+	EffectiveConfig *config.Config
 }
 
 type monitorRunRecord struct {
@@ -153,11 +155,17 @@ func New(rootDir string, store httpchannel.RunStore, schedulerStore ...*schedule
 }
 
 func NewWithOptions(rootDir string, store httpchannel.RunStore, opts Options) *Handler {
+	var effectiveConfig *config.Config
+	if opts.EffectiveConfig != nil {
+		cloned := *opts.EffectiveConfig
+		effectiveConfig = &cloned
+	}
 	return &Handler{
 		rootDir:         rootDir,
 		store:           store,
 		schedulerStore:  opts.SchedulerStore,
 		runCanceller:    opts.RunCanceller,
+		effectiveConfig: effectiveConfig,
 		monitorRuns:     make(map[string]monitorRunState),
 		rollbackByAgent: make(map[string][]agentRollbackSnapshot),
 	}
@@ -445,6 +453,25 @@ func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request) {
 		},
 		"discord_enabled":  cfg.Discord.Enabled,
 		"telegram_enabled": cfg.Telegram.Enabled,
+	}
+	effective := cfg
+	if h.effectiveConfig != nil {
+		effective = *h.effectiveConfig
+	}
+	out["runtime"] = map[string]any{
+		"server": map[string]any{
+			"bind_address": effective.Server.BindAddress,
+			"port":         effective.Server.Port,
+		},
+		"workspace": map[string]any{
+			"root": effective.Workspace.Root,
+		},
+		"output": map[string]any{
+			"thinking_mode": effective.Output.ThinkingMode,
+		},
+		"engine": map[string]any{
+			"max_concurrent_runs": effective.Engine.MaxConcurrentRuns,
+		},
 	}
 	writeJSON(w, out)
 }
