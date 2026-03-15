@@ -515,6 +515,7 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 			engine.RunTracker(),
 			runTracker,
 		}},
+		EffectiveConfig: &runtimeCfg,
 	})
 	server := httpchannel.NewServer(httpchannel.Config{
 		Addr:        serveCfg.Addr,
