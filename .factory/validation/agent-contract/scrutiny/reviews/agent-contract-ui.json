@@ -1,0 +1,33 @@
+{
+  "featureId": "agent-contract-ui",
+  "reviewedAt": "2026-03-14T14:02:55Z",
+  "commitId": "3b0c837",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The page delivers agent selection, sectioned contract rendering with inheritance badges, raw/resolved toggle, diff mode, and sidebar accessibility, but rollback is implemented against a redacted config payload and can erase secret/token values instead of restoring true prior state.",
+    "issues": [
+      {
+        "file": "internal/channels/dashboard/ui/src/pages/AgentContractPage.tsx",
+        "line": 342,
+        "severity": "blocking",
+        "description": "Rollback snapshots are captured from GET /api/admin/config and replayed with PATCH /api/admin/config (lines 342 and 364). The backend returns cfg.Redacted() for that GET (internal/channels/dashboard/handler.go:450), so snapshot data strips provider API keys and chat tokens. Restoring such a snapshot can overwrite live secrets with empty values, violating expected rollback behavior (restore previous config state) and creating destructive side effects."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "frontend-worker Step 5 requires running the full Playwright suite, but mission guidance explicitly marks full-suite failures as pre-existing and instructs scoped specs for in-progress migration features. This causes predictable procedure deviations.",
+      "evidence": "Skill: .factory/skills/frontend-worker/SKILL.md (Step 5). Mission guidance: /home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/AGENTS.md (Known Pre-Existing Issues + Testing Guidance). Handoff skillFeedback.followedProcedure=false cites this exact mismatch."
+    },
+    {
+      "area": "knowledge",
+      "observation": "Shared library docs do not call out that /api/admin/config GET is redacted and unsafe for full-state round-trip/rollback semantics.",
+      "evidence": "Backend behavior: internal/channels/dashboard/handler.go:450 returns cfg.Redacted(). Redaction implementation: internal/config/config.go:929-939 clears API keys/tokens. Current library files (.factory/library/*.md) describe dashboard/API usage but do not document this rollback hazard."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed feature agent-contract-ui (commit 3b0c837) using handoff, diff, transcript skeleton, and skill/procedure context. Core UI behavior is largely implemented, but rollback is incorrect because it snapshots redacted config and can wipe secrets on restore; this is a blocking correctness issue, so the review fails."
+}

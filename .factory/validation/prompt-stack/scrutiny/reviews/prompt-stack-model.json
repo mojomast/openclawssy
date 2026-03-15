@@ -1,0 +1,15 @@
+{
+  "featureId": "prompt-stack-model",
+  "reviewedAt": "2026-03-14T15:59:59.907788Z",
+  "commitId": "3104315",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The internal/promptstack package implementation in commit 3104315 fully delivers the requested 5-layer domain model, assembly, token estimation metadata, JSON-backed per-agent/per-layer version storage, history/version retrieval, line-level diffing, rollback semantics, and comprehensive package tests covering these behaviors.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed handoff, commit diff, transcript skeleton, and backend-worker skill for feature prompt-stack-model. Implementation matches the feature description and expectedBehavior with no blocking or non-blocking defects identified; shared-state gap observations were not found for this feature run."
+}

@@ -1,0 +1,87 @@
+{
+  "milestone": "misc-validation-1",
+  "flow": "browser-runtime-deps-bootstrap-smoke",
+  "surface": "browser",
+  "appUrl": "http://localhost:8081/dashboard",
+  "assignedAssertions": [
+    "VAL-CONTRACT-005"
+  ],
+  "startup": {
+    "session": "flow-misc-bootstrap-smoke3",
+    "initialManagedLaunchPath": "direct",
+    "startupSucceededOnFirstManagedLaunchPath": false,
+    "bootstrapMode": "cdp",
+    "cdpPort": 9449
+  },
+  "assertions": [
+    {
+      "id": "VAL-CONTRACT-005",
+      "title": "Agent Contract page loads and lists agents",
+      "status": "pass",
+      "steps": [
+        "Opened dashboard via bootstrap wrapper using non-default session and authenticated with bearer token change-me.",
+        "Navigated directly to #/agent-contract and verified Agent Contract page rendered.",
+        "Confirmed agent selector lists configured agents and selected \"default\" from the dropdown.",
+        "Verified resolved contract view updates for selected agent and shows structured policy sections."
+      ],
+      "observations": [
+        "Initial managed launch via direct mode failed with daemon startup error; wrapper recovered automatically using deterministic CDP fallback.",
+        "Agent selector displayed many configured agents including default; selected agent reflected in identity.agent_id row.",
+        "Resolved contract sections visible: Identity, Mission, System Prompt, Tool Policy, Delegation Policy, Memory Policy, Model Policy, Sandbox Policy, Observability Policy.",
+        "No console errors were reported during the assertion flow."
+      ],
+      "evidence": [
+        {
+          "type": "bootstrap-mode",
+          "path": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/browser-runtime-deps-bootstrap-smoke/00-bootstrap-mode.txt"
+        },
+        {
+          "type": "screenshot(agent-list)",
+          "path": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/browser-runtime-deps-bootstrap-smoke/01-agent-list.png"
+        },
+        {
+          "type": "screenshot(contract-view)",
+          "path": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/browser-runtime-deps-bootstrap-smoke/02-contract-view-full.png"
+        },
+        {
+          "type": "console-errors",
+          "path": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/browser-runtime-deps-bootstrap-smoke/03-console-errors.json"
+        },
+        {
+          "type": "network-requests",
+          "path": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/browser-runtime-deps-bootstrap-smoke/04-network-requests.txt"
+        },
+        {
+          "type": "network-observation",
+          "path": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/browser-runtime-deps-bootstrap-smoke/07-network-observation.txt"
+        },
+        {
+          "type": "screenshot(contract-view-after-select-default)",
+          "path": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/browser-runtime-deps-bootstrap-smoke/08-contract-view-default-full.png"
+        },
+        {
+          "type": "page-text",
+          "path": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/browser-runtime-deps-bootstrap-smoke/09-contract-page-text-default.txt"
+        }
+      ],
+      "retries": []
+    }
+  ],
+  "summary": {
+    "pass": 1,
+    "fail": 0,
+    "blocked": 0,
+    "skipped": 0,
+    "pending": 0
+  },
+  "frictions": [
+    "Direct managed launch path did not succeed (daemon failed to start); wrapper automatically switched to CDP fallback and continued successfully.",
+    "agent-browser network capture returned no requests, so supplemental local API observations were recorded for contract endpoints."
+  ],
+  "blockers": [],
+  "heartbeat": {
+    "timestamp": "2026-03-14T23:14:57.596754+00:00",
+    "phase": "complete"
+  },
+  "completedAt": "2026-03-14T23:14:57.596754+00:00"
+}

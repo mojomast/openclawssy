@@ -1,0 +1,44 @@
+{
+  "groupId": "api-contract-r2",
+  "surface": "API Contract Endpoints",
+  "testedAt": "2026-03-14T14:58:55.833319+00:00",
+  "isolation": {
+    "baseUrl": "http://localhost:8081",
+    "authToken": "change-me",
+    "missionDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3"
+  },
+  "toolsUsed": [
+    "curl",
+    "python3"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-CONTRACT-008",
+      "status": "pass",
+      "reason": "Using a valid agent ID discovered from GET /api/admin/agents, both rollback endpoints returned HTTP 200 and non-error JSON bodies with ok=true.",
+      "evidence": {
+        "agentId": "AutonomousResearcher-1",
+        "snapshotId": "1773500311070386703",
+        "network": [
+          "GET /api/admin/agents -> 200",
+          "POST /api/admin/agents/AutonomousResearcher-1/rollback-snapshot -> 200",
+          "POST /api/admin/agents/AutonomousResearcher-1/rollback-restore -> 200"
+        ],
+        "files": [
+          "agent-contract/api-contract-r2/curl-agents-response-headers.txt",
+          "agent-contract/api-contract-r2/curl-agents-response-body.json",
+          "agent-contract/api-contract-r2/curl-selected-agent-id.txt",
+          "agent-contract/api-contract-r2/curl-rollback-snapshot-response-headers.txt",
+          "agent-contract/api-contract-r2/curl-rollback-snapshot-response-body.json",
+          "agent-contract/api-contract-r2/curl-snapshot-id.txt",
+          "agent-contract/api-contract-r2/curl-rollback-restore-response-headers.txt",
+          "agent-contract/api-contract-r2/curl-rollback-restore-response-body.json",
+          "agent-contract/api-contract-r2/curl-network-summary.txt",
+          "agent-contract/api-contract-r2/curl-validation-summary.json"
+        ]
+      }
+    }
+  ],
+  "frictions": [],
+  "blockers": []
+}

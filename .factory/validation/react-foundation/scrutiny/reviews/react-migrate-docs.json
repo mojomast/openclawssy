@@ -1,0 +1,26 @@
+{
+  "featureId": "react-migrate-docs",
+  "reviewedAt": "2026-03-14T02:32:56Z",
+  "commitId": "11eeccdf265394b7850e41c3c242c65b8203b3b5",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The React Docs migration in commit 11eeccdf265394b7850e41c3c242c65b8203b3b5 satisfies the feature requirements: agent/document selectors, textarea editing, unsaved-change indicator, save/reload flows, agent switch reload behavior, and loading/saving/success/error status messaging. The added Playwright docs spec covers core success and error interactions for this page.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "Frontend migration skill guidance conflicts with mission guidance on Playwright scope, which can cause wasted runs on known-failing full-suite checks.",
+      "evidence": ".factory/skills/frontend-worker/SKILL.md:85 mandates running full `npx playwright test`, while mission guidance says full suite is expected to fail and to run scoped specs (/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/AGENTS.md:60-61). This worker's handoff also records that full-suite failures were pre-existing (/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/handoffs/2026-03-14T02-16-19-120Z__react-migrate-docs__c03e4f12-b28c-4e52-88ac-e707a18c78b8.json:71)."
+    },
+    {
+      "area": "knowledge",
+      "observation": "There is no shared dashboard interaction catalog in .factory/library, so migration workers continue to reverse-engineer legacy page behavior from source files.",
+      "evidence": "Skill guidance explicitly references `.factory/library/dashboard-interactions.md` if available (.factory/skills/frontend-worker/SKILL.md:72), but /home/mojo/projects/openclawssy/.factory/library currently contains only architecture.md, environment.md, and user-testing.md."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed transcript skeleton, handoff, skill guidance, and commit diff for react-migrate-docs; the feature meets required behavior and passes scrutiny with no blocking or non-blocking code defects identified."
+}

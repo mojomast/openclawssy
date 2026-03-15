@@ -1,0 +1,21 @@
+{
+  "featureId": "fix-prompt-stack-lint-role-and-success-criteria-detection",
+  "reviewedAt": "2026-03-14T16:27:00Z",
+  "commitId": "c0d9852d99653866ecf3738541c4a8f6eaebd9f8",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix directly addresses both prior blocking defects: generic delegation targets are filtered from undefined-role extraction, and success-criteria detection now requires explicit criteria content so vague 'completion criteria' mentions still trigger warnings. Regression tests were added for both behaviors and align with expected behavior.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The backend-worker skill prescribes strict tests-first (red phase) workflow, but this fix session again applies code patches before running targeted failing lint tests; the documented procedure appears stricter than actual worker practice.",
+      "evidence": "worker-transcripts.jsonl session 840d75e4-43cb-48f7-b419-093a4ad15912 shows ApplyPatch steps before the first `go test ./internal/promptstack -run TestLint ...` run."
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/prompt-stack/scrutiny/reviews/prompt-stack-lint.json",
+  "summary": "Pass: this re-run fix resolves the two prior blocking lint-rule defects and adds focused regressions covering the repaired role extraction and success-criteria detection behavior."
+}

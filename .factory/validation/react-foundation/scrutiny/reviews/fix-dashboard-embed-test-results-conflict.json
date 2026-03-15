@@ -1,0 +1,26 @@
+{
+  "featureId": "fix-dashboard-embed-test-results-conflict",
+  "reviewedAt": "2026-03-14T02:29:29Z",
+  "commitId": "c273ed0",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Implementation matches the feature intent: narrowing go:embed inputs in dashboard handler removes transient Playwright artifact directories from embed matching while preserving dist-first serving and legacy fallback assets.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "Shared architecture notes still document the old broad embed pattern and are now stale after this fix.",
+      "evidence": ".factory/library/architecture.md:32 says dashboard uses `//go:embed ui/*`, while internal/channels/dashboard/handler.go:123 now uses explicit embeds (`ui/dist ui/index.html ui/app.js ui/styles.css ui/help ui/src`)."
+    },
+    {
+      "area": "skills",
+      "observation": "Worker reported a procedural deviation for baseline-failure handling when the feature itself was meant to fix that baseline issue; this suggests mission-worker guidance may need an explicit exception path for known-baseline-fix features.",
+      "evidence": "handoffs/2026-03-14T01-31-40-543Z__fix-dashboard-embed-test-results-conflict__f030536c-58e7-4bf9-9a2f-f3e0766559fe.json:53-56 (`followedProcedure: false`, deviation at `1.3 Baseline Validation` despite successful feature completion)."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed transcript skeleton and commit c273ed0. The change is minimal and correct for the embed/test-results conflict, with no blocking code issues found; recorded shared-state observations for stale architecture docs and baseline-failure procedural guidance."
+}

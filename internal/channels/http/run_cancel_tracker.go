@@ -48,3 +48,13 @@ func (t *ActiveRunTracker) Remove(runID string) {
 	defer t.mu.Unlock()
 	delete(t.cancels, runID)
 }
+
+func (t *ActiveRunTracker) IsTracked(runID string) bool {
+	if t == nil || runID == "" {
+		return false
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	_, ok := t.cancels[runID]
+	return ok
+}

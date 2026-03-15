@@ -1,0 +1,46 @@
+{
+  "milestone": "prompt-stack",
+  "round": 2,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "go test -parallel 2 ./...",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "cd internal/channels/dashboard/ui && npx tsc --noEmit",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "go vet ./...",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": ".factory/skills/backend-worker/SKILL.md",
+      "suggestion": "Clarify whether tests-first red-phase ordering is mandatory or best-effort when applying focused fixes, and align wording with observed worker execution order.",
+      "evidence": "fix-prompt-stack-lint-role-and-success-criteria-detection review observed ApplyPatch operations before first targeted `go test ./internal/promptstack -run TestLint...` run in worker session 840d75e4-43cb-48f7-b419-093a4ad15912.",
+      "isSystemic": true
+    },
+    {
+      "target": ".factory/skills/frontend-worker/SKILL.md",
+      "suggestion": "Clarify whether strict tests-first red-phase ordering is required for scoped UI fixes or can be treated as best-effort when mission constraints prioritize direct patch + focused regression validation.",
+      "evidence": "fix-prompt-stack-ui-syntax-highlighting review observed code patches before first `npx playwright test tests/e2e/prompt-stack.spec.ts` run in worker session 34284e1c-e830-4dbf-973b-ab6af7a7a09a.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": ".factory/validation/prompt-stack/scrutiny/synthesis.round1.json"
+}

@@ -3192,3 +3192,101 @@ func TestCodeSearchSkipsBinaryFiles(t *testing.T) {
 		t.Fatalf("expected match in text.txt, but not found")
 	}
 }
+
+func TestRepairCorruptedArgKeys(t *testing.T) {
+	journalArgTypes := map[string]ArgType{
+		"entry_type":             ArgTypeString,
+		"title":                  ArgTypeString,
+		"body_md":                ArgTypeString,
+		"confidence_level":       ArgTypeString,
+		"tags":                   ArgTypeArray,
+		"linked_memory_ids":      ArgTypeArray,
+		"linked_project_ids":     ArgTypeArray,
+		"linked_identity_themes": ArgTypeArray,
+	}
+
+	tests := []struct {
+		name     string
+		input    map[string]any
+		argTypes map[string]ArgType
+		wantKey  string
+		wantVal  any
+		wantTags any
+	}{
+		{
+			name: "corrupted tags+title",
+			input: map[string]any{
+				"entry_type":          "research",
+				"body_md":             "content",
+				"tags":                "chaos-theory",
+				"determinism,\"title": "Ship of Theseus",
+			},
+			argTypes: journalArgTypes,
+			wantKey:  "title",
+			wantVal:  "Ship of Theseus",
+			wantTags: []any{"chaos-theory", "determinism"},
+		},
+		{
+			name: "clean args unchanged",
+			input: map[string]any{
+				"entry_type": "research",
+				"title":      "Clean Title",
+				"body_md":    "content",
+			},
+			argTypes: journalArgTypes,
+			wantKey:  "title",
+			wantVal:  "Clean Title",
+		},
+		{
+			name: "space after comma",
+			input: map[string]any{
+				"tags":          "tag1",
+				"tag2, \"title": "My Title",
+				"entry_type":    "observation",
+			},
+			argTypes: journalArgTypes,
+			wantKey:  "title",
+			wantVal:  "My Title",
+		},
+		{
+			name: "nil argTypes fallback",
+			input: map[string]any{
+				"tags":         "val1",
+				"val2,\"title": "Fallback Title",
+			},
+			argTypes: nil,
+			wantKey:  "title",
+			wantVal:  "Fallback Title",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := repairCorruptedArgKeys(tt.input, tt.argTypes)
+			val, ok := result[tt.wantKey]
+			if !ok {
+				t.Fatalf("expected key %q in result, got keys: %v", tt.wantKey, keys(result))
+			}
+			if fmt.Sprintf("%v", val) != fmt.Sprintf("%v", tt.wantVal) {
+				t.Fatalf("expected %q=%v, got %v", tt.wantKey, tt.wantVal, val)
+			}
+			if tt.wantTags != nil {
+				tags, ok := result["tags"]
+				if !ok {
+					t.Fatalf("expected 'tags' key in result")
+				}
+				if fmt.Sprintf("%v", tags) != fmt.Sprintf("%v", tt.wantTags) {
+					t.Fatalf("expected tags=%v, got %v", tt.wantTags, tags)
+				}
+			}
+		})
+	}
+}
+
+func keys(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}

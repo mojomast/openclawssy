@@ -1,0 +1,73 @@
+{
+  "groupId": "monitor-rerun4",
+  "testedAt": "2026-03-14T12:13:15.885285Z",
+  "isolation": {
+    "missionDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3",
+    "repoRoot": "/home/mojo/projects/openclawssy",
+    "dashboardUrl": "http://localhost:8081/dashboard",
+    "authToken": "change-me",
+    "milestone": "react-migration",
+    "assertions": [
+      "VAL-MIG-MON-002"
+    ]
+  },
+  "toolsUsed": [
+    "agent-browser",
+    "curl",
+    "python3"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-MIG-MON-002",
+      "title": "Launch and cancel runs",
+      "status": "fail",
+      "steps": [
+        {
+          "action": "Preflight GET /api/admin/monitor/runs with bearer auth before UI interaction",
+          "expected": "Healthy response and evidence captured",
+          "observed": "HTTP/1.1 200 OK; artifacts saved (preflight-monitor-runs-headers.txt/body.json)."
+        },
+        {
+          "action": "Set Launch prompt (contains rerun4), set Thinking mode to non-default (always), click Start on default agent card",
+          "expected": "New run launches and thinking_mode=always applies",
+          "observed": "Runs launched from Monitor (e.g., run_1773490044359247877, run_1773490190147119807); /v1/runs/{id} shows thinking_mode=always and status running before cancel attempts."
+        },
+        {
+          "action": "Click Stop Active on default agent card while run is running",
+          "expected": "Running run transitions to canceled",
+          "observed": "Stop Active clicked (UI evidence captured), but run finished as completed, not canceled. Fast retry (run_1773490275525290711) also ended completed after click."
+        },
+        {
+          "action": "Click per-row Stop button on specific running row in Recent Main + Subagent Runs table",
+          "expected": "Target run transitions to canceled",
+          "observed": "Per-row Stop clicked on run_1773490190147119807 (and fast retry run_1773490307632314179), but run ended completed, not canceled."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "react-migration/monitor-rerun4/VAL-MIG-MON-002-monitor-page.png",
+          "react-migration/monitor-rerun4/VAL-MIG-MON-002-launch-prompt-thinking-mode.png",
+          "react-migration/monitor-rerun4/VAL-MIG-MON-002-stop-active-visible.png",
+          "react-migration/monitor-rerun4/VAL-MIG-MON-002-stop-active-clicked.png",
+          "react-migration/monitor-rerun4/VAL-MIG-MON-002-row-stop-visible-active.png",
+          "react-migration/monitor-rerun4/VAL-MIG-MON-002-row-stop-clicked.png"
+        ],
+        "consoleErrors": "none (VAL-MIG-MON-002-console-errors.txt is empty)",
+        "network": "Browser request list captured only POST /v1/runs lines (VAL-MIG-MON-002-browser-network.txt). Supplemental API evidence: preflight-monitor-runs-headers.txt/body.json, VAL-MIG-MON-002-stop-active-run-before.json, VAL-MIG-MON-002-stop-active-run-after.json, VAL-MIG-MON-002-row-stop-run-before.json, VAL-MIG-MON-002-row-stop-run-after.json, VAL-MIG-MON-002-fast-stop-active-result.json, VAL-MIG-MON-002-fast-row-stop-result.json."
+      },
+      "issues": "Launch and thinking mode application work, but cancel controls did not produce canceled terminal status for tested runs; runs completed instead (including fast retries where controls were clicked while status was running)."
+    }
+  ],
+  "frictions": [
+    {
+      "description": "agent-browser network request output did not include response codes/payloads for this flow.",
+      "resolved": true,
+      "resolution": "Collected supplemental curl/python API artifacts for request outcomes and run statuses.",
+      "affectedAssertions": [
+        "VAL-MIG-MON-002"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "Validated VAL-MIG-MON-002 on real dashboard surface: run launch + thinking_mode=always observed, but Stop Active and per-row Stop clicks did not yield canceled status on tested runs, so assertion failed."
+}

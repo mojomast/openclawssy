@@ -1,0 +1,21 @@
+{
+  "featureId": "fix-decision-ledger-decisions-api-large-audit-lines",
+  "reviewedAt": "2026-03-14T18:43:01Z",
+  "commitId": "e2ba2a6",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix directly addresses the prior blocking failure by replacing `bufio.Scanner` default-token parsing with `bufio.Reader.ReadBytes` line reads in `readDecisionAuditFile`, preventing token-too-long failures on large JSONL audit entries while preserving decision filtering, ordering, and subagent grouping behavior. The added regression test writes a 256KB decision payload and verifies `GET /api/admin/runs/{id}/decisions` still returns ordered records with HTTP 200.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The backend-worker skill still expects manual API verification evidence under `interactiveChecks`, but this fix handoff records only command-based checks while marking `followedProcedure=true`.",
+      "evidence": "Skill requirement: /home/mojo/projects/openclawssy/.factory/skills/backend-worker/SKILL.md lines 94-108. Fix handoff includes `verification.commandsRun` and no `interactiveChecks`: /home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/handoffs/2026-03-14T18-31-12-565Z__fix-decision-ledger-decisions-api-large-audit-lines__6e458877-3d1a-4eb2-82b9-a12af3d98ec8.json lines 13-14, 77."
+    }
+  ],
+  "addressesFailureFrom": "/home/mojo/projects/openclawssy/.factory/validation/typed-roles-delegation/scrutiny/reviews/decision-ledger.json",
+  "summary": "Reviewed fix feature handoff/transcript skeleton and both relevant diffs (original failure commit 346efc4 and fix commit e2ba2a6). The scanner-limit failure path is remediated with a regression test covering oversized JSONL lines, so this re-run passes with no remaining blocking code issues identified."
+}

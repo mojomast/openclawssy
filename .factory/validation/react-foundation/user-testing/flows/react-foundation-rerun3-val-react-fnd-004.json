@@ -1,0 +1,33 @@
+{
+  "assertionResults": [
+    {
+      "id": "VAL-REACT-FND-004",
+      "status": "pass",
+      "reason": "Desktop shell rendered all four zones (header, nav sidebar, main content, inspector). Sidebar and inspector both collapsed/expanded via their controls. Pane drag interactions changed layout widths (inspector 500px -> 280px, sidebar 240px -> 320px). In narrow viewport (390x844), nav collapsed behind an 'Open navigation menu' trigger and inspector switched to drawer mode with working open/close interaction.",
+      "evidence": [
+        "react-foundation/react-foundation-rerun3-val-react-fnd-004/VAL-REACT-FND-004-desktop-layout.png",
+        "react-foundation/react-foundation-rerun3-val-react-fnd-004/VAL-REACT-FND-004-narrow-layout.png",
+        "react-foundation/react-foundation-rerun3-val-react-fnd-004/VAL-REACT-FND-004-desktop-resized-panes.png",
+        "react-foundation/react-foundation-rerun3-val-react-fnd-004/VAL-REACT-FND-004-desktop-collapsed-zones.png",
+        "react-foundation/react-foundation-rerun3-val-react-fnd-004/VAL-REACT-FND-004-mobile-nav-drawer-open.png",
+        "react-foundation/react-foundation-rerun3-val-react-fnd-004/VAL-REACT-FND-004-mobile-inspector-drawer-open.png",
+        "console-errors: []"
+      ]
+    }
+  ],
+  "toolsUsed": [
+    "agent-browser"
+  ],
+  "frictions": [
+    {
+      "description": "agent-browser initially failed to launch due missing libnspr4.so in default runtime environment.",
+      "resolved": true,
+      "resolution": "Reused guidance fallback by running agent-browser with isolated AGENT_BROWSER_HOME and Playwright bundled library path for this validation session.",
+      "affectedAssertions": [
+        "VAL-REACT-FND-004"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "Validated VAL-REACT-FND-004 in a fresh isolated browser session after rebuild: assertion passed with required screenshots and clean console error check."
+}

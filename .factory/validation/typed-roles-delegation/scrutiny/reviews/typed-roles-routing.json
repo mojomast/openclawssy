@@ -1,0 +1,15 @@
+{
+  "featureId": "typed-roles-routing",
+  "reviewedAt": "2026-03-14T18:21:59Z",
+  "commitId": "97e2eb3",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Implementation matches the feature contract: routing maps required task intents to built-in specialist roles, confidence/rationale are emitted, ambiguous/no-match cases fall back to implementer, and selected role constraints are propagated and enforced on delegated subagent runs.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed feature record, worker handoff, transcript skeleton, and commit 97e2eb3. No blocking correctness or safety issues were found for typed role routing and delegated constraint enforcement, and added tests cover routing decisions plus runtime constraint application."
+}

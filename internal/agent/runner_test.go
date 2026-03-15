@@ -92,6 +92,18 @@ func (m *toolThenAlwaysTransientErrorModel) Generate(_ context.Context, req Mode
 	return ModelResponse{}, errors.New("provider stream interrupted after partial output: context deadline exceeded")
 }
 
+type toolThenContextCanceledModel struct {
+	attempts int
+}
+
+func (m *toolThenContextCanceledModel) Generate(_ context.Context, req ModelRequest) (ModelResponse, error) {
+	m.attempts++
+	if len(req.ToolResults) == 0 {
+		return ModelResponse{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.list", Arguments: []byte(`{"path":"."}`)}}}, nil
+	}
+	return ModelResponse{}, errors.New("provider stream interrupted after partial output: context canceled")
+}
+
 type transientErrorThenSuccessModel struct {
 	attempts int
 }
@@ -1037,6 +1049,76 @@ func TestRunnerBlocksRepeatedAgentRunForNormalizedTaskID(t *testing.T) {
 	}
 }
 
+func TestRunnerBecomussyToolAllowsOneRetryThenBlocks(t *testing.T) {
+	journalArgs := []byte(`{"entry_type":"reflection","title":"Chaos Theory","body_md":"# Chaos Theory\nExploring deterministic systems."}`)
+	model := &mockModel{responses: []ModelResponse{
+		// First attempt: succeeds
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "becomussy.journal.create", Arguments: journalArgs}}},
+		// Second attempt (retry): still allowed with cap=2
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "becomussy.journal.create", Arguments: journalArgs}}},
+		// Third attempt: should be blocked by repetition detection
+		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "becomussy.journal.create", Arguments: journalArgs}}},
+		{FinalText: "done"},
+	}}
+
+	tools := &mockTools{}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "write journal"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	// First two calls should execute (cap=2 allows two attempts).
+	if len(tools.calls) != 2 {
+		t.Fatalf("expected first two becomussy calls to execute, got %d executions", len(tools.calls))
+	}
+	// Third call should be blocked by repetition detection.
+	if len(out.ToolCalls) != 3 {
+		t.Fatalf("expected three tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[2].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on third becomussy call, got %q", out.ToolCalls[2].Result.Error)
+	}
+}
+
+func TestRunnerBecomussyReadToolsGetHigherRepetitionCap(t *testing.T) {
+	searchArgs := []byte(`{"query":"consciousness","limit":10}`)
+	// Build 7 iterations: calls 1-6 should execute (cap=6), call 7 should be blocked.
+	var responses []ModelResponse
+	for i := 1; i <= 7; i++ {
+		responses = append(responses, ModelResponse{
+			ToolCalls: []ToolCallRequest{{ID: fmt.Sprintf("%d", i), Name: "becomussy.journal.search", Arguments: searchArgs}},
+		})
+	}
+	responses = append(responses, ModelResponse{FinalText: "done"})
+
+	model := &mockModel{responses: responses}
+	tools := &mockTools{}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "search journal"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	// First 6 calls should execute (read cap=6).
+	if len(tools.calls) != 6 {
+		t.Fatalf("expected 6 becomussy.journal.search executions, got %d", len(tools.calls))
+	}
+	// 7th call should be blocked.
+	if len(out.ToolCalls) != 7 {
+		t.Fatalf("expected 7 tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[6].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on 7th search call, got %q", out.ToolCalls[6].Result.Error)
+	}
+}
+
 func TestRunnerFinalizesWithModelWhenToolCapReached(t *testing.T) {
 	model := &mockModel{responses: []ModelResponse{
 		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "shell.exec", Arguments: []byte(`{"command":"bash","args":["-lc","nmap -sT 127.0.0.1"]}`)}}},
@@ -1467,6 +1549,28 @@ func TestRunnerTransientProviderErrorAfterToolsReturnsContinuationHint(t *testin
 	}
 	if model.attempts != 6 {
 		t.Fatalf("expected 6 model attempts including failed recovery finalization, got %d", model.attempts)
+	}
+}
+
+func TestRunnerReturnsContextCanceledErrorAfterToolWorkWhenModelSignalsCancellation(t *testing.T) {
+	model := &toolThenContextCanceledModel{}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Output: `{"entries":["SPECPLAN.md","DEVPLAN.md"]}`},
+	}}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 120}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "summarize the workspace", AllowedTools: []string{"fs.list"}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context canceled error, got %v", err)
+	}
+	if strings.TrimSpace(out.FinalText) != "" {
+		t.Fatalf("expected no fallback completion text for canceled run, got %q", out.FinalText)
+	}
+	if len(out.ToolCalls) != 1 {
+		t.Fatalf("expected tool call history to persist before cancellation, got %d", len(out.ToolCalls))
+	}
+	if model.attempts != 2 {
+		t.Fatalf("expected single post-tool cancellation attempt, got %d", model.attempts)
 	}
 }
 
@@ -1994,6 +2098,51 @@ func TestFormatDelegatedTaskMessageIncludesCriteriaAndRules(t *testing.T) {
 	}
 	if !strings.Contains(msg, "remaining risk") {
 		t.Fatalf("expected remaining risk guidance, got %q", msg)
+	}
+}
+
+func TestExecuteDelegatedTasksAssignsRoleRoutingAndConstraints(t *testing.T) {
+	t.Parallel()
+
+	subRunner := &mockSubAgentRunner{
+		result: SubAgentOutput{RunID: "sub-1", FinalText: "ok", Success: true},
+	}
+	runner := Runner{SubAgentRunner: subRunner}
+	state := newRunState(RunInput{Message: "delegate"}, runner)
+
+	tasks := []DecomposedTask{{
+		TaskID:   "discover-1",
+		AgentID:  "default",
+		Message:  "read and search the workspace for migration notes",
+		Priority: 1,
+	}}
+
+	if err := runner.executeDelegatedTasks(context.Background(), state, tasks, RunInput{Message: "delegate"}); err != nil {
+		t.Fatalf("executeDelegatedTasks() error = %v", err)
+	}
+
+	if len(subRunner.calls) != 1 {
+		t.Fatalf("expected 1 subagent call, got %d", len(subRunner.calls))
+	}
+
+	call := subRunner.calls[0]
+	if call.AssignedRole != "scout" {
+		t.Fatalf("assigned role = %q, want scout", call.AssignedRole)
+	}
+	if strings.TrimSpace(call.RoutingRationale) == "" {
+		t.Fatal("expected routing rationale to be populated")
+	}
+	if call.RoutingConfidence <= 0 {
+		t.Fatalf("routing confidence = %f, want > 0", call.RoutingConfidence)
+	}
+	if len(call.RoleAllowedTools) == 0 {
+		t.Fatal("expected role allowed tools to be applied")
+	}
+	if call.RoleMaxToolIterations <= 0 {
+		t.Fatalf("role max iterations = %d, want > 0", call.RoleMaxToolIterations)
+	}
+	if call.RoleTimeoutMS <= 0 {
+		t.Fatalf("role timeout = %d, want > 0", call.RoleTimeoutMS)
 	}
 }
 

@@ -192,6 +192,61 @@ func TestExecuteWithInputLogsTaskIDInAuditRunStart(t *testing.T) {
 	}
 }
 
+func TestExecuteWithInputWritesDecisionRecordsToAudit(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ZAI_API_KEY", "test-key")
+	e, err := NewEngine(root)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	if err := e.Init("default", false); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	_, err = e.ExecuteWithInput(context.Background(), ExecuteInput{
+		AgentID: "default",
+		Message: `/tool fs.list {"path":"."}`,
+		Source:  "dashboard",
+	})
+	if err != nil {
+		t.Fatalf("execute with decisions: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(root, ".openclawssy", "agents", "default", "audit", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read audit log: %v", err)
+	}
+
+	decisionTypes := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var evt struct {
+			Type    string         `json:"type"`
+			Payload map[string]any `json:"payload"`
+		}
+		if err := json.Unmarshal([]byte(line), &evt); err != nil {
+			t.Fatalf("decode audit event: %v", err)
+		}
+		if evt.Type != "decision.record" {
+			continue
+		}
+		recordType, _ := evt.Payload["record_type"].(string)
+		decisionTypes[recordType] = true
+	}
+
+	if !decisionTypes[agent.DecisionRecordTypeGoalInterpretation] {
+		t.Fatalf("expected goal interpretation decision record, got %v", decisionTypes)
+	}
+	if !decisionTypes[agent.DecisionRecordTypeToolDecision] {
+		t.Fatalf("expected tool decision record, got %v", decisionTypes)
+	}
+	if !decisionTypes[agent.DecisionRecordTypeTermination] {
+		t.Fatalf("expected termination decision record, got %v", decisionTypes)
+	}
+}
+
 func TestExecuteWithInputAllowsImageOnlyMessage(t *testing.T) {
 	root := t.TempDir()
 	e, err := NewEngine(root)
@@ -440,7 +495,7 @@ func TestLoadPromptDocsIncludesRuntimeContext(t *testing.T) {
 		t.Fatalf("init: %v", err)
 	}
 
-	docs, err := e.loadPromptDocs("default")
+	docs, err := e.loadPromptDocs("default", "")
 	if err != nil {
 		t.Fatalf("load prompt docs: %v", err)
 	}
@@ -595,7 +650,7 @@ func TestLoadPromptDocsIncludesIdentityBootstrapWhenSoulEmpty(t *testing.T) {
 	identityPath := filepath.Join(root, ".openclawssy", "agents", "default", "identity.json")
 	_ = os.Remove(identityPath)
 
-	docs, err := e.loadPromptDocs("default")
+	docs, err := e.loadPromptDocs("default", "")
 	if err != nil {
 		t.Fatalf("load prompt docs: %v", err)
 	}
@@ -629,7 +684,7 @@ func TestLoadPromptDocsIncludesIdentityBootstrapWhenSoulIsDefaultScaffold(t *tes
 	identityPath := filepath.Join(root, ".openclawssy", "agents", "default", "identity.json")
 	_ = os.Remove(identityPath)
 
-	docs, err := e.loadPromptDocs("default")
+	docs, err := e.loadPromptDocs("default", "")
 	if err != nil {
 		t.Fatalf("load prompt docs: %v", err)
 	}
@@ -661,7 +716,7 @@ func TestLoadPromptDocsSkipsIdentityBootstrapWhenSoulIsCustomized(t *testing.T) 
 		t.Fatalf("write custom SOUL.md: %v", err)
 	}
 
-	docs, err := e.loadPromptDocs("default")
+	docs, err := e.loadPromptDocs("default", "")
 	if err != nil {
 		t.Fatalf("load prompt docs: %v", err)
 	}
@@ -2658,5 +2713,47 @@ func TestSubAgentAdapterTaskThinkingModeOverridesConfig(t *testing.T) {
 	input := mock.inputs[0]
 	if input.ThinkingMode != "always" {
 		t.Fatalf("expected task ThinkingMode=always to override config default, got %q", input.ThinkingMode)
+	}
+}
+
+func TestSubAgentAdapterAppliesRoleConstraints(t *testing.T) {
+	mock := &mockAgentRunner{output: tools.AgentRunOutput{RunID: "run-role", FinalText: "ok"}}
+	adapter := &agentSubAgentRunnerAdapter{
+		runner: mock,
+		subAgentDefaults: config.SubAgentRestrictions{
+			AllowedTools:      []string{"fs.read", "test.run", "check.run", "fs.write"},
+			MaxToolIterations: 50,
+			TimeoutMS:         9000,
+			ThinkingMode:      "never",
+		},
+		subAgentOverrides: map[string]config.SubAgentRestrictions{},
+	}
+
+	_, err := adapter.ExecuteSubAgent(context.Background(), agent.DecomposedTask{
+		TaskID:                "task-role",
+		AgentID:               "default",
+		Message:               "test and verify changes",
+		AssignedRole:          "verifier",
+		RoleAllowedTools:      []string{"test.run", "check.run"},
+		RoleMaxToolIterations: 12,
+		RoleTimeoutMS:         2500,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(mock.inputs) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(mock.inputs))
+	}
+	input := mock.inputs[0]
+
+	if input.MaxToolIterations != 12 {
+		t.Fatalf("expected role max iterations 12, got %d", input.MaxToolIterations)
+	}
+	if input.TimeoutMS != 2500 {
+		t.Fatalf("expected role timeout 2500, got %d", input.TimeoutMS)
+	}
+	if len(input.AllowedTools) != 2 || input.AllowedTools[0] != "test.run" || input.AllowedTools[1] != "check.run" {
+		t.Fatalf("expected role allowed tools [test.run check.run], got %v", input.AllowedTools)
 	}
 }

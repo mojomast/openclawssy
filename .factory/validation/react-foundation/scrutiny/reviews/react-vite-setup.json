@@ -1,0 +1,33 @@
+{
+  "featureId": "react-vite-setup",
+  "reviewedAt": "2026-03-14T02:30:36Z",
+  "commitId": "6fe0789",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The commit successfully introduces a React+Vite+TypeScript+Tailwind/shadcn-style setup and wires Go embed serving for dist assets, but it does not satisfy the expected behavior requiring GET /dashboard/ to serve the React SPA.",
+    "issues": [
+      {
+        "file": "internal/channels/dashboard/handler.go",
+        "line": 141,
+        "severity": "blocking",
+        "description": "The handler registers only '/dashboard' (exact path) and not '/dashboard/'. In net/http ServeMux, '/dashboard/' does not match '/dashboard', so requests to GET /dashboard/ return 404 instead of serving the SPA index as required by the feature expectedBehavior."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "frontend-worker procedure requires writing/running Playwright tests, but this setup feature shipped with no added tests and no Playwright execution while skillFeedback still marked followedProcedure=true.",
+      "evidence": "handoffs/2026-03-13T23-40-16-126Z__react-vite-setup__33072f3d-4dac-48b7-925e-4f835cb4182b.json -> tests.added=[] and verification.commandsRun contains npm/vite/tsc/go checks only; no playwright command."
+    },
+    {
+      "area": "conventions",
+      "observation": "Mission boundary compliance appears under-enforced: transcript shows commands using port 8082 and attempts to edit off-limits control-plane/handoff paths despite mission AGENTS constraints.",
+      "evidence": "worker-transcripts.jsonl (session 33072f3d-4dac-48b7-925e-4f835cb4182b) includes './bin/openclawssy serve --port 8082', writes to '.openclawssy/runs.json', and reads/edits/removes HANDOFF.md; mission AGENTS.md states only port 5175, HANDOFF.md off-limits, and .openclawssy control plane should not be bypassed."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed transcript skeleton and commit 6fe0789 for react-vite-setup. Core scaffolding is present, but a blocking route registration defect prevents GET /dashboard/ from serving the SPA, so the feature fails scrutiny."
+}

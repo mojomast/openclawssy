@@ -1,0 +1,15 @@
+{
+  "featureId": "fix-agent-contract-resolver-inheritance-recompute",
+  "reviewedAt": "2026-03-14T14:27:57Z",
+  "commitId": "fd907c45620055c0db10e27bf3070a7edcbeec25",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed both diffs: original resolver commit (40a330a50336824e52e4ffb5e040be58b89d4a6c) and fix commit (fd907c45620055c0db10e27bf3070a7edcbeec25). The fix replaces upgrade-only section inheritance updates with recomputation from final leaf sources via resolvedSectionSource, and adds regression tests for both downgrade and mixed-source outcomes. This directly resolves the prior stale section-source failure.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": "/home/mojo/projects/openclawssy/.factory/validation/agent-contract/scrutiny/reviews/agent-contract-resolver.json",
+  "summary": "Fix is adequate for the inheritance-reporting failure from the prior review: section-level inheritance now reflects the final resolved leaf state after fallback/merge replacement, and regression tests cover the previously failing downgrade case plus mixed-source behavior. No blocking or non-blocking issues found in this fix scope."
+}

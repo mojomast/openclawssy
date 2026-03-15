@@ -1,0 +1,21 @@
+{
+  "featureId": "fix-react-migration-settings-native-react",
+  "reviewedAt": "2026-03-14T08:09:39Z",
+  "commitId": "a3a8fa6",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix adequately resolves the prior blocker: Settings route wiring is explicitly direct to `./pages/SettingsPage`, the barrel export path no longer exposes `SettingsPage`, and regression coverage now asserts no legacy wrapper/delegation path can reappear unnoticed.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The frontend-worker skill still requires manual browser verification as a hard step, but mission workers in non-interactive Exec mode repeatedly rely on scoped Playwright coverage instead; this mismatch continues to produce procedure deviations.",
+      "evidence": "handoffs/2026-03-14T08-05-40-110Z__fix-react-migration-settings-native-react__2f8ec6f5-752a-4342-a54a-53c54bc1242a.json shows skillFeedback.followedProcedure=false for '6. Manual Verification'; .factory/skills/frontend-worker/SKILL.md Step 6 requires manual browser checks with no explicit non-interactive exception."
+    }
+  ],
+  "addressesFailureFrom": "/home/mojo/projects/openclawssy/.factory/validation/react-migration/scrutiny/reviews/react-migrate-settings.json",
+  "summary": "Reviewed prior failed feature and fix diffs plus the fix transcript skeleton. Original failure was wrapper-based delegation to legacy settings.js; current state and fix commit harden direct React route wiring and add a regression guard test that checks direct import, route element wiring, no legacy settings.js file, and no wrapper symbols, so the blocker is resolved."
+}

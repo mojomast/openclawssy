@@ -1,0 +1,233 @@
+{
+  "groupId": "prompt-stack-api-contract",
+  "testedAt": "2026-03-14T16:37:14.461945Z",
+  "isolation": {
+    "surface": "API-only",
+    "baseUrl": "http://localhost:8081",
+    "authHeader": "Authorization: Bearer change-me",
+    "assignedAgent": "ussyflow_architect"
+  },
+  "toolsUsed": [
+    "curl",
+    "local-shell"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-PROMPT-001",
+      "title": "Layer CRUD API",
+      "status": "pass",
+      "reason": "GET returned all five canonical layers and PUT updated session_overlay successfully.",
+      "steps": [
+        {
+          "action": "GET /api/admin/agents/ussyflow_architect/prompt-stack",
+          "expected": "200 response with five canonical prompt layers.",
+          "observed": "HTTP 200 with layer_ids=['global_operator_policy', 'agent_identity', 'tool_safety_rules', 'delegation_policy', 'session_overlay']"
+        },
+        {
+          "action": "PUT /api/admin/agents/ussyflow_architect/prompt-stack/session_overlay",
+          "expected": "200 response updating targeted layer.",
+          "observed": "HTTP 200 updated_layer=session_overlay"
+        },
+        {
+          "action": "GET /api/admin/agents/ussyflow_architect/prompt-stack",
+          "expected": "Updated stack still exposes all five layers.",
+          "observed": "HTTP 200 with layer_ids=['global_operator_policy', 'agent_identity', 'tool_safety_rules', 'delegation_policy', 'session_overlay']"
+        }
+      ],
+      "evidence": {
+        "requests": [
+          {
+            "request": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-001-get-initial.request.txt",
+            "status": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-001-get-initial.status.txt",
+            "response": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-001-get-initial.body.json"
+          },
+          {
+            "request": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-001-put-session-overlay-v1.request.txt",
+            "status": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-001-put-session-overlay-v1.status.txt",
+            "response": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-001-put-session-overlay-v1.body.json"
+          },
+          {
+            "request": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-001-get-after-put.request.txt",
+            "status": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-001-get-after-put.status.txt",
+            "response": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-001-get-after-put.body.json"
+          }
+        ],
+        "network": "GET /prompt-stack -> 200; PUT /prompt-stack/session_overlay -> 200; GET /prompt-stack -> 200"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-PROMPT-002",
+      "title": "Merged prompt preview",
+      "status": "pass",
+      "reason": "Preview returned non-empty assembled_prompt with layer markers in canonical merge order.",
+      "steps": [
+        {
+          "action": "GET /api/admin/agents/ussyflow_architect/prompt-stack/preview",
+          "expected": "200 response with assembled prompt merged in layer order.",
+          "observed": "HTTP 200 marker_positions=[0, 107, 343, 1474, 1685]"
+        }
+      ],
+      "evidence": {
+        "requests": [
+          {
+            "request": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-002-003-preview.request.txt",
+            "status": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-002-003-preview.status.txt",
+            "response": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-002-003-preview.body.json"
+          }
+        ],
+        "network": "GET /prompt-stack/preview -> 200"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-PROMPT-003",
+      "title": "Token estimation",
+      "status": "pass",
+      "reason": "Preview included token_count per layer, total_tokens=231, estimation_method=word_count_x1.3.",
+      "steps": [
+        {
+          "action": "Inspect /prompt-stack/preview token fields",
+          "expected": "token_count per layer plus total_tokens and estimation_method.",
+          "observed": "total_tokens=231, estimation_method=word_count_x1.3, layer_token_fields_present=True"
+        }
+      ],
+      "evidence": {
+        "requests": [
+          {
+            "request": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-002-003-preview.request.txt",
+            "status": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-002-003-preview.status.txt",
+            "response": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-002-003-preview.body.json"
+          }
+        ],
+        "network": "GET /prompt-stack/preview -> 200 (token fields present)"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-PROMPT-004",
+      "title": "Version history and diff",
+      "status": "pass",
+      "reason": "History returned 7 timestamped versions and diff returned line-level changes with unified diff.",
+      "steps": [
+        {
+          "action": "GET /api/admin/agents/ussyflow_architect/prompt-stack/history",
+          "expected": "200 response with timestamped versions list.",
+          "observed": "HTTP 200 versions_count=7"
+        },
+        {
+          "action": "GET /api/admin/agents/ussyflow_architect/prompt-stack/diff?v1=<older>&v2=<newer>",
+          "expected": "200 response with line-level diff.",
+          "observed": "HTTP 200 diff_lines=39"
+        }
+      ],
+      "evidence": {
+        "requests": [
+          {
+            "request": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-004-put-session-overlay-v2.request.txt",
+            "status": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-004-put-session-overlay-v2.status.txt",
+            "response": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-004-put-session-overlay-v2.body.json"
+          },
+          {
+            "request": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-004-history.request.txt",
+            "status": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-004-history.status.txt",
+            "response": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-004-history.body.json"
+          },
+          {
+            "request": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-004-diff.request.txt",
+            "status": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-004-diff.status.txt",
+            "response": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-004-diff.body.json"
+          },
+          {
+            "request": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-004-diff.versions.txt",
+            "status": null,
+            "response": null
+          }
+        ],
+        "network": "PUT /prompt-stack/session_overlay -> 200; GET /prompt-stack/history -> 200; GET /prompt-stack/diff?v1=6&v2=7 -> 200"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-PROMPT-005",
+      "title": "Prompt linting detects issues",
+      "status": "pass",
+      "reason": "Lint returned 6 issues covering duplicate, tool-conflict, vague delegation, undefined role, missing success criteria, and absent termination rules.",
+      "steps": [
+        {
+          "action": "PUT multiple layers with intentionally problematic instructions",
+          "expected": "Stack contains trigger patterns for lint rule categories.",
+          "observed": "All preparatory PUT calls returned HTTP 200."
+        },
+        {
+          "action": "POST /api/admin/agents/ussyflow_architect/prompt-stack/lint",
+          "expected": "200 response with issue array including required categories and severities.",
+          "observed": "HTTP 200 count=6 categories_detected=6"
+        }
+      ],
+      "evidence": {
+        "requests": [
+          {
+            "request": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-005-put-global-operator-policy.request.txt",
+            "status": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-005-put-global-operator-policy.status.txt",
+            "response": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-005-put-global-operator-policy.body.json"
+          },
+          {
+            "request": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-005-put-agent-identity.request.txt",
+            "status": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-005-put-agent-identity.status.txt",
+            "response": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-005-put-agent-identity.body.json"
+          },
+          {
+            "request": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-005-put-tool-safety-rules.request.txt",
+            "status": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-005-put-tool-safety-rules.status.txt",
+            "response": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-005-put-tool-safety-rules.body.json"
+          },
+          {
+            "request": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-005-put-delegation-policy.request.txt",
+            "status": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-005-put-delegation-policy.status.txt",
+            "response": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-005-put-delegation-policy.body.json"
+          },
+          {
+            "request": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-005-put-session-overlay.request.txt",
+            "status": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-005-put-session-overlay.status.txt",
+            "response": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-005-put-session-overlay.body.json"
+          },
+          {
+            "request": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-005-lint.request.txt",
+            "status": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-005-lint.status.txt",
+            "response": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-005-lint.body.json"
+          }
+        ],
+        "network": "PUT layer updates -> 200; POST /prompt-stack/lint -> 200 with 6 issues"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-PROMPT-006",
+      "title": "Prompt test harness",
+      "status": "pass",
+      "reason": "Test harness returned 3 structural checks with pass/fail and explanations (overall passed=False).",
+      "steps": [
+        {
+          "action": "POST /api/admin/agents/ussyflow_architect/prompt-stack/test",
+          "expected": "200 response with check results array including pass/fail + explanation per check.",
+          "observed": "HTTP 200 checks=['termination_rules', 'allowed_tools_mentioned', 'delegation_instructions_present'] overall_passed=False"
+        }
+      ],
+      "evidence": {
+        "requests": [
+          {
+            "request": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-006-test.request.txt",
+            "status": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-006-test.status.txt",
+            "response": "prompt-stack/prompt-stack-api-contract/VAL-PROMPT-006-test.body.json"
+          }
+        ],
+        "network": "POST /prompt-stack/test -> 200 with structural check results array"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 6 assertions: 6 passed, 0 failed, 0 blocked."
+}

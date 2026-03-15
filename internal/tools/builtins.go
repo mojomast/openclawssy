@@ -114,6 +114,9 @@ func RegisterCoreWithOptions(reg *Registry, opts CoreOptions) error {
 	if err := registerNetworkTools(reg, opts.ConfigPath); err != nil {
 		return err
 	}
+	if err := registerBecomussyTools(reg, opts.ConfigPath); err != nil {
+		return err
+	}
 	if opts.EnableShellExec {
 		if err := reg.Register(ToolSpec{Name: "shell.exec", Description: "Executes a given bash command in the sandbox with optional timeout, workdir, and description. Use workdir instead of 'cd <dir> && <cmd>' patterns. For terminal operations (git, npm, build scripts) only — use fs.* tools for file operations.", Required: []string{"command"}, ArgTypes: map[string]ArgType{"command": ArgTypeString, "workdir": ArgTypeString, "description": ArgTypeString, "timeout_ms": ArgTypeNumber}}, shellExec); err != nil {
 			return err

@@ -1,0 +1,121 @@
+{
+  "groupId": "browser-ui-recheck",
+  "testedAt": "2026-03-14T19:25:04Z",
+  "isolation": {
+    "missionDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3",
+    "dashboardUrl": "http://localhost:8081/dashboard",
+    "authToken": "change-me",
+    "knownRunWithDecisionRecords": "run_1773515700895177438",
+    "browserSession": "browser-ui-recheck"
+  },
+  "toolsUsed": [
+    "agent-browser",
+    "curl"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-DECISION-003",
+      "title": "Why-this-happened drawer",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Open deep link /#/runs/run_1773515700895177438",
+          "expected": "Known run detail is loaded for the run with decision records",
+          "observed": "Run detail loaded for run_1773515700895177438"
+        },
+        {
+          "action": "Click 'Why this happened'",
+          "expected": "Drawer shows structured decision records with timestamps",
+          "observed": "Drawer showed chronological records including constraint_activation, goal_interpretation, strategy_selection, and termination with timestamps"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "typed-roles-delegation/browser-ui-recheck/VAL-DECISION-003-run-detail-known-run.png",
+          "typed-roles-delegation/browser-ui-recheck/VAL-DECISION-003-why-drawer-open.png"
+        ],
+        "consoleErrors": "none (typed-roles-delegation/browser-ui-recheck/VAL-DECISION-003-console-errors.txt)",
+        "network": "GET /api/admin/runs/run_1773515700895177438/decisions -> 200 with records (typed-roles-delegation/browser-ui-recheck/VAL-DECISION-003-network-known-run.txt)"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-DECISION-004",
+      "title": "Run comparison view",
+      "status": "fail",
+      "steps": [
+        {
+          "action": "Open Delegation page and use Run comparison with visible Run A/Run B values",
+          "expected": "Side-by-side decision records load for compared runs",
+          "observed": "Both panes showed 'No records loaded for run A' and 'No records loaded for run B'"
+        },
+        {
+          "action": "Check whether known run run_1773515700895177438 is selectable in compare dropdowns",
+          "expected": "Known run with decision records can be selected for comparison",
+          "observed": "Known run was not present in the loaded compare dropdown window (first 50 runs at offset 0), so it could not be selected in UI"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "typed-roles-delegation/browser-ui-recheck/VAL-DECISION-004-run-comparison.png"
+        ],
+        "consoleErrors": "none (typed-roles-delegation/browser-ui-recheck/VAL-DECISION-004-console-errors.txt)",
+        "network": "Compared runs returned no records in UI context (typed-roles-delegation/browser-ui-recheck/VAL-DECISION-004-network-runs.txt); run window check shows known run absent from /v1/runs?limit=50&offset=0 (typed-roles-delegation/browser-ui-recheck/VAL-DECISION-004-runlist-window-check.txt)"
+      },
+      "issues": "Comparison UI currently loads only the first run window; in this window compared runs had no decision records and the known run with records was not selectable."
+    },
+    {
+      "id": "VAL-DELEG-006",
+      "title": "Task Graph Preview UI",
+      "status": "blocked",
+      "steps": [
+        {
+          "action": "Open Task graph preview on Delegation page with currently selectable run",
+          "expected": "Visual decomposition graph renders for a run with decomposition plan",
+          "observed": "UI displayed 'This run does not include a decomposition plan.'"
+        },
+        {
+          "action": "Reload task graph preview in same run context",
+          "expected": "If plan exists, graph appears",
+          "observed": "No plan loaded for the selectable run set in this context"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "typed-roles-delegation/browser-ui-recheck/VAL-DELEG-006-task-graph-preview.png"
+        ],
+        "consoleErrors": "none (typed-roles-delegation/browser-ui-recheck/VAL-DELEG-006-console-errors.txt)",
+        "network": "n/a"
+      },
+      "issues": "Quick spot-check could not verify visualization because no selectable run in this context exposed a decomposition plan."
+    }
+  ],
+  "frictions": [
+    {
+      "description": "Dashboard token prompt reappeared on Runs page during recheck",
+      "resolved": true,
+      "resolution": "Entered token change-me and continued",
+      "affectedAssertions": [
+        "VAL-DECISION-003"
+      ]
+    },
+    {
+      "description": "Run comparison selectors only exposed the initial run window, which did not include the known decision-data run",
+      "resolved": false,
+      "resolution": "Documented with run-window evidence",
+      "affectedAssertions": [
+        "VAL-DECISION-004"
+      ]
+    }
+  ],
+  "blockers": [
+    {
+      "description": "No selectable run with decomposition plan was available in the same quick-check context",
+      "affectedAssertions": [
+        "VAL-DELEG-006"
+      ],
+      "quickFixAttempted": "Used reload and available run selections on Delegation page; still no decomposition plan rendered"
+    }
+  ],
+  "summary": "Rechecked 3 assertions: VAL-DECISION-003 passed on known run run_1773515700895177438 with populated decision drawer; VAL-DECISION-004 failed because comparison view did not expose/load decision data in the available run window; optional VAL-DELEG-006 was blocked due no selectable run with decomposition plan in this quick context."
+}

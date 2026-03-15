@@ -143,6 +143,8 @@ func (r *Registry) Execute(ctx context.Context, agentID, name, workspace string,
 		return nil, err
 	}
 
+	args = repairCorruptedArgKeys(args, item.spec.ArgTypes)
+
 	for _, required := range item.spec.Required {
 		value, ok := args[required]
 		if !ok {
@@ -295,4 +297,104 @@ func (r *Registry) emit(ctx context.Context, eventType string, fields map[string
 		return nil
 	}
 	return r.audit.LogEvent(ctx, eventType, fields)
+}
+
+// repairCorruptedArgKeys fixes a common model output corruption where an array
+// field's last element is concatenated with the next key.  For example, the
+// model emits:
+//
+//	{"tags": "chaos-theory", "determinism,\"title": "Ship of Theseus"}
+//
+// instead of:
+//
+//	{"tags": ["chaos-theory", "determinism"], "title": "Ship of Theseus"}
+//
+// The JSON parser reads "determinism,\"title" as a single key.  This function
+// detects keys containing a comma followed by a valid field name and splits
+// them back apart: the prefix goes into the preceding field (converted to an
+// array if it was a scalar), and the suffix becomes a proper top-level key.
+func repairCorruptedArgKeys(args map[string]any, argTypes map[string]ArgType) map[string]any {
+	var corrupted []string
+	for key := range args {
+		if strings.Contains(key, ",\"") || strings.Contains(key, ", \"") {
+			corrupted = append(corrupted, key)
+		}
+	}
+	if len(corrupted) == 0 {
+		return args
+	}
+	for _, badKey := range corrupted {
+		value := args[badKey]
+		delete(args, badKey)
+
+		// Split on the first comma that precedes a quote-like field name.
+		// The key looks like: `determinism,"title`  or  `tag-value, "title`
+		idx := strings.Index(badKey, ",\"")
+		if idx < 0 {
+			idx = strings.Index(badKey, ", \"")
+		}
+		if idx < 0 {
+			// Shouldn't happen given the check above, but be safe.
+			args[badKey] = value
+			continue
+		}
+
+		prefix := strings.TrimSpace(badKey[:idx])
+		suffix := strings.TrimSpace(badKey[idx+1:])
+		suffix = strings.Trim(suffix, "\" ")
+
+		if suffix == "" {
+			args[badKey] = value
+			continue
+		}
+
+		// The suffix is the real field name — assign its value.
+		args[suffix] = value
+
+		// The prefix is a stray array element that belongs to the
+		// previous field.  Walk the existing args to find a field that
+		// the spec declares as an array (ArgTypeArray) and merge the
+		// prefix into it.  If the field currently holds a string (because
+		// the model emitted a scalar instead of an array), convert it.
+		if prefix != "" {
+			merged := false
+			// Prefer fields whose spec type is ArgTypeArray.
+			for existingKey, existingVal := range args {
+				if existingKey == suffix {
+					continue
+				}
+				if argTypes != nil {
+					if expected, ok := argTypes[existingKey]; ok && expected == ArgTypeArray {
+						switch ev := existingVal.(type) {
+						case string:
+							args[existingKey] = []any{ev, prefix}
+							merged = true
+						case []any:
+							args[existingKey] = append(ev, prefix)
+							merged = true
+						}
+					}
+				}
+				if merged {
+					break
+				}
+			}
+			// Fallback: if no array-typed field found, try any short
+			// string field that looks like a tag peer.
+			if !merged {
+				prefixIsShort := len(prefix) < 80 && !strings.Contains(prefix, "\n")
+				for existingKey, existingVal := range args {
+					if existingKey == suffix {
+						continue
+					}
+					if ev, ok := existingVal.(string); ok && prefixIsShort && len(ev) < 80 && !strings.Contains(ev, "\n") {
+						args[existingKey] = []any{ev, prefix}
+						merged = true
+						break
+					}
+				}
+			}
+		}
+	}
+	return args
 }

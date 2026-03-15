@@ -1,0 +1,77 @@
+{
+  "milestone": "typed-roles-delegation",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "go test -parallel 2 ./...",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "cd internal/channels/dashboard/ui && npx tsc --noEmit",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "go vet ./...",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 6,
+    "passed": 4,
+    "failed": 2,
+    "failedFeatures": [
+      "decision-ledger",
+      "delegation-ui"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "decision-ledger",
+      "severity": "blocking",
+      "description": "internal/channels/dashboard/decisions_api.go uses bufio.Scanner with default token limit; large audit JSONL lines can trigger token-too-long and cause GET /api/admin/runs/{id}/decisions to return 500."
+    },
+    {
+      "featureId": "delegation-ui",
+      "severity": "blocking",
+      "description": "internal/channels/dashboard/ui/src/pages/DelegationPage.tsx parseDelegationMode only accepts new modes and falls back to suggest_only, which can misrepresent and overwrite backend-valid legacy modes like tool_gated/prompt_only/auto_execute."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Updated .factory/library/architecture.md to reflect dashboard API handler split across multiple files (including decisions_api.go), replacing stale single-file claim.",
+      "sourceFeature": "decision-ledger"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills",
+      "suggestion": "Tighten skill-procedure compliance reporting: when required manual/integration checks (e.g., interactiveChecks) are omitted, workers should not mark followedProcedure=true, or skills should explicitly define acceptable non-interactive alternatives.",
+      "evidence": "Observed in typed-roles-api-ui and decision-ledger reviews: handoffs omitted interactiveChecks despite skill steps requiring them.",
+      "isSystemic": true
+    },
+    {
+      "target": "skills",
+      "suggestion": "Clarify backend-worker tests-first guidance as strict vs best-effort for large/interrupted refactors to reduce inconsistent reviewer interpretation.",
+      "evidence": "delegation-planner review observed implementation patches before first focused red-phase test while still producing passing coverage.",
+      "isSystemic": false
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Align delegation failure-retry semantics across mission artifacts so contract and feature specs do not diverge (same-role retry vs different-role retry).",
+      "evidence": "validation-contract.md states different-role retry while delegation-planner feature spec and implementation/tests use same-role retry.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Fullstack skill compliance observation duplicate variants",
+      "reason": "duplicate"
+    }
+  ],
+  "previousRound": null
+}

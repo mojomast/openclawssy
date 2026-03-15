@@ -508,3 +508,28 @@ func TestApplyDefaultsPreservesExplicitSubAgentFields(t *testing.T) {
 		t.Fatal("expected default allowed tools to be filled when omitted")
 	}
 }
+
+func TestValidateDelegationModeAcceptsPlannerModes(t *testing.T) {
+	modes := []string{"suggest_only", "approve_plan", "auto_trusted", "full_autonomous"}
+	for _, mode := range modes {
+		t.Run(mode, func(t *testing.T) {
+			cfg := Default()
+			cfg.Agents.DelegationMode = mode
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("expected mode %q to validate, got %v", mode, err)
+			}
+		})
+	}
+}
+
+func TestValidateDelegationModeRejectsInvalidTopLevelMode(t *testing.T) {
+	cfg := Default()
+	cfg.Agents.DelegationMode = "invalid_mode"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error for invalid agents.delegation_mode")
+	}
+	if !strings.Contains(err.Error(), "agents.delegation_mode") {
+		t.Fatalf("expected agents.delegation_mode error, got %v", err)
+	}
+}

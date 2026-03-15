@@ -1,0 +1,39 @@
+{
+  "featureId": "react-migrate-settings",
+  "reviewedAt": "2026-03-14T07:10:45Z",
+  "commitId": "8c92e788c7c5d3796d7ee6d63f395f4743c36c82",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The commit improves route behavior and adds strong scoped e2e coverage, but it does not actually complete the requested React migration: SettingsPage is a thin wrapper around the existing 2853-line vanilla settings renderer.",
+    "issues": [
+      {
+        "file": "internal/channels/dashboard/ui/src/pages/SettingsPage.tsx",
+        "line": 4,
+        "severity": "blocking",
+        "description": "Feature objective was to migrate settings.js into a React page, but the implementation imports and delegates to legacy settings.js (`settingsPage.render`) instead of implementing the settings UI in React. This leaves the core feature logic in vanilla DOM code and does not satisfy the migration requirement."
+      },
+      {
+        "file": "internal/channels/dashboard/ui/src/pages/settings.js",
+        "line": 2861,
+        "severity": "non_blocking",
+        "description": "`disposeSettingsPage()` only nulls `settingsState.container` and does not clear draft/baseline state; combined with the 'discard changes' confirm flow in SettingsPage, users can navigate away after confirming discard yet return to find the unsaved draft still present."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "Mission/skill guidance does not explicitly define what qualifies as a completed 'React migration' for a page; this allowed a legacy-wrapper implementation to pass worker validation for a migration feature.",
+      "evidence": "internal/channels/dashboard/ui/src/pages/SettingsPage.tsx:4 and :37 delegate to `./settings.js`, while the legacy implementation remains in internal/channels/dashboard/ui/src/pages/settings.js (2853+ lines)."
+    },
+    {
+      "area": "skills",
+      "observation": "The frontend-worker procedure's strict TDD-first step was explicitly deviated from in this feature; skill guidance should clarify acceptable exceptions for placeholder-to-parity migrations.",
+      "evidence": "handoffs/2026-03-14T05-32-17-931Z__react-migrate-settings__e45c375c-1ab3-40c0-94d2-0fff0a386534.json -> handoff.skillFeedback.followedProcedure=false with deviation on step '2. Write Tests First (TDD)'."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed handoff, transcript skeleton, skill procedure, and commit 8c92e788. Despite passing scoped tests, the feature is marked FAIL because Settings was not truly migrated to React; the new page wraps legacy settings.js instead of replacing it with React-native implementation."
+}

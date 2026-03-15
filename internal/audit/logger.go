@@ -17,6 +17,7 @@ const (
 	EventToolResult        = "tool.result"
 	EventToolCallbackError = "tool.callback_error"
 	EventPolicyDeny        = "policy.denied"
+	EventDecisionRecord    = "decision.record"
 	defaultFileMode        = 0o600
 	defaultDirMode         = 0o755
 	defaultLineBreak       = '\n'

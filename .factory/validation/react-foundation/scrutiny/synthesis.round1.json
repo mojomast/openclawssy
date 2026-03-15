@@ -1,0 +1,91 @@
+{
+  "milestone": "react-foundation",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "go test -parallel 2 ./...",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "cd internal/channels/dashboard/ui && npx tsc --noEmit",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "go vet ./...",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 11,
+    "passed": 8,
+    "failed": 3,
+    "failedFeatures": [
+      "react-vite-setup",
+      "react-embed-integration",
+      "react-shared-components"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "react-vite-setup,react-embed-integration",
+      "severity": "blocking",
+      "description": "Dashboard handler registers '/dashboard' but not '/dashboard/', causing GET /dashboard/ to miss SPA index fallback and return 404."
+    },
+    {
+      "featureId": "react-shared-components",
+      "severity": "blocking",
+      "description": "Mobile inspector drawer is unreachable on narrow screens because no control opens `showMobileInspector` while desktop-only expand control is gated behind `!isMobile`."
+    },
+    {
+      "featureId": "react-shared-components",
+      "severity": "blocking",
+      "description": "Keyboard shortcut `g then c` is not implemented correctly; current parser matches `g` alone, causing unintended navigation and not satisfying required key sequence behavior."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Updated `.factory/library/architecture.md` dashboard embedding section to reflect current explicit embed directive (`//go:embed ui/dist ui/index.html ui/app.js ui/styles.css ui/help ui/src`) instead of stale `ui/*` pattern.",
+      "sourceFeature": "fix-dashboard-embed-test-results-conflict"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills/frontend-worker",
+      "suggestion": "Align Playwright and manual-verification steps with mission-level guidance: allow scoped Playwright specs during partial migration milestones and treat non-interactive exec-mode runs as automation-first validation (manual checks optional or delegated).",
+      "evidence": "Observed across multiple reviewed features (react-shared-components, react-migrate-help, react-migrate-docs, react-migrate-secrets, react-migrate-skills) where mission AGENTS guidance contradicted frontend-worker full-suite/manual requirements.",
+      "isSystemic": true
+    },
+    {
+      "target": "skills/mission-worker-base",
+      "suggestion": "Clarify baseline-validation exception handling when a feature explicitly exists to fix pre-existing baseline failures, so workers can proceed without marking procedural ambiguity.",
+      "evidence": "Reported in react-playwright-runtime-bootstrap and fix-dashboard-embed-test-results-conflict handoffs as procedural deviation despite in-scope baseline-fix work.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Require immutable commit SHAs in worker handoffs (disallow symbolic refs like HEAD) to keep scrutiny diffs reproducible and unambiguous.",
+      "evidence": "react-embed-integration handoff recorded `commitId: HEAD`, which made exact review baseline ambiguous after later commits.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Add `.factory/library/dashboard-interactions.md` immediately",
+      "reason": "rejected: valuable but requires broad curated authoring beyond scrutiny scope; defer to orchestrator for structured ownership."
+    },
+    {
+      "observation": "Component length (~200 lines) convention violation in `SkillsPage.tsx`",
+      "reason": "rejected: non-blocking style concern with no demonstrated runtime impact; not enough evidence of systemic harm yet."
+    },
+    {
+      "observation": "Multiple reports of frontend-worker/fullstack-worker procedure non-adherence details",
+      "reason": "duplicate: consolidated into systemic skill-alignment recommendations above."
+    }
+  ],
+  "previousRound": null
+}

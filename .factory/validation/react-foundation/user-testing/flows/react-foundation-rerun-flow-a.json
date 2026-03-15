@@ -1,0 +1,91 @@
+{
+  "groupId": "react-foundation-rerun-flow-a",
+  "testedAt": "2026-03-14T04:32:04Z",
+  "isolation": {
+    "milestone": "react-foundation",
+    "missionDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3",
+    "dashboardUrl": "http://localhost:8081/dashboard",
+    "authToken": "change-me"
+  },
+  "toolsUsed": ["agent-browser", "playwright", "curl"],
+  "assertions": [
+    {
+      "id": "VAL-REACT-FND-003",
+      "title": "API client authenticates with bearer token",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Open /dashboard#/workspace with no stored token",
+          "expected": "App prompts for bearer token before protected API calls",
+          "observed": "Browser prompt dialog appeared with message 'Enter dashboard bearer token'."
+        },
+        {
+          "action": "Dismiss token prompt and observe first protected request",
+          "expected": "Unauthenticated protected request returns 401",
+          "observed": "GET /api/admin/workspace/entries?path=. returned 401 with no Authorization header."
+        },
+        {
+          "action": "Repeat with prompt accepted as change-me",
+          "expected": "Protected request includes Authorization: Bearer header and succeeds",
+          "observed": "GET /api/admin/workspace/entries?path=. returned 200 with Authorization: Bearer change-me."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "react-foundation/rerun-flow-a/VAL-REACT-FND-003-no-token-state.png",
+          "react-foundation/rerun-flow-a/VAL-REACT-FND-003-prompt-accepted.png"
+        ],
+        "consoleErrors": "none in prompt-accepted flow; expected 401 resource error appears only when prompt is dismissed during unauthenticated probe",
+        "network": "Unauthenticated: GET /api/admin/workspace/entries?path=. -> 401 (no Authorization). Authenticated: GET /api/admin/workspace/entries?path=. -> 200 (Authorization: Bearer change-me)."
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-REACT-FND-004",
+      "title": "Layout shell structure",
+      "status": "fail",
+      "steps": [
+        {
+          "action": "Load dashboard at desktop viewport",
+          "expected": "Header + nav sidebar + main content + inspector panel all visible",
+          "observed": "All four zones are visible on desktop; header title/status, nav sidebar, main content, and inspector panel are present."
+        },
+        {
+          "action": "Check desktop collapsible/resizable behavior",
+          "expected": "Sidebar/inspector can collapse and pane resizers support drag-to-resize",
+          "observed": "Sidebar collapse works; inspector resize drag works. Inspector collapsed-state toggle was not observed in this run."
+        },
+        {
+          "action": "Load dashboard at narrow viewport (390x844)",
+          "expected": "Nav collapses and inspector switches to drawer mode with mobile triggers",
+          "observed": "Desktop nav remained visible; no mobile nav trigger and no inspector drawer trigger appeared."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "react-foundation/rerun-flow-a/VAL-REACT-FND-004-desktop-layout.png",
+          "react-foundation/rerun-flow-a/VAL-REACT-FND-004-narrow-layout.png"
+        ],
+        "consoleErrors": "none",
+        "network": "not applicable"
+      },
+      "issues": "Narrow-screen collapse/drawer behavior required by contract was not observable on http://localhost:8081/dashboard during this rerun."
+    }
+  ],
+  "frictions": [
+    {
+      "description": "agent-browser could not launch due missing libnspr4.so in this environment.",
+      "resolved": true,
+      "resolution": "Applied mission guidance fallback and executed browser automation with Playwright + LD_LIBRARY_PATH using bundled playwright libs.",
+      "affectedAssertions": ["VAL-REACT-FND-003", "VAL-REACT-FND-004"]
+    },
+    {
+      "description": "Contract evidence example references GET /api/admin/status, but rerun surface emitted auth-relevant requests on /api/admin/workspace/entries for tested flows.",
+      "resolved": true,
+      "resolution": "Captured equivalent protected endpoint request/response/auth-header evidence from live UI flow.",
+      "affectedAssertions": ["VAL-REACT-FND-003"]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 2 assertions: 1 passed (VAL-REACT-FND-003) and 1 failed (VAL-REACT-FND-004: narrow-screen nav collapse/inspector drawer behavior not observed)."
+}

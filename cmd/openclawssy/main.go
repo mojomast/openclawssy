@@ -55,6 +55,7 @@ func main() {
 	}
 
 	handlers := cli.Handlers{Init: initService{engine: engine}, Ask: askService{engine: engine}, Run: runService{engine: engine}, Doctor: doctorService{}, Cron: cronService{}, Out: os.Stdout, Err: os.Stderr}
+	evalSvc := evalService{engine: engine, out: os.Stdout, err: os.Stderr}
 
 	if len(os.Args) < 2 {
 		printUsage(os.Stderr)
@@ -81,6 +82,8 @@ func main() {
 		code = handleRemote(ctx, os.Args[2:])
 	case "openclaw":
 		code = handleOpenClaw(ctx, os.Args[2:])
+	case "eval":
+		code = evalSvc.HandleEval(ctx, os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n\n", os.Args[1])
 		printUsage(os.Stderr)
@@ -92,7 +95,7 @@ func main() {
 
 func printUsage(w *os.File) {
 	fmt.Fprintln(w, "usage: openclawssy <subcommand> [flags]")
-	fmt.Fprintln(w, "subcommands: init, setup, ask, run, serve, cron, doctor, remote, openclaw")
+	fmt.Fprintln(w, "subcommands: init, setup, ask, run, serve, cron, doctor, remote, openclaw, eval")
 }
 
 func handleOpenClaw(ctx context.Context, args []string) int {
@@ -362,6 +365,7 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 		return 1
 	}
 	eventBus := httpchannel.NewRunEventBus(0)
+	runTracker := httpchannel.NewActiveRunTracker()
 
 	exec := runtimeExecutor{engine: engine}
 	runtimeCfg, err := config.LoadOrDefault(filepath.Join(".openclawssy", "config.json"))
@@ -441,7 +445,7 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 			source,
 			sessionID,
 			"",
-			httpchannel.QueueRunOptions{EventBus: eventBus},
+			httpchannel.QueueRunOptions{EventBus: eventBus, Tracker: runTracker},
 		); err != nil {
 			fmt.Fprintln(os.Stderr, "scheduler queue warning:", err)
 		}
@@ -449,7 +453,7 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 	schedulerExec.Start()
 	defer schedulerExec.Stop()
 
-	sharedChat, err := buildSharedChatConnector(runtimeCfg, runStore, exec, eventBus)
+	sharedChat, err := buildSharedChatConnector(runtimeCfg, runStore, exec, eventBus, runTracker)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -505,13 +509,19 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 		}
 	}
 
-	dash := dashboard.NewWithOptions(".", runStore, dashboard.Options{SchedulerStore: jobsStore, RunCanceller: engine.RunTracker()})
+	dash := dashboard.NewWithOptions(".", runStore, dashboard.Options{
+		SchedulerStore: jobsStore,
+		RunCanceller: runCancelCoordinator{cancellers: []runCanceller{
+			engine.RunTracker(),
+			runTracker,
+		}},
+	})
 	server := httpchannel.NewServer(httpchannel.Config{
 		Addr:        serveCfg.Addr,
 		BearerToken: serveCfg.Token,
 		Store:       runStore,
 		Executor:    exec,
-		RunTracker:  httpchannel.NewActiveRunTracker(),
+		RunTracker:  runTracker,
 		Chat:        buildDashboardChatConnector(runtimeCfg, sharedChat),
 		EventBus:    eventBus,
 		RegisterMux: func(mux *http.ServeMux) {
@@ -856,8 +866,57 @@ func (cronService) Cron(_ context.Context, input cli.CronInput) (string, error) 
 
 type runtimeExecutor struct{ engine *runtime.Engine }
 
+type runCanceller interface {
+	Cancel(runID string) error
+	IsTracked(runID string) bool
+}
+
+type runCancelCoordinator struct {
+	cancellers []runCanceller
+}
+
+func (c runCancelCoordinator) IsTracked(runID string) bool {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return false
+	}
+	for _, canceller := range c.cancellers {
+		if canceller != nil && canceller.IsTracked(runID) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c runCancelCoordinator) Cancel(runID string) error {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return runtime.ErrRunNotFound
+	}
+	var lastNotFound error
+	for _, canceller := range c.cancellers {
+		if canceller == nil {
+			continue
+		}
+		err := canceller.Cancel(runID)
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, runtime.ErrRunNotFound) || errors.Is(err, httpchannel.ErrTrackedRunNotFound) {
+			lastNotFound = err
+			continue
+		}
+		return err
+	}
+	if lastNotFound != nil {
+		return lastNotFound
+	}
+	return runtime.ErrRunNotFound
+}
+
 func (e runtimeExecutor) Execute(ctx context.Context, input httpchannel.ExecutionInput) (httpchannel.ExecutionResult, error) {
 	res, err := e.engine.ExecuteWithInput(ctx, runtime.ExecuteInput{
+		RunID:        input.RunID,
 		AgentID:      input.AgentID,
 		Message:      input.Message,
 		ContentParts: append([]messagecontent.Part(nil), input.ContentParts...),
@@ -872,7 +931,7 @@ func (e runtimeExecutor) Execute(ctx context.Context, input httpchannel.Executio
 	return httpchannel.ExecutionResult{Output: res.FinalText, ArtifactPath: res.ArtifactPath, DurationMS: res.DurationMS, ToolCalls: res.ToolCalls, Provider: res.Provider, Model: res.Model, Trace: res.Trace}, nil
 }
 
-func buildSharedChatConnector(cfg config.Config, store httpchannel.RunStore, exec httpchannel.RunExecutor, eventBus *httpchannel.RunEventBus) (*chat.Connector, error) {
+func buildSharedChatConnector(cfg config.Config, store httpchannel.RunStore, exec httpchannel.RunExecutor, eventBus *httpchannel.RunEventBus, runTracker *httpchannel.ActiveRunTracker) (*chat.Connector, error) {
 	if !cfg.Chat.Enabled && !cfg.Discord.Enabled && !cfg.Telegram.Enabled {
 		return nil, nil
 	}
@@ -906,7 +965,7 @@ func buildSharedChatConnector(cfg config.Config, store httpchannel.RunStore, exe
 				source,
 				sessionID,
 				thinkingMode,
-				httpchannel.QueueRunOptions{EventBus: eventBus},
+				httpchannel.QueueRunOptions{EventBus: eventBus, Tracker: runTracker},
 			)
 			if err != nil {
 				return chat.QueuedRun{}, err

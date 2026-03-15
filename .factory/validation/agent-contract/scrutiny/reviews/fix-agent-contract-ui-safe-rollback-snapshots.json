@@ -1,0 +1,21 @@
+{
+  "featureId": "fix-agent-contract-ui-safe-rollback-snapshots",
+  "reviewedAt": "2026-03-14T14:27:50Z",
+  "commitId": "2ee38c9",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix directly addresses the prior blocking rollback defect: UI snapshot/restore no longer round-trips redacted `/api/admin/config` payloads, and backend server-side snapshot/restore uses unredacted config state so secrets/tokens are preserved. The original failing behavior from agent-contract-ui commit 3b0c837 (redacted snapshot PATCH restore) is replaced in 2ee38c9 with dedicated rollback endpoints plus backend and e2e regression coverage.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The fullstack-worker procedure still requires full Playwright suite execution, but mission guidance for this repository explicitly requires scoped Playwright specs because unrelated full-suite failures are pre-existing; this leaves procedure expectations inconsistent.",
+      "evidence": "Skill: /home/mojo/projects/openclawssy/.factory/skills/fullstack-worker/SKILL.md (Step 5 says run `npx playwright test`). Mission guidance: /home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/AGENTS.md (Known Pre-Existing Issues says run scoped specs). Handoff for fd640ee7-e151-431b-9a9b-792c651ded32 ran scoped `npx playwright test tests/e2e/contract.spec.ts`."
+    }
+  ],
+  "addressesFailureFrom": "/home/mojo/projects/openclawssy/.factory/validation/agent-contract/scrutiny/reviews/agent-contract-ui.json",
+  "summary": "Reviewed fix feature and transcript skeleton, plus both original and fix diffs (3b0c837 and 2ee38c9). The fix is sufficient: rollback now uses server-backed snapshot IDs and restores full config safely, preventing secret/token wipeout that caused the prior failure."
+}

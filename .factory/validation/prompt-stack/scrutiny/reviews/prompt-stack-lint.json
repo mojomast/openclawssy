@@ -1,0 +1,34 @@
+{
+  "featureId": "prompt-stack-lint",
+  "reviewedAt": "2026-03-14T16:00:15Z",
+  "commitId": "b6bd6f9b1fe5ffce4a51206d3560918964157fbd",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The linter and tests cover all requested rule categories, but there are correctness issues that produce false undefined-role errors and can suppress missing-success-criteria warnings.",
+    "issues": [
+      {
+        "file": "internal/promptstack/linter.go",
+        "line": 36,
+        "severity": "blocking",
+        "description": "`delegateToPattern` captures any token after `delegate ... to`, so natural text like `Maybe delegate this work to another role.` is parsed as role name `another` and then raised as an undefined role error. This creates false-positive lint failures for vague-language cases that do not actually name a role template."
+      },
+      {
+        "file": "internal/promptstack/linter.go",
+        "line": 52,
+        "severity": "blocking",
+        "description": "`lintMissingSuccessCriteria` uses a substring signal check (`hasAnySignal`) and treats the phrase `completion criteria` as sufficient evidence. Prompts that merely mention `completion criteria` (without defining what completion means) bypass the warning, which violates the requirement to flag missing clear success criteria."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The backend-worker skill prescribes tests-first with an explicit red phase, but this run's transcript skeleton shows implementation patching before the first targeted test execution. The skill procedure appears stricter than actual execution practice.",
+      "evidence": "worker-transcripts.jsonl entry for session 28489226-016e-4f98-9f80-31e84b41fec0 shows `ApplyPatch` calls before the first `go test ./internal/promptstack -run TestLint ...` command."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Review failed: prompt-stack-lint broadly implements requested lint rules and tests, but two blocking rule-quality issues remain (false undefined-role detection and overly permissive success-criteria detection)."
+}

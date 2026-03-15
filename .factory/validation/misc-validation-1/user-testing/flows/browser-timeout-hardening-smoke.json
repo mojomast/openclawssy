@@ -1,0 +1,79 @@
+{
+  "milestone": "misc-validation-1",
+  "flow": "browser-timeout-hardening-smoke",
+  "surface": "browser",
+  "appUrl": "http://localhost:8081/dashboard",
+  "assignedAssertions": [
+    "VAL-CONTRACT-005"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-CONTRACT-005",
+      "title": "Agent Contract page loads and lists agents",
+      "status": "pass",
+      "steps": [
+        "Opened dashboard at /dashboard, entered bearer token, and navigated to #/agent-contract.",
+        "Verified Agent selector renders a long list of configured agents.",
+        "Selected agent \"default\" and confirmed resolved contract content updated for selected agent (identity.agent_id=default).",
+        "Confirmed structured contract sections are present (Identity, Mission, System Prompt, Tool Policy, Delegation Policy, Memory Policy, Model Policy, Sandbox Policy, Observability Policy).",
+        "Captured browser diagnostics: console errors/logs and API resource observation entries."
+      ],
+      "observations": [
+        "Agent selector contains many configured agents and supports selection changes.",
+        "Resolved contract view is organized by policy section and field/value/source columns.",
+        "No console errors were reported during this flow.",
+        "Observed relevant API resources: /api/admin/agents and /api/admin/agents/<id>/resolved."
+      ],
+      "evidence": [
+        {
+          "type": "screenshot(agent-list)",
+          "path": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/browser-timeout-hardening-smoke/02-agent-list-selector.png"
+        },
+        {
+          "type": "screenshot(contract-view)",
+          "path": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/browser-timeout-hardening-smoke/04-contract-view-full.png"
+        },
+        {
+          "type": "screenshot(contract-view-after-select-default)",
+          "path": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/browser-timeout-hardening-smoke/08-contract-view-default-full.png"
+        },
+        {
+          "type": "console-errors",
+          "path": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/browser-timeout-hardening-smoke/05-console-errors.json"
+        },
+        {
+          "type": "network-observation",
+          "path": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/browser-timeout-hardening-smoke/07b-network-observation.txt"
+        },
+        {
+          "type": "page-text",
+          "path": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/misc-validation-1/browser-timeout-hardening-smoke/09-contract-page-text-default.txt"
+        }
+      ],
+      "retries": [
+        {
+          "step": "wait for #/agent-contract URL pattern",
+          "result": "retry_not_required_after_check",
+          "details": "Initial explicit wait timed out once, but URL inspection confirmed navigation had already succeeded."
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "pass": 1,
+    "fail": 0,
+    "blocked": 0,
+    "skipped": 0,
+    "pending": 0
+  },
+  "frictions": [
+    "agent-browser local daemon launch failed initially due missing libnspr4 dependency in default runtime.",
+    "Recovered by starting isolated Chromium with LD_LIBRARY_PATH and connecting agent-browser via CDP port 9444."
+  ],
+  "blockers": [],
+  "heartbeat": {
+    "timestamp": "2026-03-14T22:28:48.758637+00:00",
+    "phase": "complete"
+  },
+  "completedAt": "2026-03-14T22:28:48.758637+00:00"
+}

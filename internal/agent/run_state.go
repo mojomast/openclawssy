@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -28,6 +29,8 @@ const (
 	agentCreateGlobalCap         = 8
 	shellExecRepetitionCap       = 3
 	memoryWriteRepetitionCap     = 2
+	becomussyWriteRepetitionCap  = 2
+	becomussyReadRepetitionCap   = 6
 	noChoicesRetryCap            = 3
 	noChoicesRetryDelay          = 300 * time.Millisecond
 	transientModelRetryCap       = 3
@@ -39,6 +42,10 @@ const (
 // runState encapsulates the mutable state of a single agent run loop.
 type runState struct {
 	out                     RunOutput
+	runID                   string
+	agentID                 string
+	parentRunID             string
+	decisionLedger          *DecisionLedger
 	messages                []ChatMessage
 	toolResults             []ToolCallResult
 	toolIterations          int
@@ -88,6 +95,7 @@ type runState struct {
 	recentIntents       []string
 	toolRewriteCount    int  // tracks rewrites to prevent infinite loops
 	delegationLocked    bool // once true, stays true until subtasks complete
+	delegationReason    string
 }
 
 func newRunState(input RunInput, r Runner) *runState {
@@ -119,6 +127,10 @@ func newRunState(input RunInput, r Runner) *runState {
 
 	return &runState{
 		out:                     out,
+		runID:                   strings.TrimSpace(input.RunID),
+		agentID:                 strings.TrimSpace(input.AgentID),
+		parentRunID:             strings.TrimSpace(input.ParentRunID),
+		decisionLedger:          input.DecisionLedger,
 		messages:                messages,
 		toolResults:             make([]ToolCallResult, 0),
 		usedToolCallIDs:         make(map[string]struct{}),
@@ -142,6 +154,7 @@ func newRunState(input RunInput, r Runner) *runState {
 		recentIntents:           make([]string, 0),
 		toolRewriteCount:        0,
 		delegationLocked:        false,
+		delegationReason:        "",
 	}
 }
 
@@ -221,6 +234,223 @@ func (s *runState) notifyToolCall(record *ToolCallRecord, onToolCall func(ToolCa
 	}
 }
 
+func (s *runState) emitDecision(ctx context.Context, recordType string, payload map[string]any, summary string) {
+	if s == nil || s.decisionLedger == nil {
+		return
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	if strings.TrimSpace(s.parentRunID) != "" {
+		if _, ok := payload["parent_run_id"]; !ok {
+			payload["parent_run_id"] = s.parentRunID
+		}
+	}
+	_ = s.decisionLedger.Record(ctx, DecisionRecord{
+		Timestamp:    time.Now().UTC(),
+		RunID:        strings.TrimSpace(s.runID),
+		AgentID:      strings.TrimSpace(s.agentID),
+		RecordType:   strings.TrimSpace(recordType),
+		Payload:      payload,
+		HumanSummary: firstN(strings.TrimSpace(summary), 280),
+	})
+}
+
+func (s *runState) delegationParentRunID() string {
+	if s == nil {
+		return ""
+	}
+	if parent := strings.TrimSpace(s.parentRunID); parent != "" {
+		return parent
+	}
+	return strings.TrimSpace(s.runID)
+}
+
+func (s *runState) normalizeDelegationTriggerPayload(payload map[string]any) map[string]any {
+	if payload == nil {
+		payload = map[string]any{}
+	}
+
+	normalized := make(map[string]any, len(payload)+8)
+	for k, v := range payload {
+		normalized[k] = v
+	}
+
+	triggerReason := strings.TrimSpace(stringValueFromAny(normalized["trigger_reason"]))
+	if triggerReason == "" {
+		triggerReason = strings.TrimSpace(stringValueFromAny(normalized["reason"]))
+	}
+
+	selectedRole := strings.TrimSpace(stringValueFromAny(normalized["selected_role"]))
+	if selectedRole == "" {
+		selectedRole = "delegation_controller"
+	}
+
+	taskAssignment := strings.TrimSpace(stringValueFromAny(normalized["task_assignment"]))
+	if taskAssignment == "" {
+		taskAssignment = "delegation trigger evaluation"
+	}
+
+	confidence, ok := floatValueFromAny(normalized["confidence"])
+	if !ok {
+		confidence = 0
+	}
+
+	parentRunID := strings.TrimSpace(stringValueFromAny(normalized["parent_run_id"]))
+	if parentRunID == "" {
+		parentRunID = s.delegationParentRunID()
+	}
+
+	eventTimestamp := strings.TrimSpace(stringValueFromAny(normalized["event_timestamp"]))
+	if eventTimestamp == "" {
+		eventTimestamp = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+
+	sourceRunID := strings.TrimSpace(stringValueFromAny(normalized["source_run_id"]))
+	if sourceRunID == "" {
+		sourceRunID = strings.TrimSpace(s.runID)
+	}
+
+	sourceAgentID := strings.TrimSpace(stringValueFromAny(normalized["source_agent_id"]))
+	if sourceAgentID == "" {
+		sourceAgentID = strings.TrimSpace(s.agentID)
+	}
+
+	normalized["trigger_reason"] = triggerReason
+	normalized["reason"] = triggerReason
+	normalized["selected_role"] = selectedRole
+	normalized["task_assignment"] = taskAssignment
+	normalized["confidence"] = confidence
+	normalized["parent_run_id"] = parentRunID
+	normalized["event_timestamp"] = eventTimestamp
+	normalized["source_run_id"] = sourceRunID
+	normalized["source_agent_id"] = sourceAgentID
+
+	return normalized
+}
+
+func (s *runState) emitDelegationTriggerDecision(ctx context.Context, payload map[string]any, summary string) {
+	s.emitDecision(ctx, DecisionRecordTypeDelegationTrigger, s.normalizeDelegationTriggerPayload(payload), summary)
+}
+
+func stringValueFromAny(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case fmt.Stringer:
+		return v.String()
+	default:
+		return ""
+	}
+}
+
+func floatValueFromAny(value any) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return v, true
+	case float32:
+		return float64(v), true
+	case int:
+		return float64(v), true
+	case int8:
+		return float64(v), true
+	case int16:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case uint:
+		return float64(v), true
+	case uint8:
+		return float64(v), true
+	case uint16:
+		return float64(v), true
+	case uint32:
+		return float64(v), true
+	case uint64:
+		return float64(v), true
+	case json.Number:
+		parsed, err := v.Float64()
+		if err != nil {
+			return 0, false
+		}
+		return parsed, true
+	default:
+		return 0, false
+	}
+}
+
+func (s *runState) emitToolDecision(ctx context.Context, call ToolCallRequest, result ToolCallResult) {
+	decision := "allowed"
+	policyReference := "policy.capability_allowlist"
+	reason := ""
+	errText := strings.TrimSpace(result.Error)
+	if errText != "" {
+		lowerErr := strings.ToLower(errText)
+		if strings.Contains(lowerErr, "policy.denied") || strings.Contains(lowerErr, "capability denied") {
+			decision = "denied"
+			reason = errText
+		}
+	}
+
+	payload := map[string]any{
+		"tool":             strings.TrimSpace(call.Name),
+		"tool_call_id":     strings.TrimSpace(call.ID),
+		"decision":         decision,
+		"policy_reference": policyReference,
+	}
+	if reason != "" {
+		payload["reason"] = reason
+	}
+	if errText != "" && decision == "allowed" {
+		payload["execution_error"] = errText
+	}
+
+	summary := fmt.Sprintf("Tool decision: %s was %s under %s.", strings.TrimSpace(call.Name), decision, policyReference)
+	if reason != "" {
+		summary = fmt.Sprintf("Tool decision: %s was denied (%s).", strings.TrimSpace(call.Name), firstN(reason, 120))
+	}
+	s.emitDecision(ctx, DecisionRecordTypeToolDecision, payload, summary)
+}
+
+func (s *runState) emitTerminationDecision(ctx context.Context, out RunOutput, runErr error) {
+	cause := runTerminationCause(runErr)
+	payload := map[string]any{"cause": cause}
+	if runErr != nil {
+		payload["error"] = strings.TrimSpace(runErr.Error())
+	}
+	if strings.TrimSpace(out.FinalText) != "" {
+		payload["final_text_preview"] = firstN(strings.TrimSpace(out.FinalText), 160)
+	}
+	summary := "Run terminated."
+	if cause == "completed" {
+		summary = "Run completed successfully."
+	} else {
+		summary = fmt.Sprintf("Run terminated with cause: %s.", cause)
+	}
+	s.emitDecision(ctx, DecisionRecordTypeTermination, payload, summary)
+}
+
+func runTerminationCause(runErr error) string {
+	if runErr == nil {
+		return "completed"
+	}
+	if errors.Is(runErr, context.Canceled) {
+		return "canceled"
+	}
+	if errors.Is(runErr, ErrToolIterationCapExceeded) {
+		return "tool_iteration_cap_exceeded"
+	}
+	if errors.Is(runErr, ErrToolExecutorRequired) {
+		return "tool_executor_missing"
+	}
+	if errors.Is(runErr, ErrModelRequired) {
+		return "model_missing"
+	}
+	return "error"
+}
+
 func (s *runState) prepareSystemPrompt(ctx context.Context, input RunInput) string {
 	systemPrompt := s.out.Prompt
 	if s.lastIterationMixed {
@@ -283,6 +513,7 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 				s.out.ToolCalls = append(s.out.ToolCalls, record)
 				s.toolResults = append(s.toolResults, result)
 				s.registerToolOutcome(result.Error)
+				s.emitToolDecision(ctx, call, result)
 				continue
 			}
 		}
@@ -297,6 +528,7 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 				s.out.ToolCalls = append(s.out.ToolCalls, record)
 				s.toolResults = append(s.toolResults, record.Result)
 				s.registerToolOutcome(record.Result.Error)
+				s.emitToolDecision(ctx, call, record.Result)
 				continue
 			}
 			if cached, ok := s.cachedFailedToolResults[callKey]; ok {
@@ -307,6 +539,7 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 				s.out.ToolCalls = append(s.out.ToolCalls, record)
 				s.toolResults = append(s.toolResults, record.Result)
 				s.registerToolOutcome(record.Result.Error)
+				s.emitToolDecision(ctx, call, record.Result)
 				continue
 			}
 		}
@@ -334,6 +567,7 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 					s.out.ToolCalls = append(s.out.ToolCalls, record)
 					s.toolResults = append(s.toolResults, result)
 					s.registerToolOutcome(result.Error)
+					s.emitToolDecision(ctx, call, result)
 					continue
 				}
 			}
@@ -356,6 +590,7 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 				s.out.ToolCalls = append(s.out.ToolCalls, record)
 				s.toolResults = append(s.toolResults, result)
 				s.registerToolOutcome(result.Error)
+				s.emitToolDecision(ctx, call, result)
 				continue
 			}
 		}
@@ -406,11 +641,44 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 		s.notifyToolCall(&record, input.OnToolCall)
 		s.out.ToolCalls = append(s.out.ToolCalls, record)
 		s.toolResults = append(s.toolResults, result)
+		s.emitToolDecision(ctx, call, result)
 	}
 	return hadFreshExecution
 }
 
-func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOutput, error) {
+func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (finalOut RunOutput, finalErr error) {
+	defer func() {
+		s.emitTerminationDecision(ctx, finalOut, finalErr)
+	}()
+
+	goalText := strings.TrimSpace(input.Message)
+	if goalText == "" && len(input.Messages) > 0 {
+		goalText = strings.TrimSpace(input.Messages[len(input.Messages)-1].Content)
+	}
+	if goalText == "" {
+		goalText = "Run without explicit user message"
+	}
+	s.emitDecision(ctx, DecisionRecordTypeGoalInterpretation, map[string]any{
+		"goal":          goalText,
+		"message_count": len(input.Messages),
+	}, fmt.Sprintf("Interpreted run goal: %s", firstN(goalText, 160)))
+
+	strategy := "direct_execution"
+	if mode := normalizeDelegationMode(input.DelegationMode); mode != "" {
+		strategy = fmt.Sprintf("delegation_mode:%s", mode)
+	}
+	s.emitDecision(ctx, DecisionRecordTypeStrategySelection, map[string]any{
+		"strategy":        strategy,
+		"delegation_mode": strings.TrimSpace(input.DelegationMode),
+		"auto_delegate":   input.AutoDelegate,
+	}, fmt.Sprintf("Selected strategy %s for this run.", strategy))
+
+	s.emitDecision(ctx, DecisionRecordTypeConstraintActive, map[string]any{
+		"allowed_tools":       append([]string(nil), input.AllowedTools...),
+		"max_tool_iterations": s.toolCap,
+		"tool_timeout_ms":     int(s.toolTimeout / time.Millisecond),
+	}, "Activated run constraints (tool allowlist, iteration cap, timeout).")
+
 	for {
 		systemPrompt := s.prepareSystemPrompt(ctx, input)
 
@@ -429,6 +697,87 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 		// Only evaluate delegation trigger if not already locked in forced mode
 		if !s.delegationLocked {
 			if trigger := s.computeDelegationTrigger(promptTokens, contextWindow, snapshot); trigger != nil {
+				s.delegationReason = strings.TrimSpace(trigger.Reason)
+				configuredMode := normalizeDelegationMode(input.DelegationMode)
+				selectedRole := "delegation_controller"
+				taskAssignment := "evaluate delegation trigger conditions"
+				if isPlannerDelegationMode(configuredMode) {
+					selectedRole = "planner"
+					taskAssignment = "generate delegation decomposition plan"
+				}
+
+				s.emitDelegationTriggerDecision(ctx, map[string]any{
+					"trigger_reason":  strings.TrimSpace(trigger.Reason),
+					"selected_role":   selectedRole,
+					"task_assignment": taskAssignment,
+					"confidence":      0.0,
+					"mode":            string(trigger.Mode),
+					"cooldown_for":    trigger.CooldownFor,
+					"context_tokens":  promptTokens,
+					"context_window":  contextWindow,
+					"subtask_count":   len(trigger.Subtasks),
+					"snapshot_tool":   strings.TrimSpace(snapshot.LastToolAttempted),
+					"snapshot_errors": append([]string(nil), snapshot.LastErrorTypes...),
+				}, fmt.Sprintf("Delegation trigger fired (%s): %s", strings.TrimSpace(string(trigger.Mode)), firstN(strings.TrimSpace(trigger.Reason), 140)))
+
+				if isPlannerDelegationMode(configuredMode) {
+					plan, plannedTasks, planErr := GenerateDecompositionPlan(trigger.Reason, configuredMode, trigger.Subtasks, nil)
+					if planErr != nil {
+						s.out.Thinking = s.latestThinking
+						s.out.ThinkingPresent = s.thinkingPresent
+						s.out.ToolParseFailure = s.toolParseFailure
+						s.out.CompletedAt = time.Now().UTC()
+						return s.out, planErr
+					}
+
+					s.out.DecompositionPlan = &plan
+					s.pendingSubtasks = plannedTasks
+					s.delegationActive = true
+					s.appendPlannedDelegationEvents(ctx, plan)
+					s.emitDecision(ctx, DecisionRecordTypeConstraintActive, map[string]any{
+						"delegation_mode": string(configuredMode),
+						"subtask_count":   len(plannedTasks),
+						"auto_delegate":   input.AutoDelegate,
+					}, fmt.Sprintf("Activated planner-led delegation constraints for %d subtasks.", len(plannedTasks)))
+					for _, task := range plan.Tasks {
+						s.emitDecision(ctx, DecisionRecordTypeRoleSelection, map[string]any{
+							"task_id":        strings.TrimSpace(task.TaskID),
+							"role":           strings.TrimSpace(task.AssignedRole),
+							"confidence":     task.Confidence,
+							"task":           strings.TrimSpace(task.Description),
+							"role_rationale": strings.TrimSpace(task.Rationale),
+						}, fmt.Sprintf("Selected role %s for task %s.", strings.TrimSpace(task.AssignedRole), strings.TrimSpace(task.TaskID)))
+					}
+
+					autoExecute, decisionSummary := shouldAutoExecutePlan(configuredMode, plan, input.DelegationApproved)
+					if autoExecute && r.SubAgentRunner == nil {
+						autoExecute = false
+						decisionSummary = "delegation plan generated, but subagent runner is unavailable"
+					}
+
+					if !autoExecute {
+						s.out.FinalText = formatDecompositionPlanForOperator(plan, decisionSummary)
+						s.out.Thinking = s.latestThinking
+						s.out.ThinkingPresent = s.thinkingPresent
+						s.out.ToolParseFailure = s.toolParseFailure
+						s.out.CompletedAt = time.Now().UTC()
+						return s.out, nil
+					}
+
+					if err := r.executeDelegatedTasks(ctx, s, plannedTasks, input); err != nil {
+						s.out.Thinking = s.latestThinking
+						s.out.ThinkingPresent = s.thinkingPresent
+						s.out.ToolParseFailure = s.toolParseFailure
+						s.out.CompletedAt = time.Now().UTC()
+						return s.out, err
+					}
+					s.out.Thinking = s.latestThinking
+					s.out.ThinkingPresent = s.thinkingPresent
+					s.out.ToolParseFailure = s.toolParseFailure
+					s.out.CompletedAt = time.Now().UTC()
+					return s.out, nil
+				}
+
 				// Downgrade execution-dependent modes when no SubAgentRunner is
 				// available.  PromptOnly mode is always safe (just a system-prompt
 				// hint) so we keep it; ToolGated and AutoExecute require the runner
@@ -442,6 +791,11 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 				s.delegationCooldown = trigger.CooldownFor
 				s.pendingSubtasks = trigger.Subtasks
 				s.delegationActive = true
+				s.emitDecision(ctx, DecisionRecordTypeConstraintActive, map[string]any{
+					"delegation_mode": string(trigger.Mode),
+					"allowed_tools":   append([]string(nil), trigger.AllowedTools...),
+					"cooldown_for":    trigger.CooldownFor,
+				}, fmt.Sprintf("Activated delegation mode constraints (%s).", strings.TrimSpace(string(trigger.Mode))))
 
 				// Lock delegation mode once we enter forced or critical mode
 				if trigger.Mode == DelegationModeToolGated || trigger.Mode == DelegationModeAutoExecute {
@@ -534,6 +888,10 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 			s.out.Thinking = s.latestThinking
 			s.out.ThinkingPresent = s.thinkingPresent
 			s.out.ToolParseFailure = s.toolParseFailure
+			if isContextCanceledModelError(ctx, err) {
+				s.out.CompletedAt = time.Now().UTC()
+				return s.out, context.Canceled
+			}
 			if len(s.toolResults) > 0 {
 				if isTransientProviderModelError(err) {
 					if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, input.Source, "# TRANSIENT_MODEL_ERROR_RECOVERY\n- Your previous model turn ended with a transient provider interruption after tool work.\n- Do not call tools in this recovery turn.\n- Use the latest tool results to answer the user directly.\n- If the tool results are incomplete, say what remains and mention that the stream was interrupted."); finalized != "" {
@@ -633,6 +991,13 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (RunOu
 				if s.isToolAllowedInDelegationMode(call.Name) {
 					filteredCalls = append(filteredCalls, call)
 				} else {
+					s.emitDecision(ctx, DecisionRecordTypeToolDecision, map[string]any{
+						"tool":             strings.TrimSpace(call.Name),
+						"tool_call_id":     strings.TrimSpace(call.ID),
+						"decision":         "denied",
+						"policy_reference": "policy.delegation_mode",
+						"reason":           fmt.Sprintf("tool %s is blocked while delegation mode is %s", strings.TrimSpace(call.Name), strings.TrimSpace(string(s.delegationMode))),
+					}, fmt.Sprintf("Denied tool %s due to delegation mode constraints.", strings.TrimSpace(call.Name)))
 					// Check rewrite budget to prevent infinite loops
 					if s.toolRewriteCount >= maxToolRewriteBudget {
 						// Execute pending subtasks directly if we have them
@@ -869,6 +1234,9 @@ func isTransientProviderModelError(err error) bool {
 		return false
 	}
 	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	if strings.Contains(text, "context canceled") || strings.Contains(text, "context cancelled") {
+		return false
+	}
 	return strings.Contains(text, "stream interrupted") ||
 		strings.Contains(text, "context deadline exceeded") ||
 		strings.Contains(text, "client.timeout") ||
@@ -877,6 +1245,20 @@ func isTransientProviderModelError(err error) bool {
 		strings.Contains(text, "connection reset") ||
 		strings.Contains(text, "unexpected eof") ||
 		strings.Contains(text, "provider returned no choices")
+}
+
+func isContextCanceledModelError(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	if ctx != nil && errors.Is(ctx.Err(), context.Canceled) {
+		return true
+	}
+	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(text, "context canceled") || strings.Contains(text, "context cancelled")
 }
 
 // extractAgentIDFromArgs extracts the agent_id field from JSON tool arguments
@@ -957,6 +1339,18 @@ func repeatedCallRepetitionKey(call ToolCallRequest) (string, int, bool) {
 			return "", 0, false
 		}
 		return "memory.write|" + key, memoryWriteRepetitionCap, true
+	}
+
+	// becomussy tools: write tools (create, propose, reinforce) get a tight
+	// cap to prevent duplicate entries; read tools (search, list, get,
+	// resume, current, history, pending) get a higher cap because they are
+	// idempotent and commonly re-invoked during batch workflows.
+	if strings.HasPrefix(name, "becomussy.") {
+		cap := becomussyReadRepetitionCap
+		if strings.HasSuffix(name, ".create") || strings.HasSuffix(name, ".propose") || strings.HasSuffix(name, ".reinforce") {
+			cap = becomussyWriteRepetitionCap
+		}
+		return name + "|" + string(call.Arguments), cap, true
 	}
 
 	if name != "fs.write" && name != "fs.append" && name != "fs.read" && name != "shell.exec" {
@@ -1043,6 +1437,13 @@ func toolCallCacheKey(call ToolCallRequest) string {
 	// contents change after writes.  Returning stale cached results causes the
 	// agent to believe files are missing or have old content.
 	if name == "fs.list" || name == "fs.read" {
+		return "|"
+	}
+	// becomussy tools should not be cached — each call should either
+	// execute fresh (on first use) or be caught by repetition detection
+	// (on subsequent identical calls) so the model gets the explicit
+	// "repetition detected" signal to stop and produce a text response.
+	if strings.HasPrefix(name, "becomussy.") {
 		return "|"
 	}
 	if name == "http.request" || name == "net.fetch" {
@@ -1277,4 +1678,54 @@ func (s *runState) setLastModelOutput(output string) {
 	if len(s.recentIntents) > 3 {
 		s.recentIntents = s.recentIntents[1:]
 	}
+}
+
+func (s *runState) appendPlannedDelegationEvents(ctx context.Context, plan DecompositionPlan) {
+	for _, task := range plan.Tasks {
+		s.recordDelegationEvent(ctx, DelegationEvent{
+			Timestamp:      time.Now().UTC(),
+			TaskID:         task.TaskID,
+			TriggerReason:  strings.TrimSpace(plan.TriggerReason),
+			SelectedRole:   strings.TrimSpace(task.AssignedRole),
+			Confidence:     task.Confidence,
+			TaskAssignment: strings.TrimSpace(task.Description),
+			Rationale:      strings.TrimSpace(task.Rationale),
+			Outcome:        "planned",
+		})
+	}
+}
+
+func (s *runState) appendDelegationEvent(event DelegationEvent) {
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
+	event.TriggerReason = strings.TrimSpace(event.TriggerReason)
+	event.SelectedRole = strings.TrimSpace(event.SelectedRole)
+	event.TaskAssignment = strings.TrimSpace(event.TaskAssignment)
+	event.Rationale = strings.TrimSpace(event.Rationale)
+	event.Outcome = strings.TrimSpace(event.Outcome)
+	s.out.DelegationEvents = append(s.out.DelegationEvents, event)
+}
+
+func (s *runState) recordDelegationEvent(ctx context.Context, event DelegationEvent) {
+	s.appendDelegationEvent(event)
+
+	payload := map[string]any{
+		"task_id":           strings.TrimSpace(event.TaskID),
+		"trigger_reason":    strings.TrimSpace(event.TriggerReason),
+		"selected_role":     strings.TrimSpace(event.SelectedRole),
+		"confidence":        event.Confidence,
+		"task_assignment":   strings.TrimSpace(event.TaskAssignment),
+		"role_rationale":    strings.TrimSpace(event.Rationale),
+		"outcome":           strings.TrimSpace(event.Outcome),
+		"event_timestamp":   event.Timestamp.UTC().Format(time.RFC3339Nano),
+		"delegation_active": s.delegationActive,
+	}
+
+	summary := fmt.Sprintf("Delegation task %s assigned to %s (%s).",
+		firstN(strings.TrimSpace(event.TaskID), 48),
+		firstN(strings.TrimSpace(event.SelectedRole), 48),
+		firstN(strings.TrimSpace(event.Outcome), 24),
+	)
+	s.emitDelegationTriggerDecision(ctx, payload, summary)
 }

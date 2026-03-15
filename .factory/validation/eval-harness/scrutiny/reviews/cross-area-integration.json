@@ -1,0 +1,28 @@
+{
+  "featureId": "cross-area-integration",
+  "reviewedAt": "2026-03-14T21:20:45Z",
+  "commitId": "dbd39d0",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The commit integrates resolved-contract prompt stack composition and delegation role metadata, emits decision-ledger records for delegation events, adds deep-link handling for runs/sessions hash params, and adds backend/e2e integration coverage aligned with the cross-area requirements. I found one non-blocking UX issue in sessions deep-link behavior when using the new path-form route.",
+    "issues": [
+      {
+        "file": "internal/channels/dashboard/ui/src/pages/SessionsPage.tsx",
+        "line": 389,
+        "severity": "non_blocking",
+        "description": "When opened via the new `/sessions/:sessionId` route, `deepLinkedSessionID` always prioritizes the path param, while `openSession` only updates `?session=`. This can keep forcing the original path session and prevents switching to another session from the table until the URL path changes."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "This feature handoff JSON does not include `handoff.skillFeedback`, which the scrutiny review workflow expects for evaluating procedure adherence/deviations against the skill instructions.",
+      "evidence": "handoffs/2026-03-14T21-15-00-749Z__cross-area-integration__86829452-a08f-44e6-9cac-469e6e3af9b8.json has handoff keys [discoveredIssues, salientSummary, tests, verification, whatWasImplemented, whatWasLeftUndone] with no skillFeedback section."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed worker session 86829452-a08f-44e6-9cac-469e6e3af9b8 and commit dbd39d0 for cross-area integration. Implementation and tests materially cover contract/prompt linkage, role-reference exposure, delegation ledger emission, config propagation checks, nav/auth coverage, and deep-link assertions; review passes with one non-blocking sessions route/query interaction issue noted."
+}

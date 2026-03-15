@@ -1,0 +1,34 @@
+{
+  "featureId": "agent-contract-resolver",
+  "reviewedAt": "2026-03-14T14:03:32Z",
+  "commitId": "40a330a50336824e52e4ffb5e040be58b89d4a6c",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Resolver and tests are substantial, but two correctness gaps remain: model profile overrides are applied even when the global override gate is disabled, and section-level inheritance can become stale after later fallback resolution.",
+    "issues": [
+      {
+        "file": "internal/contract/resolver.go",
+        "line": 98,
+        "severity": "blocking",
+        "description": "Agent profile model overrides are always applied when a profile exists, but runtime behavior gates these overrides behind agents.allow_agent_model_overrides (see internal/runtime/engine.go:1824). This can produce resolved contracts that diverge from effective runtime policy when the gate is false."
+      },
+      {
+        "file": "internal/contract/resolver.go",
+        "line": 242,
+        "severity": "blocking",
+        "description": "setInheritanceSource only upgrades section-level source by precedence and never downgrades it. In subagent resolution, a lower-precedence fallback can replace a previously overridden leaf (for example model_policy.timeout_ms), but model_policy may remain marked as agent-profile/subagent-override even when all effective leaves are global, violating accurate per-field inheritance tracking."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "Shared architecture notes describe config resolution as global -> agent profile -> subagent restrictions, but do not document that runtime model-profile overrides are gated by agents.allow_agent_model_overrides. This gap can lead to resolver implementations that drift from runtime behavior.",
+      "evidence": ".factory/library/architecture.md (\"Config Resolution (Existing)\") vs internal/runtime/engine.go:1824 (allow_agent_model_overrides gate)"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed feature agent-contract-resolver using feature metadata, handoff, full commit diff, transcript skeleton, and backend-worker skill guidance. The implementation is close, but it currently misrepresents effective runtime policy under disabled model overrides and can report stale section inheritance in fallback scenarios, so this review fails pending fixes."
+}

@@ -1,0 +1,28 @@
+{
+  "featureId": "prompt-stack-api",
+  "reviewedAt": "2026-03-14T16:01:00Z",
+  "commitId": "d11d36774be50c7237ebd399c3ec9e1cda94763a",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature adds the requested prompt-stack admin endpoints and route wiring, but there is a blocking concurrency flaw that can lose updates and corrupt version history under concurrent writes.",
+    "issues": [
+      {
+        "file": "internal/channels/dashboard/prompt_stack_api.go",
+        "line": 57,
+        "severity": "blocking",
+        "description": "`handlePromptStackAPI` creates a new `promptstack.VersionStore` per request (`promptStackStore`), but `VersionStore` locking is instance-local (`internal/promptstack/store.go` line 25). Concurrent PUT/rollback requests can read the same prior history and both write the same next version, causing lost updates/history entries. This violates reliable CRUD/version-history behavior for the prompt-stack API."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "Shared architecture notes mention Prompt Stack and VersionStore but do not call out that VersionStore synchronization is per-instance and handlers should reuse a shared store instance for concurrent safety.",
+      "evidence": ".factory/library/architecture.md:49-50 describes VersionStore at a high level only; implementation uses instance mutex in internal/promptstack/store.go:22-25 while API currently instantiates it per request in internal/channels/dashboard/prompt_stack_api.go:57 and :124-125."
+    }
+    ],
+  "addressesFailureFrom": null,
+  "summary": "Review failed: implementation largely matches endpoint requirements, but per-request VersionStore construction introduces a blocking race that can drop prompt-stack updates/version history under concurrent admin writes."
+}

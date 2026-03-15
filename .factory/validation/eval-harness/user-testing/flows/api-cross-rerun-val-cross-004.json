@@ -1,0 +1,82 @@
+{
+  "groupId": "api-cross-rerun-val-cross-004",
+  "testedAt": "2026-03-14T22:12:49.497734+00:00",
+  "isolation": {
+    "surface": "API contract endpoints + terminal/curl only",
+    "baseUrl": "http://localhost:8081",
+    "authHeader": "Authorization: Bearer change-me",
+    "repo": "/home/mojo/projects/openclawssy",
+    "missionDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3",
+    "assignedAssertionIds": [
+      "VAL-CROSS-004"
+    ]
+  },
+  "toolsUsed": [
+    "curl",
+    "python3",
+    "Execute"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-CROSS-004",
+      "title": "Every delegation produces ledger entries",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "PATCH /api/admin/config set agents.delegation_mode and agents.subagent_defaults.delegation_mode to full_autonomous (temporary)",
+          "expected": "Delegation can execute for a fresh run and config is restored after test",
+          "observed": "Temporary patch applied and restored (restore status=200)"
+        },
+        {
+          "action": "POST /v1/runs to create a fresh run that triggers delegation",
+          "expected": "New run is created and emits delegation-triggered decision records",
+          "observed": "Run created successfully (run_id=run_1773526302438901691)"
+        },
+        {
+          "action": "GET /api/admin/runs/run_1773526302438901691/decisions",
+          "expected": "Decision ledger contains delegation_trigger records",
+          "observed": "Retrieved decision ledger with 4 delegation_trigger records"
+        },
+        {
+          "action": "Validate every delegation_trigger payload against required schema fields",
+          "expected": "All records include trigger_reason, selected_role, task_assignment, confidence, parent_run_id, event_timestamp, source_run_id, source_agent_id",
+          "observed": "record #1: pass (all required fields present and valid); record #2: pass (all required fields present and valid); record #3: pass (all required fields present and valid); record #4: pass (all required fields present and valid)"
+        }
+      ],
+      "evidence": {
+        "runId": "run_1773526302438901691",
+        "delegationTriggerRecordsChecked": 4,
+        "perRecordSchemaSummary": [
+          "record #1: pass (all required fields present and valid)",
+          "record #2: pass (all required fields present and valid)",
+          "record #3: pass (all required fields present and valid)",
+          "record #4: pass (all required fields present and valid)"
+        ],
+        "files": {
+          "configBeforeRequest": "eval-harness/api-cross-rerun-val-cross-004/val-cross-004-config-before.request.txt",
+          "configBeforeStatus": "eval-harness/api-cross-rerun-val-cross-004/val-cross-004-config-before.status.txt",
+          "configBeforeResponse": "eval-harness/api-cross-rerun-val-cross-004/val-cross-004-config-before.body.json",
+          "configPatchRequest": "eval-harness/api-cross-rerun-val-cross-004/val-cross-004-config-patch.request.txt",
+          "configPatchStatus": "eval-harness/api-cross-rerun-val-cross-004/val-cross-004-config-patch.status.txt",
+          "configPatchResponse": "eval-harness/api-cross-rerun-val-cross-004/val-cross-004-config-patch.body.json",
+          "runCreateRequest": "eval-harness/api-cross-rerun-val-cross-004/val-cross-004-run-create.request.txt",
+          "runCreateStatus": "eval-harness/api-cross-rerun-val-cross-004/val-cross-004-run-create.status.txt",
+          "runCreateResponse": "eval-harness/api-cross-rerun-val-cross-004/val-cross-004-run-create.body.json",
+          "decisionsRequest": "eval-harness/api-cross-rerun-val-cross-004/val-cross-004-decisions.request.txt",
+          "decisionsStatus": "eval-harness/api-cross-rerun-val-cross-004/val-cross-004-decisions.status.txt",
+          "decisionsResponse": "eval-harness/api-cross-rerun-val-cross-004/val-cross-004-decisions.body.json",
+          "pollAttempts": "eval-harness/api-cross-rerun-val-cross-004/val-cross-004-poll-attempts.json",
+          "schemaValidationSummary": "eval-harness/api-cross-rerun-val-cross-004/val-cross-004-schema-validation.json",
+          "configRestoreRequest": "eval-harness/api-cross-rerun-val-cross-004/val-cross-004-config-restore.request.txt",
+          "configRestoreStatus": "eval-harness/api-cross-rerun-val-cross-004/val-cross-004-config-restore.status.txt",
+          "configRestoreResponse": "eval-harness/api-cross-rerun-val-cross-004/val-cross-004-config-restore.body.json"
+        },
+        "network": "PATCH /api/admin/config -> 200; POST /v1/runs -> 202; GET /api/admin/runs/run_1773526302438901691/decisions -> 200; PATCH /api/admin/config restore -> 200"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 1 assertion (VAL-CROSS-004): passed; validated 4 delegation_trigger records for run run_1773526302438901691."
+}

@@ -1,0 +1,21 @@
+{
+  "milestone": "agent-contract",
+  "round": 2,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 4,
+    "passed": 4,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-CONTRACT-005",
+    "VAL-CONTRACT-006",
+    "VAL-CONTRACT-007",
+    "VAL-CONTRACT-008"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "previousRound": "/home/mojo/projects/openclawssy/.factory/validation/agent-contract/user-testing/synthesis.round1.json"
+}

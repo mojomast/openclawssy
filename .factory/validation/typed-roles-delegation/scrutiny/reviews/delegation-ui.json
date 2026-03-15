@@ -1,0 +1,22 @@
+{
+  "featureId": "delegation-ui",
+  "reviewedAt": "2026-03-14T18:20:06Z",
+  "commitId": "9767d0a",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature delivers the requested UI surfaces (policy editor, graph preview, why drawer, run comparison) with focused Playwright coverage, but there is a blocking correctness issue in delegation-mode handling against real config values.",
+    "issues": [
+      {
+        "file": "internal/channels/dashboard/ui/src/pages/DelegationPage.tsx",
+        "line": 162,
+        "severity": "blocking",
+        "description": "`parseDelegationMode` only accepts `suggest_only|approve_plan|auto_trusted|full_autonomous` and falls back to `suggest_only` for any other persisted value. The backend still supports and defaults to legacy valid modes (e.g. `tool_gated` in `internal/config/config.go:348`, plus `prompt_only|tool_gated|auto_execute` in `isValidDelegationMode` at `internal/config/config.go:940`). This causes the editor to misrepresent current config and can silently overwrite a valid existing mode on save."
+      }
+    ]
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed handoff, transcript skeleton, and commit 9767d0a. UI implementation is largely aligned with the feature contract, but the mode parser/selector does not preserve all backend-valid delegation modes, so this review fails pending a compatibility-safe fix."
+}

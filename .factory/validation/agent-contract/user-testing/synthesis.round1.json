@@ -1,0 +1,44 @@
+{
+  "milestone": "agent-contract",
+  "round": 1,
+  "status": "fail",
+  "assertionsSummary": {
+    "total": 8,
+    "passed": 4,
+    "failed": 4,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-CONTRACT-001",
+    "VAL-CONTRACT-002",
+    "VAL-CONTRACT-003",
+    "VAL-CONTRACT-004"
+  ],
+  "failedAssertions": [
+    {
+      "id": "VAL-CONTRACT-005",
+      "reason": "Agent Contract UI route renders placeholder content and does not show agent list/structured contract sections."
+    },
+    {
+      "id": "VAL-CONTRACT-006",
+      "reason": "Raw/resolved toggle is not available in current Agent Contract UI."
+    },
+    {
+      "id": "VAL-CONTRACT-007",
+      "reason": "Inheritance source annotations cannot be validated because contract fields are not rendered in UI."
+    },
+    {
+      "id": "VAL-CONTRACT-008",
+      "reason": "Diff/rollback controls are missing in UI; supplemental rollback endpoint checks in this flow returned 404."
+    }
+  ],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added Flow Validator Guidance section for API Contract Endpoints to define isolation, auth usage, and evidence expectations for API-surface validations.",
+      "source": "setup"
+    }
+  ],
+  "previousRound": null
+}

@@ -1,0 +1,26 @@
+{
+  "featureId": "fix-react-migration-remove-legacy-root-artifacts",
+  "reviewedAt": "2026-03-14T07:55:47Z",
+  "commitId": "1a5fcf6f04393da5d2d4ca1750462a447ac4f505",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix fully addresses the prior failure: it deletes the two remaining legacy root artifacts (`internal/channels/dashboard/ui/app.js` and `internal/channels/dashboard/ui/styles.css`), and current dashboard backend/UI code contains no remaining serving/import references to those files.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "services",
+      "observation": "Shared command catalog still includes a stale Playwright path for a removed JS spec file.",
+      "evidence": ".factory/services.yaml:9 defines `test-ui-component` as `...tests/e2e/shared-components.spec.js`, while `internal/channels/dashboard/ui/tests/e2e/` now contains `shared-components.spec.ts` and no `.spec.js` file."
+    },
+    {
+      "area": "knowledge",
+      "observation": "Shared architecture library still documents outdated dashboard embed paths that include deleted legacy artifacts.",
+      "evidence": ".factory/library/architecture.md:32 still says `//go:embed ui/dist ui/index.html ui/app.js ui/styles.css ui/help ui/src`, but current code is `//go:embed ui/dist` at internal/channels/dashboard/handler.go:123."
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/react-migration/scrutiny/reviews/react-remove-legacy.json",
+  "summary": "Reviewed fix commit 1a5fcf6 plus the original failing commit context: the original failure was specifically leftover `ui/app.js` and `ui/styles.css`, and this fix removes both. Diff and transcript evidence support that the prior blocking findings are resolved, so this fix passes."
+}

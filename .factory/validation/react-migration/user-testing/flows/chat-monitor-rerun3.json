@@ -1,0 +1,78 @@
+{
+  "groupId": "chat-monitor-rerun3",
+  "milestone": "react-migration",
+  "testedAt": "2026-03-14T11:46:10Z",
+  "isolation": {
+    "missionDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3",
+    "dashboardUrl": "http://localhost:8081/dashboard",
+    "authToken": "change-me",
+    "browserSession": "chat-monitor-rerun3"
+  },
+  "toolsUsed": [
+    "agent-browser",
+    "curl"
+  ],
+  "assertionResults": [
+    {
+      "id": "VAL-MIG-CHAT-004",
+      "status": "pass",
+      "reason": "Session metadata is visible, Resume interrupted run is available and starts continuation, Stop current run transitions chat run to canceled, and Copy debug bundle reports successful clipboard fallback copy.",
+      "evidence": {
+        "screenshots": [
+          "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/react-migration/chat-monitor-rerun3/VAL-MIG-CHAT-004-session-metadata-resume-visible.png",
+          "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/react-migration/chat-monitor-rerun3/VAL-MIG-CHAT-004-resume-clicked.png",
+          "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/react-migration/chat-monitor-rerun3/VAL-MIG-CHAT-004-after-stop-current-run.png",
+          "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/react-migration/chat-monitor-rerun3/VAL-MIG-CHAT-004-copy-debug-bundle.png"
+        ],
+        "consoleErrors": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/react-migration/chat-monitor-rerun3/VAL-MIG-CHAT-004-console-errors.txt (none)",
+        "network": "UI text evidence in chat-page-after-stop.txt shows run_1773488499229330198 status canceled and Live Activity status canceled; chat-page-after-copy-debug.txt shows 'Debug bundle copied (clipboard fallback).',",
+        "notes": [
+          "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/react-migration/chat-monitor-rerun3/chat-page-after-stop.txt",
+          "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/react-migration/chat-monitor-rerun3/chat-page-after-copy-debug.txt"
+        ]
+      }
+    },
+    {
+      "id": "VAL-MIG-MON-002",
+      "status": "fail",
+      "reason": "Launch from monitor card works and thinking_mode is applied to the launched run, but cancel controls do not clear stale active state: default still reports active run_1773447736380992315 with Stop active visible even after Stop active and targeted per-row Stop attempts.",
+      "evidence": {
+        "screenshots": [
+          "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/react-migration/chat-monitor-rerun3/VAL-MIG-MON-002-monitor-launch-panel.png",
+          "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/react-migration/chat-monitor-rerun3/VAL-MIG-MON-002-after-launch.png",
+          "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/react-migration/chat-monitor-rerun3/VAL-MIG-MON-002-after-stop-active.png",
+          "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/react-migration/chat-monitor-rerun3/VAL-MIG-MON-002-per-row-stop-targeted.png"
+        ],
+        "consoleErrors": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/react-migration/chat-monitor-rerun3/VAL-MIG-MON-002-console-errors.txt (none)",
+        "network": "agent-browser request capture returned no requests; supplemental curl evidence collected. /api/admin/monitor/runs remained HTTP 200 and still reports run_1773447736380992315 status running; launched run run_1773488578405286729 shows completed with message 'VAL-MIG-MON-002 rerun3 thinking-mode-always'. /v1/runs/run_1773488578405286729 includes thinking_mode='always'.",
+        "notes": [
+          "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/react-migration/chat-monitor-rerun3/monitor-after-stop-active.txt",
+          "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/react-migration/chat-monitor-rerun3/monitor-after-per-row-targeted-stop.txt",
+          "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/react-migration/chat-monitor-rerun3/api-admin-monitor-runs.after-ui.json",
+          "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/react-migration/chat-monitor-rerun3/api-v1-runs-run_1773488578405286729.json",
+          "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/react-migration/chat-monitor-rerun3/api-v1-runs-run_1773447736380992315.json"
+        ]
+      }
+    }
+  ],
+  "frictions": [
+    {
+      "description": "agent-browser network request capture returned 'No requests captured' for dashboard flows, so supplemental curl endpoint evidence was required.",
+      "resolved": true,
+      "resolution": "Collected /api/admin/monitor/runs and /v1/runs* responses with curl and saved headers/body artifacts under evidence path.",
+      "affectedAssertions": [
+        "VAL-MIG-MON-002"
+      ]
+    },
+    {
+      "description": "Monitor page has multiple duplicate Stop controls; generic selector actions were ambiguous during per-row cancel validation.",
+      "resolved": true,
+      "resolution": "Used targeted selector for monitor run row testid (run_1773447736380992315) to execute per-row stop attempt.",
+      "affectedAssertions": [
+        "VAL-MIG-MON-002"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "Validated 2 assertions (rerun round): VAL-MIG-CHAT-004 passed; VAL-MIG-MON-002 failed. Monitor/API remained healthy (HTTP 200) while cancellation state for stale run_1773447736380992315 stayed inconsistent in UI+monitor data."
+}

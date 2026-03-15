@@ -1,0 +1,40 @@
+{
+  "featureId": "react-migrate-sandbox",
+  "reviewedAt": "2026-03-14T07:24:54Z",
+  "commitId": "b071a75",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Commit b071a75 delivers the React Sandbox surface and broad e2e coverage, but two API-contract mismatches in the migrated page break required sandbox behavior in real backend responses: container status metadata is gated off and image rows lose key fields.",
+    "issues": [
+      {
+        "file": "internal/channels/dashboard/ui/src/pages/SandboxPage.tsx",
+        "line": 339,
+        "severity": "blocking",
+        "description": "`nonDockerProvider` is computed from `status.provider !== \"docker\"`, but the status API payload used by this repo does not include a `provider` field (`internal/channels/http/sandbox_admin.go` DockerStatusResponse at lines 67-75). In real responses this becomes `unknown`, so the status table branch (`status && !nonDockerProvider`) never renders and the page incorrectly shows the provider warning instead of required container metadata/running badge."
+      },
+      {
+        "file": "internal/channels/dashboard/ui/src/pages/SandboxPage.tsx",
+        "line": 133,
+        "severity": "blocking",
+        "description": "Image normalization reads `raw.repo` and `raw.size_mb`, but backend image payload fields are `repository` and `size` (`internal/channels/http/sandbox_admin.go` DockerImageInfo at lines 79-84). Result: repository renders as `unknown` and size falls back to `—`, so the Available Images table does not correctly display Docker image metadata required by the feature behavior."
+      },
+      {
+        "file": "internal/channels/dashboard/ui/tests/e2e/sandbox.spec.ts",
+        "line": 53,
+        "severity": "non_blocking",
+        "description": "Sandbox e2e mocks enforce a payload shape (`provider`, `repo`, `size_mb`) that differs from the actual Go API contracts (`provider` absent on status; images use `repository`/`size`), so the spec passes while the production integration path is broken."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The frontend-worker procedure emphasizes route mocking but does not explicitly require validating mocked response schemas against the real backend structs/endpoints; this allowed sandbox mocks to drift from the Go API contract and miss integration-breaking mismatches.",
+      "evidence": "`.factory/skills/frontend-worker/SKILL.md` Work Procedure step 2 focuses on mocked Playwright routes. In this feature transcript skeleton, tests mocked `provider` and `repo/size_mb` fields (`tests/e2e/sandbox.spec.ts:53,63-64`) while backend contracts are `DockerStatusResponse` without `provider` and `DockerImageInfo` with `repository/size` (`internal/channels/http/sandbox_admin.go:67-75,79-84`)."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed react-migrate-sandbox using mission feature metadata, handoff, transcript skeleton, skill instructions, and commit b071a75 diff. Result is fail due to blocking status/images API-shape mismatches in SandboxPage.tsx that prevent required metadata behavior against real backend responses; tests passed because mocks use a different schema than production."
+}

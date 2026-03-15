@@ -1,0 +1,21 @@
+{
+  "featureId": "fix-prompt-stack-ui-syntax-highlighting",
+  "reviewedAt": "2026-03-14T16:26:44Z",
+  "commitId": "f0c7c346bf1d476f5dbab81587704a29037d2356",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix directly addresses the prior blocking finding: the Prompt Stack editor/preview are no longer textarea-only and now render visible markdown/text highlighting overlays, while save/preview/diff/rollback/lint/test flows remain covered by the existing passing prompt-stack Playwright spec with added highlighting assertions.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The frontend-worker skill requires a TDD red phase (run failing targeted Playwright before implementation), but this fix session applied code patches before the first Playwright run; this suggests either worker adherence drift or that the skill procedure is too strict for current mission workflows.",
+      "evidence": "/home/mojo/projects/openclawssy/.factory/skills/frontend-worker/SKILL.md (Work Procedure step 2: tests-first/red phase) vs transcript skeleton for workerSessionId 34284e1c-e830-4dbf-973b-ab6af7a7a09a (ApplyPatch calls precede first `npx playwright test tests/e2e/prompt-stack.spec.ts`)."
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/prompt-stack/scrutiny/reviews/prompt-stack-ui.json",
+  "summary": "Review result: pass. The syntax-highlighting requirement that previously blocked prompt-stack-ui is now implemented and asserted in UI tests, with no remaining blocking code issues found in the reviewed fix scope."
+}

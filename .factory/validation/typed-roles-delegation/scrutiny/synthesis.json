@@ -1,0 +1,40 @@
+{
+  "milestone": "typed-roles-delegation",
+  "round": 2,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "go test -parallel 2 ./...",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "cd internal/channels/dashboard/ui && npx tsc --noEmit",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "go vet ./...",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 2,
+    "passed": 2,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills",
+      "suggestion": "Clarify manual verification expectations for non-interactive mission runs so workers either provide an approved automated evidence substitute or explicitly record a required-procedure deviation.",
+      "evidence": "Skill requirement: /home/mojo/projects/openclawssy/.factory/skills/backend-worker/SKILL.md lines 94-108. Fix handoff includes `verification.commandsRun` and no `interactiveChecks`: /home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/handoffs/2026-03-14T18-31-12-565Z__fix-decision-ledger-decisions-api-large-audit-lines__6e458877-3d1a-4eb2-82b9-a12af3d98ec8.json lines 13-14, 77. ; Handoff skillFeedback for session `5391a52f-a6c1-4f08-b96d-ebee9f7155e1` marks `followedProcedure=false` with deviation at step `6. Manual Verification`; `.factory/skills/frontend-worker/SKILL.md` step 6 requires manual checks unless mission guidance explicitly allows substitution.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": ".factory/validation/typed-roles-delegation/scrutiny/synthesis.round1.json"
+}

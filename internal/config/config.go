@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"openclawssy/internal/roles"
 )
 
 type Config struct {
@@ -29,6 +31,7 @@ type Config struct {
 	Secrets   SecretsConfig   `json:"secrets"`
 	Memory    MemoryConfig    `json:"memory"`
 	OpenClaw  OpenClawConfig  `json:"openclaw"`
+	Becomussy BecomussyConfig `json:"becomussy"`
 }
 
 const (
@@ -146,6 +149,7 @@ type AgentsConfig struct {
 	AllowAgentModelOverrides bool                    `json:"allow_agent_model_overrides"`
 	SelfImprovementEnabled   bool                    `json:"self_improvement_enabled"`
 	Profiles                 map[string]AgentProfile `json:"profiles,omitempty"`
+	CustomRoleTemplates      []roles.RoleTemplate    `json:"custom_role_templates,omitempty"`
 	// Delegation settings
 	AutoDelegate           bool   `json:"auto_delegate,omitempty"`
 	DelegationMode         string `json:"delegation_mode,omitempty"`
@@ -234,6 +238,16 @@ type MemoryConfig struct {
 
 type OpenClawConfig struct {
 	Remote OpenClawRemoteConfig `json:"remote"`
+}
+
+// BecomussyConfig configures the becomussy continuity system integration.
+type BecomussyConfig struct {
+	Enabled   bool              `json:"enabled"`
+	BaseURL   string            `json:"base_url"`
+	UserID    string            `json:"user_id,omitempty"`
+	UserRole  string            `json:"user_role,omitempty"`
+	TimeoutMS int               `json:"timeout_ms,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
 }
 
 type OpenClawRemoteConfig struct {
@@ -394,6 +408,13 @@ func Default() Config {
 				PollTimeoutMS:    60000,
 				PreferTailnetWSS: true,
 			},
+		},
+		Becomussy: BecomussyConfig{
+			Enabled:   false,
+			BaseURL:   "http://localhost:8000",
+			UserID:    "openclawssy-agent",
+			UserRole:  "agent_runtime",
+			TimeoutMS: 15000,
 		},
 	}
 }
@@ -576,6 +597,20 @@ func (c *Config) ApplyDefaults() {
 		c.OpenClaw.Remote.PollTimeoutMS = d.OpenClaw.Remote.PollTimeoutMS
 	}
 
+	// Becomussy defaults
+	if strings.TrimSpace(c.Becomussy.BaseURL) == "" {
+		c.Becomussy.BaseURL = d.Becomussy.BaseURL
+	}
+	if strings.TrimSpace(c.Becomussy.UserID) == "" {
+		c.Becomussy.UserID = d.Becomussy.UserID
+	}
+	if strings.TrimSpace(c.Becomussy.UserRole) == "" {
+		c.Becomussy.UserRole = d.Becomussy.UserRole
+	}
+	if c.Becomussy.TimeoutMS <= 0 {
+		c.Becomussy.TimeoutMS = d.Becomussy.TimeoutMS
+	}
+
 	if c.Providers.OpenAI.BaseURL == "" {
 		c.Providers.OpenAI = d.Providers.OpenAI
 	}
@@ -680,6 +715,13 @@ func (c Config) Validate() error {
 		if profile.Model.TimeoutMS < 0 || profile.Model.TimeoutMS > 600000 {
 			return fmt.Errorf("agents.profiles.%s.model.timeout_ms must be between 0 and 600000", agentID)
 		}
+	}
+
+	if _, err := roles.NewRoleStore(c.Agents.CustomRoleTemplates); err != nil {
+		return fmt.Errorf("agents.custom_role_templates: %w", err)
+	}
+	if !isValidDelegationMode(c.Agents.DelegationMode) {
+		return fmt.Errorf("agents.delegation_mode must be one of %s, got %q", delegationModeList(), c.Agents.DelegationMode)
 	}
 
 	// Validate subagent restriction defaults
@@ -816,6 +858,32 @@ func (c Config) Validate() error {
 		return errors.New("openclaw.remote.poll_timeout_ms cannot be less than openclaw.remote.poll_interval_ms")
 	}
 
+	// Becomussy validation
+	if c.Becomussy.Enabled {
+		if strings.TrimSpace(c.Becomussy.BaseURL) == "" {
+			return errors.New("becomussy.base_url is required when becomussy.enabled is true")
+		}
+		baseURL, err := url.Parse(strings.TrimSpace(c.Becomussy.BaseURL))
+		if err != nil {
+			return fmt.Errorf("becomussy.base_url is invalid: %w", err)
+		}
+		scheme := strings.ToLower(baseURL.Scheme)
+		if scheme != "http" && scheme != "https" {
+			return fmt.Errorf("becomussy.base_url must use http or https scheme, got %q", baseURL.Scheme)
+		}
+		if strings.TrimSpace(c.Becomussy.UserID) == "" {
+			return errors.New("becomussy.user_id is required when becomussy.enabled is true")
+		}
+		validRoles := map[string]bool{"agent_runtime": true, "steward": true, "reviewer": true, "admin": true, "observer": true}
+		role := strings.ToLower(strings.TrimSpace(c.Becomussy.UserRole))
+		if !validRoles[role] {
+			return fmt.Errorf("becomussy.user_role must be one of agent_runtime|steward|reviewer|admin|observer, got %q", c.Becomussy.UserRole)
+		}
+	}
+	if c.Becomussy.TimeoutMS < 1000 || c.Becomussy.TimeoutMS > 120000 {
+		return errors.New("becomussy.timeout_ms must be between 1000 and 120000")
+	}
+
 	return nil
 }
 
@@ -861,11 +929,23 @@ func validateSubAgentRestrictions(prefix string, r SubAgentRestrictions) error {
 			return fmt.Errorf("agents.%s.thinking_mode must be one of never|on_error|always, got %q", prefix, mode)
 		}
 	}
-	validDelegationModes := map[string]bool{"": true, "prompt_only": true, "tool_gated": true, "auto_execute": true}
-	if !validDelegationModes[strings.TrimSpace(r.DelegationMode)] {
-		return fmt.Errorf("agents.%s.delegation_mode must be one of prompt_only|tool_gated|auto_execute, got %q", prefix, r.DelegationMode)
+	if !isValidDelegationMode(r.DelegationMode) {
+		return fmt.Errorf("agents.%s.delegation_mode must be one of %s, got %q", prefix, delegationModeList(), r.DelegationMode)
 	}
 	return nil
+}
+
+func isValidDelegationMode(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "prompt_only", "tool_gated", "auto_execute", "suggest_only", "approve_plan", "auto_trusted", "full_autonomous":
+		return true
+	default:
+		return false
+	}
+}
+
+func delegationModeList() string {
+	return "prompt_only|tool_gated|auto_execute|suggest_only|approve_plan|auto_trusted|full_autonomous"
 }
 
 func (c Config) Redacted() Config {

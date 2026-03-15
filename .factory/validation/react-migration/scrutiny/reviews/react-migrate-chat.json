@@ -1,0 +1,39 @@
+{
+  "featureId": "react-migrate-chat",
+  "reviewedAt": "2026-03-14T07:10:34Z",
+  "commitId": "8f8d5bdf775c65973a8e37e5652070cafbafa0b2",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The migration implements most required chat behaviors (SSE stream handling, tool timeline, activity panels, polling cadence, resizer, agent switching, and empty-input guards), but the composer Retry action is functionally broken due to stale-state usage.",
+    "issues": [
+      {
+        "file": "internal/channels/dashboard/ui/src/pages/ChatPage.tsx",
+        "line": 1728,
+        "severity": "blocking",
+        "description": "`retryLastPrompt` sets `draft` and immediately calls `sendMessage()` with no explicit message. `sendMessage` reads `stateRef.current.draft` (line 1597), so when the current draft is empty (normal post-send state), Retry becomes a no-op instead of resubmitting the last prompt."
+      },
+      {
+        "file": "internal/channels/dashboard/ui/tests/e2e/chat.spec.ts",
+        "line": 339,
+        "severity": "non_blocking",
+        "description": "The e2e suite validates stream retry (`Retry stream`) but does not cover the composer `Retry` button behavior, which allowed the broken retry flow to ship undetected."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "`frontend-worker` procedure is partially out of sync with mission reality: it requires full Playwright suite runs and mandatory manual verification, while mission guidance explicitly says full suite failures are known pre-existing during migration and scoped specs are expected.",
+      "evidence": ".factory/skills/frontend-worker/SKILL.md:85 and :87 require full suite + manual verification; mission AGENTS at /home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/AGENTS.md:60-62 says full suite is known failing and to use scoped specs. Handoff skillFeedback also marks followedProcedure=false for manual step."
+    },
+    {
+      "area": "conventions",
+      "observation": "Feature requirement encoding is inconsistent: the feature description includes a composer Retry control, but `expectedBehavior` omits explicit retry verification. This gap likely contributed to missing automated coverage and the shipped retry defect.",
+      "evidence": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/features.json:1211 description includes Send/Retry/Resume/Stop; expectedBehavior list at :1218-1230 does not mention Retry. chat.spec.ts only asserts `Retry stream` (line 339), not composer Retry."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed handoff, commit diff, transcript skeleton, and skill/context docs for react-migrate-chat. Result is FAIL due to a blocking functional bug in composer Retry flow; otherwise the migration is broadly complete. Added shared-state observations about skill/procedure and requirement-encoding gaps."
+}

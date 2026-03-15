@@ -1,0 +1,66 @@
+{
+  "milestone": "react-foundation",
+  "round": 2,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "go test -parallel 2 ./...",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "cd internal/channels/dashboard/ui && npx tsc --noEmit",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "go vet ./...",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [
+    {
+      "target": "services.yaml",
+      "description": "Added additive recovery command `openclawssy-start-no-deps: docker compose up -d --no-deps openclawssy` to capture observed startup workaround when a dependency health gate blocks `docker compose up -d openclawssy`.",
+      "sourceFeature": "fix-dashboard-trailing-slash-spa-route"
+    },
+    {
+      "target": "services.yaml",
+      "description": "Added additive command `test-ui-component-ts` for `tests/e2e/shared-components.spec.ts` to reflect current component validation path without overwriting existing command entries.",
+      "sourceFeature": "fix-mobile-inspector-drawer-open-path"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills/frontend-worker",
+      "suggestion": "Relax rigid TDD/manual-browser requirements for small, localized UI fixes in non-interactive exec mode: allow implementation-first with immediate regression coverage and allow deterministic Playwright-only validation when it fully covers acceptance behavior.",
+      "evidence": "Both fix-mobile-inspector-drawer-open-path and fix-g-then-c-shortcut-sequence passed with strong scoped Playwright coverage but reported procedure deviations only due to mandatory manual-check/TDD ordering rules.",
+      "isSystemic": true
+    },
+    {
+      "target": "skills/fullstack-worker",
+      "suggestion": "Add an explicit backend-only exception path so fullstack-assigned fixes that touch only Go routes/handlers are not forced into frontend test-first/manual-frontend expectations.",
+      "evidence": "fix-dashboard-trailing-slash-spa-route was backend-only and validated correctly via Go test/vet/build, but current fullstack wording implies both-layer frontend verification as always required.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Replace the primary `services.openclawssy.start` command with a `--no-deps` variant.",
+      "reason": "rejected: environment-specific workaround; kept default start behavior intact and captured the workaround as an additive command instead."
+    },
+    {
+      "observation": "Overwrite existing `test-ui-component` command to point to `.spec.ts`.",
+      "reason": "rejected: scrutiny apply-now policy for services.yaml is additive-only; added a new command key rather than mutating an existing one."
+    }
+  ],
+  "previousRound": ".factory/validation/react-foundation/scrutiny/synthesis.round1.json"
+}

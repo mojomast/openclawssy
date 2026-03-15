@@ -63,6 +63,7 @@ type ChatResponse struct {
 }
 
 type ExecutionInput struct {
+	RunID        string
 	AgentID      string
 	Message      string
 	ContentParts []messagecontent.Part
@@ -638,12 +639,32 @@ func isValidRunID(value string) bool {
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Allow unauthenticated GETs to dashboard static routes, but set a cookie
+		// containing the bearer token so the browser will automatically send it
+		// on subsequent API requests. This helps the UI authenticate without
+		// requiring manual localStorage entry.
 		if isUnauthenticatedDashboardRoute(r.Method, r.URL.Path) {
+			if s.bearerToken != "" {
+				// Not HttpOnly so the frontend JS may also read it if needed.
+				http.SetCookie(w, &http.Cookie{
+					Name:  "openclawssy.bearer",
+					Value: s.bearerToken,
+					Path:  "/",
+				})
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
 
+		// Prefer Authorization header, but fall back to cookie when header is
+		// absent (useful for browsers that received the token cookie above).
 		auth := r.Header.Get("Authorization")
+		if auth == "" {
+			if c, err := r.Cookie("openclawssy.bearer"); err == nil {
+				auth = "Bearer " + strings.TrimSpace(c.Value)
+			}
+		}
+
 		if auth == "" {
 			http.Error(w, "missing bearer token", http.StatusUnauthorized)
 			return
@@ -669,13 +690,13 @@ func isUnauthenticatedDashboardRoute(method, requestPath string) bool {
 	if method != http.MethodGet && method != http.MethodHead {
 		return false
 	}
-	if requestPath == "/dashboard" || requestPath == "/dashboard-legacy" {
-		return true
-	}
-	if cleaned := path.Clean(requestPath); cleaned == "/favicon.ico" {
-		return true
-	}
 	cleaned := path.Clean(requestPath)
+	if cleaned == "/dashboard" || cleaned == "/dashboard-legacy" {
+		return true
+	}
+	if cleaned == "/favicon.ico" {
+		return true
+	}
 	if strings.HasPrefix(cleaned, "/dashboard/static/") && strings.TrimPrefix(cleaned, "/dashboard/static/") != "" {
 		return true
 	}

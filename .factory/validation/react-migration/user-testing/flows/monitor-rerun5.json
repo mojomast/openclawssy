@@ -1,0 +1,70 @@
+{
+  "groupId": "monitor-rerun5",
+  "testedAt": "2026-03-14T12:37:24.753Z",
+  "isolation": {
+    "milestone": "react-migration",
+    "missionDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3",
+    "dashboardUrl": "http://localhost:8081/dashboard",
+    "authToken": "change-me",
+    "assignedAssertions": ["VAL-MIG-MON-002"]
+  },
+  "toolsUsed": ["curl", "playwright"],
+  "assertions": [
+    {
+      "id": "VAL-MIG-MON-002",
+      "title": "Launch and cancel runs",
+      "status": "fail",
+      "steps": [
+        {
+          "action": "Preflight GET /api/admin/monitor/runs with bearer token before UI interaction",
+          "expected": "HTTP 200 and healthy JSON payload",
+          "observed": "HTTP 200 with monitor payload returned; endpoint healthy"
+        },
+        {
+          "action": "From Agent Monitor, launch run with thinking mode 'always' and click Stop Active while run is running",
+          "expected": "Run launches, thinking mode persists as 'always', terminal status becomes canceled",
+          "observed": "Run run_1773491702174684706 launched and was observed running; /v1/runs/{id} recorded thinking_mode='always'; Stop Active POST returned 200 but terminal status became completed (not canceled)"
+        },
+        {
+          "action": "From Agent Monitor, launch run with thinking mode 'on_error' and click per-row Stop while run is running",
+          "expected": "Run launches, thinking mode persists as 'on_error', terminal status becomes canceled",
+          "observed": "Run run_1773491770215811582 launched and was observed running; /v1/runs/{id} recorded thinking_mode='on_error'; per-row Stop POST returned 200 but terminal status became completed (not canceled)"
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "react-migration/monitor-rerun5/VAL-MIG-MON-002-01-monitor-open.png",
+          "react-migration/monitor-rerun5/VAL-MIG-MON-002-04-stop-active-launch-filled.png",
+          "react-migration/monitor-rerun5/VAL-MIG-MON-002-04-stop-active-running.png",
+          "react-migration/monitor-rerun5/VAL-MIG-MON-002-04-stop-active-terminal.png",
+          "react-migration/monitor-rerun5/VAL-MIG-MON-002-05-row-stop-launch-filled.png",
+          "react-migration/monitor-rerun5/VAL-MIG-MON-002-05-row-stop-running.png",
+          "react-migration/monitor-rerun5/VAL-MIG-MON-002-05-row-stop-terminal.png"
+        ],
+        "consoleErrors": "none (see react-migration/monitor-rerun5/VAL-MIG-MON-002-console-errors.json)",
+        "network": "Preflight GET /api/admin/monitor/runs -> 200; POST /v1/runs -> 202 for both launches with thinking_mode payloads; POST /api/admin/monitor/runs/control -> 200 for both cancels; captured in react-migration/monitor-rerun5/VAL-MIG-MON-002-network-events.json",
+        "apiArtifacts": [
+          "react-migration/monitor-rerun5/preflight-monitor-runs-headers.txt",
+          "react-migration/monitor-rerun5/preflight-monitor-runs-body.json",
+          "react-migration/monitor-rerun5/run-stop-active-v2-running-run_1773491702174684706.json",
+          "react-migration/monitor-rerun5/run-stop-active-v2-final-run_1773491702174684706.json",
+          "react-migration/monitor-rerun5/run-row-stop-v2-running-run_1773491770215811582.json",
+          "react-migration/monitor-rerun5/run-row-stop-v2-final-run_1773491770215811582.json",
+          "react-migration/monitor-rerun5/monitor-runs-post-actions-v2.json",
+          "react-migration/monitor-rerun5/VAL-MIG-MON-002-ui-flow-results.json"
+        ]
+      },
+      "issues": "Both cancellation paths were invoked while runs were actively running, but neither targeted run transitioned to canceled terminal status; both ended completed."
+    }
+  ],
+  "frictions": [
+    {
+      "description": "agent-browser CLI session could not launch due missing libnspr4 linkage in daemon-spawned browser process.",
+      "resolved": true,
+      "resolution": "Used Playwright Chromium automation with LD_LIBRARY_PATH pointing to /home/mojo/.cache/playwright-libs/root/usr/lib/x86_64-linux-gnu to complete the same dashboard UI flow and capture screenshots/network evidence.",
+      "affectedAssertions": ["VAL-MIG-MON-002"]
+    }
+  ],
+  "blockers": [],
+  "summary": "Validated VAL-MIG-MON-002 on rerun5: preflight endpoint healthy (200), both launch attempts applied selected thinking mode (always/on_error), but Stop Active and per-row Stop did not produce canceled terminal state. Observed run_1773491702174684706=completed and run_1773491770215811582=completed."
+}

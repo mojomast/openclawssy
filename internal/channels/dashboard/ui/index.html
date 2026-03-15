@@ -4,7 +4,6 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Openclawssy Dashboard</title>
-  <link rel="stylesheet" href="/dashboard/static/styles.css" />
   <script>
     (function() {
       var t = localStorage.getItem('dashboard.theme');
@@ -14,21 +13,8 @@
   </script>
 </head>
 <body>
-  <div id="app" class="shell">
-    <header class="shell-header">
-      <h1>Openclawssy Dashboard</h1>
-      <p>Phase 1 modular shell foundation</p>
-    </header>
-    <div class="shell-grid">
-      <nav class="pane">Navigation</nav>
-      <main class="pane">Main</main>
-      <aside class="pane">Inspector</aside>
-    </div>
-    <footer class="shell-footer">
-      <a href="/dashboard-legacy">Open Legacy Dashboard</a>
-    </footer>
-    <noscript>This dashboard requires JavaScript.</noscript>
-  </div>
-  <script type="module" src="/dashboard/static/app.js"></script>
+  <div id="root"></div>
+  <noscript>This dashboard requires JavaScript.</noscript>
+  <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>

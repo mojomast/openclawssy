@@ -216,3 +216,65 @@ func TestIntValueSupportsAdditionalNumericTypes(t *testing.T) {
 		}
 	}
 }
+
+func TestRecordDecompositionPlanPersistsPlanInTrace(t *testing.T) {
+	collector := newRunTraceCollector("run_plan", "session_plan", "dashboard", "delegate")
+	planner := agent.DecompositionPlan{
+		DelegationMode: "suggest_only",
+		TriggerReason:  "high complexity",
+		Tasks: []agent.DecompositionTaskNode{{
+			TaskID:       "task-1",
+			Description:  "discover files",
+			AssignedRole: "scout",
+			Confidence:   0.84,
+		}},
+		DependencyDAG: []agent.PlanDependencyEdge{},
+		MinConfidence: 0.84,
+		AvgConfidence: 0.84,
+	}
+
+	collector.RecordDecompositionPlan(planner)
+	snapshot := collector.Snapshot()
+	rawPlan, ok := snapshot["decomposition_plan"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected decomposition_plan in trace snapshot, got %#v", snapshot["decomposition_plan"])
+	}
+	if rawPlan["delegation_mode"] != "suggest_only" {
+		t.Fatalf("expected delegation_mode=suggest_only, got %#v", rawPlan["delegation_mode"])
+	}
+	tasks, ok := rawPlan["tasks"].([]any)
+	if !ok || len(tasks) != 1 {
+		t.Fatalf("expected one plan task in trace snapshot, got %#v", rawPlan["tasks"])
+	}
+}
+
+func TestRecordDelegationEventsPersistsEventsInTrace(t *testing.T) {
+	collector := newRunTraceCollector("run_events", "session_events", "dashboard", "delegate")
+	events := []agent.DelegationEvent{
+		{
+			TriggerReason:  "failure loop",
+			SelectedRole:   "implementer",
+			Confidence:     0.78,
+			TaskAssignment: "implement fix",
+			Rationale:      "matched implement keywords",
+			Outcome:        "planned",
+		},
+	}
+
+	collector.RecordDelegationEvents(events)
+	snapshot := collector.Snapshot()
+	rawEvents, ok := snapshot["delegation_events"].([]any)
+	if !ok || len(rawEvents) != 1 {
+		t.Fatalf("expected one delegation event in trace snapshot, got %#v", snapshot["delegation_events"])
+	}
+	event, ok := rawEvents[0].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected delegation event shape: %#v", rawEvents[0])
+	}
+	if event["trigger_reason"] != "failure loop" {
+		t.Fatalf("expected trigger_reason preserved, got %#v", event["trigger_reason"])
+	}
+	if event["task_assignment"] != "implement fix" {
+		t.Fatalf("expected task_assignment preserved, got %#v", event["task_assignment"])
+	}
+}

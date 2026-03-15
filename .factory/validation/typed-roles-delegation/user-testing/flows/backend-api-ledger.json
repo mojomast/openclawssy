@@ -1,0 +1,131 @@
+{
+  "groupId": "backend-api-ledger",
+  "testedAt": "2026-03-14T19:26:00Z",
+  "isolation": {
+    "missionDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3",
+    "repoRoot": "/home/mojo/projects/openclawssy",
+    "apiBaseUrl": "http://localhost:8081",
+    "authToken": "change-me",
+    "boundary": "Local terminal commands and authenticated localhost API calls only"
+  },
+  "toolsUsed": [
+    "terminal",
+    "curl",
+    "python3"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-ROLES-001",
+      "title": "Role template CRUD",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "POST /api/admin/roles with temporary custom role payload",
+          "expected": "201 Created",
+          "observed": "201 Created with returned custom role object"
+        },
+        {
+          "action": "PUT /api/admin/roles/{name} update + DELETE /api/admin/roles/{name}",
+          "expected": "Update succeeds and role deletes cleanly",
+          "observed": "PUT returned 200 and DELETE returned 200 with deleted role name"
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "typed-roles-delegation/backend-api-ledger/VAL-ROLES-001-post-create.http",
+          "typed-roles-delegation/backend-api-ledger/VAL-ROLES-001-get-after-create.http",
+          "typed-roles-delegation/backend-api-ledger/VAL-ROLES-001-put-update.http",
+          "typed-roles-delegation/backend-api-ledger/VAL-ROLES-001-delete-custom.http",
+          "typed-roles-delegation/backend-api-ledger/VAL-ROLES-api-check-summary.json"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ROLES-002",
+      "title": "Built-in role templates exist and are immutable",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "GET /api/admin/roles",
+          "expected": "Includes six built-ins: scout/planner/implementer/verifier/reviewer/operator",
+          "observed": "All six built-ins present"
+        },
+        {
+          "action": "DELETE /api/admin/roles/scout",
+          "expected": "Built-in delete rejected",
+          "observed": "403 returned with immutable/built-in error"
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "typed-roles-delegation/backend-api-ledger/VAL-ROLES-002-get-builtins.http",
+          "typed-roles-delegation/backend-api-ledger/VAL-ROLES-002-delete-builtin.http",
+          "typed-roles-delegation/backend-api-ledger/VAL-ROLES-api-check-summary.json"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-DECISION-001",
+      "title": "Decision records emitted per run",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "go test ./internal/agent -run '^(TestLedgerRunnerEmitsKeyDecisionRecords|TestLedgerToolDeniedDecisionIncludesPolicyReference)$' -count=1 -v",
+          "expected": "Decision ledger emission tests pass",
+          "observed": "Both tests passed"
+        },
+        {
+          "action": "go test ./internal/runtime -run '^TestExecuteWithInputWritesDecisionRecordsToAudit$' -count=1 -v",
+          "expected": "Runtime writes decision records during execution",
+          "observed": "Test passed"
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "typed-roles-delegation/backend-api-ledger/VAL-DECISION-001-ledger-go-test.log",
+          "typed-roles-delegation/backend-api-ledger/VAL-DECISION-001-runtime-go-test.log",
+          "typed-roles-delegation/backend-api-ledger/parent-decision-agent-tests.log",
+          "typed-roles-delegation/backend-api-ledger/parent-decision-runtime-tests.log"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-DECISION-002",
+      "title": "Decision ledger queryable by run",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "POST /v1/runs then poll /v1/runs/{id} to terminal state",
+          "expected": "Obtain a concrete run id to query",
+          "observed": "Run run_1773515700895177438 reached completed"
+        },
+        {
+          "action": "GET /api/admin/runs/run_1773515700895177438/decisions",
+          "expected": "200 with structured chronological records",
+          "observed": "200 with records array (4 entries), each containing timestamp/run_id/agent_id/record_type/payload/human_summary"
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "typed-roles-delegation/backend-api-ledger/parent-run-create.json",
+          "typed-roles-delegation/backend-api-ledger/parent-run-final.json",
+          "typed-roles-delegation/backend-api-ledger/parent-decisions-response.json",
+          "typed-roles-delegation/backend-api-ledger/parent-validation-summary.json"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "Initial flow-validator subagent for this group timed out before returning a final report, but it produced reusable evidence artifacts.",
+      "resolved": true,
+      "resolution": "Completed synthesis-level verification using produced artifacts plus direct parent-run checks."
+    }
+  ],
+  "blockers": [],
+  "summary": "Validated 4 assertions for API/ledger surface: all passed."
+}

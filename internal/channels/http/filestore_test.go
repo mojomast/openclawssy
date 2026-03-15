@@ -33,6 +33,44 @@ func TestFileRunStorePersistsRuns(t *testing.T) {
 	}
 }
 
+func TestFileRunStoreDerivesDecompositionPlanFromTrace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runs.json")
+	store, err := NewFileRunStore(path)
+	if err != nil {
+		t.Fatalf("new file store: %v", err)
+	}
+
+	run := Run{
+		ID:        "run-plan",
+		AgentID:   "a",
+		Message:   "m",
+		Status:    "completed",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+		Trace: map[string]any{
+			"decomposition_plan": map[string]any{
+				"delegation_mode": "suggest_only",
+				"tasks":           []any{map[string]any{"task_id": "discover"}},
+			},
+		},
+	}
+	if _, err := store.Create(context.Background(), run); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	reloaded, err := NewFileRunStore(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	got, err := reloaded.Get(context.Background(), "run-plan")
+	if err != nil {
+		t.Fatalf("get reloaded run: %v", err)
+	}
+	if got.DecompositionPlan == nil {
+		t.Fatalf("expected derived decomposition_plan, got %+v", got)
+	}
+}
+
 func TestFileRunStoreCompactsOldTerminalRuns(t *testing.T) {
 	prevMax := fileRunStoreMaxPersistedRuns
 	fileRunStoreMaxPersistedRuns = 5

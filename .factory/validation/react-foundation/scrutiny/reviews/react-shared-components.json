@@ -1,0 +1,40 @@
+{
+  "featureId": "react-shared-components",
+  "reviewedAt": "2026-03-14T02:31:19Z",
+  "commitId": "65ec057e962541c6a21b77d9e0871fccfaf86ad2",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature adds the requested shared component set, but there are blocking behavior gaps in keyboard shortcuts and mobile inspector behavior, plus an unsafe JSON rendering path.",
+    "issues": [
+      {
+        "file": "internal/channels/dashboard/ui/src/components/Layout.tsx",
+        "line": 289,
+        "severity": "blocking",
+        "description": "Mobile inspector drawer is effectively unreachable. The only inspector expand control is gated by `!isMobile` (desktop-only), and `showMobileInspector` is never set to `true` anywhere (only initialized/closed), so narrow-screen drawer mode cannot be opened as required by VAL-REACT-FND-004."
+      },
+      {
+        "file": "internal/channels/dashboard/ui/src/hooks/useKeyboardShortcuts.ts",
+        "line": 19,
+        "severity": "blocking",
+        "description": "Shortcut parsing treats `g+c` as a single-key match on `g` (first non-modifier token), so pressing `g` alone triggers navigation. This does not implement the required `g then c` behavior in VAL-REACT-FND-006 and will hijack normal typing of `g`."
+      },
+      {
+        "file": "internal/channels/dashboard/ui/src/components/JSONViewer.tsx",
+        "line": 83,
+        "severity": "non_blocking",
+        "description": "`dangerouslySetInnerHTML` is fed from `JSON.stringify` output after regex replacement without HTML escaping, which can render untrusted string content as markup. This is an avoidable XSS risk in a shared viewer component."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The frontend-worker skill and mission AGENTS guidance conflict on Playwright expectations: skill mandates running full `npx playwright test`, while mission guidance says full suite is currently expected to fail and scoped specs should be used. This mismatch can lead to inconsistent worker behavior.",
+      "evidence": ".factory/skills/frontend-worker/SKILL.md:83-85 vs /home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/AGENTS.md:60-62"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed transcript skeleton, handoff, skill, and commit 65ec057e962541c6a21b77d9e0871fccfaf86ad2. Result is FAIL due to blocking gaps in mobile inspector drawer accessibility and incorrect `g+c` shortcut semantics; also noted non-blocking JSON rendering safety risk and a skill-guidance mismatch in shared state."
+}

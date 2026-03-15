@@ -85,6 +85,7 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 	publishQueueRunEvent(opts.EventBus, run.ID, RunEventStatus, map[string]any{"status": "running"})
 
 	input := ExecutionInput{
+		RunID:        run.ID,
 		AgentID:      run.AgentID,
 		Message:      run.Message,
 		ContentParts: append([]messagecontent.Part(nil), run.ContentParts...),
@@ -103,6 +104,7 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 	}
 
 	result, err := executeWithRetry(ctx, executor, input)
+	err = coerceContextCancellation(ctx, err)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			run.Status = "canceled"
@@ -158,6 +160,33 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 	}
 	run.UpdatedAt = time.Now().UTC()
 	_ = store.Update(ctx, run)
+}
+
+func coerceContextCancellation(ctx context.Context, err error) error {
+	if isContextCanceledExecutionError(err) {
+		return context.Canceled
+	}
+	if err != nil {
+		return err
+	}
+	if ctx == nil {
+		return nil
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return context.Canceled
+	}
+	return nil
+}
+
+func isContextCanceledExecutionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	lower := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(lower, "context canceled") || strings.Contains(lower, "context cancelled")
 }
 
 func publishQueueRunEvent(bus *RunEventBus, runID string, eventType RunEventType, data map[string]any) {

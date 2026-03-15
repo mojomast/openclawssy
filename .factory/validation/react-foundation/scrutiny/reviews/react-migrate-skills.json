@@ -1,0 +1,26 @@
+{
+  "featureId": "react-migrate-skills",
+  "reviewedAt": "2026-03-14T02:32:53Z",
+  "commitId": "20ac942",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Commit 20ac942 migrates the Skills page from placeholder content to a React implementation that matches the feature contract: agent selector, installable skills with install actions, per-agent activate/deactivate toggles for installed skills, reload behavior, and operation status feedback including failure messaging.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The frontend-worker skill procedure still conflicts with this mission's accepted validation strategy: it requires full Playwright suite and manual browser checks, while mission guidance for in-progress migrations requires scoped specs only and non-interactive execution avoids manual checks.",
+      "evidence": "/home/mojo/projects/openclawssy/.factory/skills/frontend-worker/SKILL.md:83-85 and :87-94 require full-suite + manual checks; /home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/AGENTS.md:60-62 instruct scoped Playwright specs due known unrelated failures; /home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/handoffs/2026-03-14T02-26-21-545Z__react-migrate-skills__5d174a39-d715-45a8-beb6-755551fd2064.json:26-33 shows scoped spec + typecheck only."
+    },
+    {
+      "area": "conventions",
+      "observation": "Mission frontend convention says components should stay under ~200 lines, but the migrated Skills page remains monolithic at 316 lines; this suggests either enforcement is missing or migration guidance needs clearer exceptions/extraction criteria.",
+      "evidence": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/AGENTS.md:39 says keep components under ~200 lines; /home/mojo/projects/openclawssy/internal/channels/dashboard/ui/src/pages/SkillsPage.tsx currently spans lines 1-316."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed react-migrate-skills for milestone react-foundation using the transcript skeleton, handoff, and commit diff. The implementation satisfies the specified Skills migration behaviors and includes targeted e2e coverage; no blocking code defects were found."
+}

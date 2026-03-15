@@ -72,17 +72,20 @@ func (e *Engine) RunTracker() *RunTracker {
 }
 
 type ExecuteInput struct {
-	AgentID           string
-	Message           string
-	ContentParts      []messagecontent.Part
-	TaskID            string
-	Source            string
-	SessionID         string
-	ThinkingMode      string
-	AllowedTools      []string // If non-empty, overrides the default allowed tools for this run.
-	MaxToolIterations int      // If >0, overrides the default tool iteration cap.
-	TimeoutMS         int      // If >0, applies as a context deadline for this run.
-	OnProgress        func(eventType string, data map[string]any)
+	RunID              string
+	ParentRunID        string
+	AgentID            string
+	Message            string
+	ContentParts       []messagecontent.Part
+	TaskID             string
+	Source             string
+	SessionID          string
+	ThinkingMode       string
+	AllowedTools       []string // If non-empty, overrides the default allowed tools for this run.
+	MaxToolIterations  int      // If >0, overrides the default tool iteration cap.
+	TimeoutMS          int      // If >0, applies as a context deadline for this run.
+	DelegationApproved bool     // Used by approve_plan delegation mode to execute a prepared plan.
+	OnProgress         func(eventType string, data map[string]any)
 	// SandboxAgentID, when non-empty, makes the run share the sandbox
 	// container/volume of the specified agent instead of creating its own.
 	// This is used so sub-agents can see (and write to) the parent agent's
@@ -215,7 +218,10 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		thinkingMode = config.NormalizeThinkingMode(in.ThinkingMode)
 	}
 
-	runID := fmt.Sprintf("run_%d", time.Now().UTC().UnixNano())
+	runID := strings.TrimSpace(in.RunID)
+	if runID == "" {
+		runID = fmt.Sprintf("run_%d", time.Now().UTC().UnixNano())
+	}
 	memoryManager, memoryErr := memory.NewManager(e.agentsDir, agentID, memory.Options{
 		Enabled:    cfg.Memory.Enabled,
 		BufferSize: cfg.Memory.EventBufferSize,
@@ -253,7 +259,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		defer e.runTracker.Remove(runID)
 	}
 
-	docs, err := e.loadPromptDocs(agentID)
+	docs, err := e.loadPromptDocs(agentID, message)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -270,6 +276,9 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	startEvent := map[string]any{"run_id": runID, "agent_id": agentID, "message": message, "model_provider": selectedModel.Provider, "model_name": selectedModel.Name}
 	if source != "" {
 		startEvent["source"] = source
+	}
+	if strings.TrimSpace(in.ParentRunID) != "" {
+		startEvent["parent_run_id"] = strings.TrimSpace(in.ParentRunID)
 	}
 	if strings.TrimSpace(in.TaskID) != "" {
 		startEvent["task_id"] = strings.TrimSpace(in.TaskID)
@@ -460,22 +469,48 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		}
 	}
 
+	decisionLedger := agent.NewDecisionLedger(func(ctx context.Context, record agent.DecisionRecord) error {
+		recordPayload := make(map[string]any, len(record.Payload))
+		for key, value := range record.Payload {
+			recordPayload[key] = value
+		}
+		fields := map[string]any{
+			"run_id":        record.RunID,
+			"agent_id":      record.AgentID,
+			"record_type":   record.RecordType,
+			"human_summary": record.HumanSummary,
+			"payload":       recordPayload,
+		}
+		if strings.TrimSpace(in.ParentRunID) != "" {
+			fields["parent_run_id"] = strings.TrimSpace(in.ParentRunID)
+		}
+		if source != "" {
+			fields["source"] = source
+		}
+		return aud.LogEvent(ctx, audit.EventDecisionRecord, fields)
+	})
+
 	start := time.Now().UTC()
 	out, runErr := runner.Run(runCtx, agent.RunInput{
-		AgentID:           agentID,
-		RunID:             runID,
-		Message:           runMessage,
-		Source:            source,
-		Messages:          modelMessages,
-		ArtifactDocs:      docs,
-		PerFileByteLimit:  16 * 1024,
-		MaxToolIterations: maxToolIterations,
-		ToolTimeoutMS:     int(agent.DefaultToolTimeout / time.Millisecond),
-		AllowedTools:      allowedTools,
-		ToolSchemas:       toolSchemas,
-		OnToolCall:        onToolCall,
-		SystemPromptExt:   e.systemPromptExtender(cfg, agentID, runID),
-		OnTextDelta:       onTextDelta,
+		AgentID:            agentID,
+		RunID:              runID,
+		ParentRunID:        strings.TrimSpace(in.ParentRunID),
+		Message:            runMessage,
+		Source:             source,
+		Messages:           modelMessages,
+		ArtifactDocs:       docs,
+		PerFileByteLimit:   16 * 1024,
+		MaxToolIterations:  maxToolIterations,
+		ToolTimeoutMS:      int(agent.DefaultToolTimeout / time.Millisecond),
+		AllowedTools:       allowedTools,
+		ToolSchemas:        toolSchemas,
+		AutoDelegate:       cfg.Agents.AutoDelegate,
+		DelegationMode:     strings.TrimSpace(cfg.Agents.DelegationMode),
+		DelegationApproved: in.DelegationApproved,
+		DecisionLedger:     decisionLedger,
+		OnToolCall:         onToolCall,
+		SystemPromptExt:    e.systemPromptExtender(cfg, agentID, runID),
+		OnTextDelta:        onTextDelta,
 	})
 	if runErr == nil {
 		emitProgress("model_text", map[string]any{"text": out.FinalText, "partial": false})
@@ -501,21 +536,28 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 			if includeThinking {
 				finalOutput = formatFinalOutputWithThinking(finalOutput, persistedThinking)
 			}
+			meta := map[string]any{
+				"started_at":       out.StartedAt,
+				"completed_at":     out.CompletedAt,
+				"duration_ms":      durationMS,
+				"tool_call_count":  toolCount,
+				"provider":         model.ProviderName(),
+				"model":            model.ModelName(),
+				"thinking":         persistedThinking,
+				"thinking_present": thinkingPresent,
+			}
+			if out.DecompositionPlan != nil {
+				meta["decomposition_plan"] = out.DecompositionPlan
+			}
+			if len(out.DelegationEvents) > 0 {
+				meta["delegation_events"] = out.DelegationEvents
+			}
 			artifactPath, err = artifacts.WriteRunBundleV1(e.rootDir, agentID, runID, artifacts.BundleV1Input{
-				Input:     map[string]any{"agent_id": agentID, "message": message, "content_parts": normalizedContentParts},
-				PromptMD:  out.Prompt,
-				ToolCalls: toolLines,
-				OutputMD:  finalOutput,
-				Meta: map[string]any{
-					"started_at":       out.StartedAt,
-					"completed_at":     out.CompletedAt,
-					"duration_ms":      durationMS,
-					"tool_call_count":  toolCount,
-					"provider":         model.ProviderName(),
-					"model":            model.ModelName(),
-					"thinking":         persistedThinking,
-					"thinking_present": thinkingPresent,
-				},
+				Input:      map[string]any{"agent_id": agentID, "message": message, "content_parts": normalizedContentParts},
+				PromptMD:   out.Prompt,
+				ToolCalls:  toolLines,
+				OutputMD:   finalOutput,
+				Meta:       meta,
 				MirrorJSON: true,
 			})
 			out.FinalText = finalOutput
@@ -553,6 +595,12 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 
 	traceCollector.RecordThinking(persistedThinking, thinkingPresent)
 	traceCollector.RecordToolExecution(out.ToolCalls)
+	if out.DecompositionPlan != nil {
+		traceCollector.RecordDecompositionPlan(*out.DecompositionPlan)
+	}
+	if len(out.DelegationEvents) > 0 {
+		traceCollector.RecordDelegationEvents(out.DelegationEvents)
+	}
 	traceSnapshot := traceCollector.Snapshot()
 	parseDiagnostics := buildRunParseDiagnostics(traceSnapshot, thinkingMode == config.ThinkingModeAlways || out.ToolParseFailure)
 	checkpointPath, checkpointErr := clawdefuckifierpkg.WriteRunCheckpoint(e.workspaceDir, clawdefuckifierpkg.RunCheckpointInput{
@@ -580,6 +628,9 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	fields := map[string]any{"run_id": runID, "agent_id": agentID}
 	if source != "" {
 		fields["source"] = source
+	}
+	if strings.TrimSpace(in.ParentRunID) != "" {
+		fields["parent_run_id"] = strings.TrimSpace(in.ParentRunID)
 	}
 	if sessionID != "" {
 		fields["session_id"] = sessionID
@@ -869,7 +920,7 @@ func (e *Engine) loadSessionMessages(sessionID string, limit int) ([]agent.ChatM
 	for _, msg := range history {
 		role := normalizeSessionRole(msg.Role)
 		content := buildSessionMessageContent(role, msg)
-		parts := messagecontent.Normalize(msg.ContentParts)
+		parts := messagecontent.Normalize(nil)
 		if !strings.EqualFold(role, "user") {
 			parts = nil
 		}
@@ -1114,7 +1165,7 @@ func appendToolCallMessage(store *chatstore.Store, sessionID, runID string, rec 
 	return nil
 }
 
-func (e *Engine) loadPromptDocs(agentID string) ([]agent.ArtifactDoc, error) {
+func (e *Engine) loadPromptDocs(agentID, userMessage string) ([]agent.ArtifactDoc, error) {
 	agentRoot := filepath.Join(e.agentsDir, agentID)
 	docs := make([]agent.ArtifactDoc, 0, len(promptDocOrder)+2)
 	soulContent := ""
@@ -1156,12 +1207,62 @@ func (e *Engine) loadPromptDocs(agentID string) ([]agent.ArtifactDoc, error) {
 		}
 	}
 
+	// Skip bootstrap when user message looks like a direct tool invocation —
+	// the caller wants the agent to execute, not run identity setup.
+	if needsBootstrap && messageIsToolInvocation(userMessage) {
+		needsBootstrap = false
+	}
+
 	if needsBootstrap {
 		docs = append(docs, agent.ArtifactDoc{Name: "IDENTITY_BOOTSTRAP.md", Content: identityBootstrapDoc()})
 	}
 	docs = append(docs, agent.ArtifactDoc{Name: "RUNTIME_CONTEXT.md", Content: runtimeContextDoc(e.workspaceDir)})
 	docs = append(docs, agent.ArtifactDoc{Name: "TOOL_CALLING_BEST_PRACTICES.md", Content: toolCallingBestPracticesDocWithAgentTools()})
 	return docs, nil
+}
+
+// messageIsToolInvocation returns true when the user message looks like a direct
+// tool call (e.g. "becomussy.resume", "memory.search", "fs.read") rather than
+// conversational text. This lets agent.run invocations skip identity bootstrap.
+func messageIsToolInvocation(msg string) bool {
+	trimmed := strings.TrimSpace(msg)
+	if trimmed == "" {
+		return false
+	}
+	// A tool invocation is typically a dotted identifier, optionally followed
+	// by JSON arguments or nothing else.  We detect the common pattern:
+	//   <namespace>.<action>[.<sub>]  with no spaces in the name portion.
+	first := trimmed
+	if idx := strings.IndexByte(trimmed, ' '); idx > 0 {
+		first = trimmed[:idx]
+	}
+	if idx := strings.IndexByte(trimmed, '{'); idx > 0 && idx < len(first) {
+		first = trimmed[:idx]
+	}
+	first = strings.TrimSpace(first)
+	parts := strings.Split(first, ".")
+	if len(parts) < 2 {
+		return false
+	}
+	for _, p := range parts {
+		if p == "" {
+			return false
+		}
+	}
+	// Known tool namespaces that should bypass bootstrap
+	knownPrefixes := []string{
+		"becomussy.", "memory.", "fs.", "code.", "config.", "secrets.",
+		"skill.", "scheduler.", "session.", "agent.", "policy.", "run.",
+		"metrics.", "http.", "net.", "shell.", "bash.", "terminal.",
+		"time.", "decision.",
+	}
+	lower := strings.ToLower(first) + "."
+	for _, prefix := range knownPrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func identityBootstrapDoc() string {
@@ -1640,6 +1741,28 @@ func (e *Engine) allowedTools(cfg config.Config) []string {
 	if cfg.Shell.EnableExec && cfg.Sandbox.Active && strings.ToLower(cfg.Sandbox.Provider) != "none" {
 		toolsList = append(toolsList, "shell.exec")
 	}
+	if cfg.Becomussy.Enabled {
+		toolsList = append(toolsList,
+			"becomussy.resume",
+			"becomussy.memory.create",
+			"becomussy.memory.search",
+			"becomussy.memory.get",
+			"becomussy.memory.reinforce",
+			"becomussy.journal.create",
+			"becomussy.journal.search",
+			"becomussy.threads.list",
+			"becomussy.threads.create",
+			"becomussy.projects.list",
+			"becomussy.projects.create",
+			"becomussy.selfmodel.current",
+			"becomussy.selfmodel.history",
+			"becomussy.selfmodel.propose",
+			"becomussy.commitments.list",
+			"becomussy.commitments.create",
+			"becomussy.approvals.pending",
+			"becomussy.audit.list",
+		)
+	}
 	return toolsList
 }
 
@@ -1882,6 +2005,7 @@ func (s *subAgentRunner) ExecuteSubAgent(ctx context.Context, input tools.AgentR
 	sandboxAgentID := strings.TrimSpace(input.CallerAgentID)
 	result, err := s.engine.ExecuteWithInput(ctx, ExecuteInput{
 		AgentID:           strings.TrimSpace(input.TargetAgentID),
+		ParentRunID:       strings.TrimSpace(input.ParentRunID),
 		Message:           input.Message,
 		TaskID:            strings.TrimSpace(input.TaskID),
 		Source:            strings.TrimSpace(input.Source),
@@ -1942,6 +2066,7 @@ func (a *agentSubAgentRunnerAdapter) resolveRestrictions(agentID string) config.
 
 func (a *agentSubAgentRunnerAdapter) ExecuteSubAgent(ctx context.Context, task agent.DecomposedTask) (agent.SubAgentOutput, error) {
 	restrictions := a.resolveRestrictions(task.AgentID)
+	restrictions = applyRoleRestrictions(restrictions, task)
 
 	thinkingMode := task.ThinkingMode
 	if thinkingMode == "" {
@@ -1962,6 +2087,7 @@ func (a *agentSubAgentRunnerAdapter) ExecuteSubAgent(ctx context.Context, task a
 	result, err := a.runner.ExecuteSubAgent(execCtx, tools.AgentRunInput{
 		CallerAgentID:     a.parentAgentID,
 		TargetAgentID:     task.AgentID,
+		ParentRunID:       strings.TrimSpace(task.ParentRunID),
 		Message:           task.Message,
 		TaskID:            task.TaskID,
 		Source:            "subagent/delegation",
@@ -1978,6 +2104,61 @@ func (a *agentSubAgentRunnerAdapter) ExecuteSubAgent(ctx context.Context, task a
 		FinalText: result.FinalText,
 		Success:   true,
 	}, nil
+}
+
+func applyRoleRestrictions(base config.SubAgentRestrictions, task agent.DecomposedTask) config.SubAgentRestrictions {
+	restrictions := base
+	if len(task.RoleAllowedTools) > 0 {
+		if len(restrictions.AllowedTools) == 0 {
+			restrictions.AllowedTools = append([]string(nil), task.RoleAllowedTools...)
+		} else {
+			restrictions.AllowedTools = intersectToolAllowlists(restrictions.AllowedTools, task.RoleAllowedTools)
+		}
+	}
+	if task.RoleMaxToolIterations > 0 {
+		if restrictions.MaxToolIterations <= 0 || task.RoleMaxToolIterations < restrictions.MaxToolIterations {
+			restrictions.MaxToolIterations = task.RoleMaxToolIterations
+		}
+	}
+	if task.RoleTimeoutMS > 0 {
+		if restrictions.TimeoutMS <= 0 || task.RoleTimeoutMS < restrictions.TimeoutMS {
+			restrictions.TimeoutMS = task.RoleTimeoutMS
+		}
+	}
+	return restrictions
+}
+
+func intersectToolAllowlists(base, role []string) []string {
+	if len(base) == 0 || len(role) == 0 {
+		return nil
+	}
+
+	allowed := make(map[string]struct{}, len(role))
+	for _, tool := range role {
+		key := strings.TrimSpace(tool)
+		if key == "" {
+			continue
+		}
+		allowed[key] = struct{}{}
+	}
+
+	out := make([]string, 0, len(base))
+	seen := make(map[string]struct{}, len(base))
+	for _, tool := range base {
+		key := strings.TrimSpace(tool)
+		if key == "" {
+			continue
+		}
+		if _, exists := allowed[key]; !exists {
+			continue
+		}
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	return out
 }
 
 func (s *sandboxShellExecutor) Exec(_ context.Context, command string, args []string, workDir string) (string, string, int, error) {

@@ -1,0 +1,21 @@
+{
+  "featureId": "fix-react-migration-chat-retry",
+  "reviewedAt": "2026-03-14T07:52:56Z",
+  "commitId": "7b0ad9c",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix commit directly resolves the prior blocking Retry defect by passing the explicit last prompt into send flow, removing reliance on async draft propagation, and adds dedicated Playwright coverage asserting Retry posts the same prompt again.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "`frontend-worker` procedure remains internally ambiguous for migration work: step 5 requires running full Playwright suite and step 6 requires manual verification, while both mission guidance and the skill's own migration note endorse scoped specs for in-progress migration pages.",
+      "evidence": ".factory/skills/frontend-worker/SKILL.md:85 requires full suite and :87 starts Manual Verification; same file :142-144 says use scoped specs for migration milestones. Mission AGENTS at /home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/AGENTS.md:60-61 also mandates scoped specs. Fix handoff records only scoped spec execution and still marks followedProcedure=true (/handoffs/2026-03-14T07-36-55-889Z__fix-react-migration-chat-retry__9832bb40-acdd-4d63-b915-4074f99304b1.json:31,67-69)."
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/react-migration/scrutiny/reviews/react-migrate-chat.json",
+  "summary": "Reviewed the fix feature transcript skeleton, handoff, prior failed review, and both commit diffs (original chat migration and retry fix). The fix adequately addresses the original Retry stale-state no-op failure and adds targeted regression coverage; status is PASS."
+}

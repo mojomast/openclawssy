@@ -1,0 +1,49 @@
+{
+  "milestone": "misc-validation-1",
+  "round": 2,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "go test -parallel 2 ./...",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "cd internal/channels/dashboard/ui && npx tsc --noEmit",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "go vet ./...",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills/backend-worker",
+      "suggestion": "Add an explicit shell-script validation path for features that target `.factory/scripts/*` or other non-Go mission infrastructure files, so workers can follow procedure without forced TDD-step deviation.",
+      "evidence": "Review for `misc-agent-browser-bootstrap-statefile-parse-hardening` notes `skillFeedback.followedProcedure=false` due to backend-worker test-first steps being Go/package-only while the implementation target was shell script hardening.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "The assigned fullstack-worker skill procedure does not fit validation-infrastructure-only features.",
+      "reason": "duplicate from round 1 synthesis recommendation"
+    },
+    {
+      "observation": "`load_state` uses `source` on mutable bootstrap state file in runtime-deps bootstrap feature",
+      "reason": "resolved by misc-agent-browser-bootstrap-statefile-parse-hardening (commit 3ce2958)"
+    }
+  ],
+  "previousRound": ".factory/validation/misc-validation-1/scrutiny/synthesis.round1.json"
+}

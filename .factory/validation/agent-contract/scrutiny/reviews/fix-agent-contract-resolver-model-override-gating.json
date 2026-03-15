@@ -1,0 +1,15 @@
+{
+  "featureId": "fix-agent-contract-resolver-model-override-gating",
+  "reviewedAt": "2026-03-14T14:27:17Z",
+  "commitId": "d232197",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix correctly gates resolver model profile overrides behind `agents.allow_agent_model_overrides`, aligning resolver output with runtime policy behavior. The added regression test covers the disabled-gate path and validates both effective model values and inheritance source mapping.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": "/home/mojo/projects/openclawssy/.factory/validation/agent-contract/scrutiny/reviews/agent-contract-resolver.json",
+  "summary": "Reviewed the fix feature transcript skeleton and both commit diffs (`40a330a50336824e52e4ffb5e040be58b89d4a6c` and `d232197`). This fix cleanly resolves the model-override gating blocker from the prior failure by matching runtime gate semantics and adding focused regression coverage; no new blocking or non-blocking issues were found in scope."
+}

@@ -1,0 +1,21 @@
+{
+  "featureId": "fix-g-then-c-shortcut-sequence",
+  "reviewedAt": "2026-03-14T03:06:25Z",
+  "commitId": "6abc27283481b9ba66ef9b25257f4a05017d7fde",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix commit correctly addresses the prior blocking shortcut defect from react-shared-components: `g` no longer triggers navigation by itself, `g` then `c` is handled as a timed sequence (750ms), and existing single-key shortcuts (`F1`, `?`, `/`) remain wired as before. The updated e2e spec adds direct regression coverage for `g` alone and timeout-expired `g` then `c`, alongside the existing successful `g+c` navigation case.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The frontend-worker skill still enforces strict tests-first sequencing, but this hotkey fix followed an implementation-first then regression-test flow and still produced a valid result; the procedure appears overly rigid for small, localized bug fixes.",
+      "evidence": "/home/mojo/projects/openclawssy/.factory/skills/frontend-worker/SKILL.md (\"2. Write Tests First (TDD)\") and handoff skillFeedback in /home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/handoffs/2026-03-14T03-02-42-055Z__fix-g-then-c-shortcut-sequence__3b88b6af-ed8c-4403-b9d0-5fa6b1e282d6.json (`followedProcedure: false` for TDD ordering)."
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/react-foundation/scrutiny/reviews/react-shared-components.json",
+  "summary": "Reviewed fix-g-then-c-shortcut-sequence using the feature metadata, handoff, transcript skeleton, and both diffs (original failed commit 65ec057e962541c6a21b77d9e0871fccfaf86ad2 and fix commit 6abc27283481b9ba66ef9b25257f4a05017d7fde). Result: PASS — the fix adequately resolves the prior blocking `g+c` shortcut-sequencing failure without introducing new blocking issues in the reviewed scope."
+}

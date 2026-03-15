@@ -1,0 +1,25 @@
+{
+  "milestone": "react-migration",
+  "round": 4,
+  "status": "fail",
+  "generatedAt": "2026-03-14T12:13:15Z",
+  "assertionsSummary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "blocked": 0
+  },
+  "passedAssertions": [],
+  "failedAssertions": [
+    {
+      "id": "VAL-MIG-MON-002",
+      "reason": "Monitor launch and thinking_mode application succeeded, but Stop Active and per-row Stop actions (clicked while runs were running) did not transition targeted runs to canceled; tested runs ended completed."
+    }
+  ],
+  "blockedAssertions": [],
+  "flowReports": [
+    ".factory/validation/react-migration/user-testing/flows/monitor-rerun4.json"
+  ],
+  "appliedUpdates": [],
+  "previousRound": "/home/mojo/projects/openclawssy/.factory/validation/react-migration/user-testing/synthesis.round3.json"
+}

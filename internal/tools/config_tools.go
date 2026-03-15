@@ -358,6 +358,36 @@ func applyConfigFieldUpdate(cfg *config.Config, field string, value any) error {
 			return err
 		}
 		cfg.OpenClaw.Remote.PreferTailnetWSS = b
+	case "becomussy.enabled":
+		b, err := requireBool(value, field)
+		if err != nil {
+			return err
+		}
+		cfg.Becomussy.Enabled = b
+	case "becomussy.base_url":
+		s, err := requireString(value, field)
+		if err != nil {
+			return err
+		}
+		cfg.Becomussy.BaseURL = strings.TrimSpace(s)
+	case "becomussy.user_id":
+		s, err := requireString(value, field)
+		if err != nil {
+			return err
+		}
+		cfg.Becomussy.UserID = strings.TrimSpace(s)
+	case "becomussy.user_role":
+		s, err := requireString(value, field)
+		if err != nil {
+			return err
+		}
+		cfg.Becomussy.UserRole = strings.TrimSpace(s)
+	case "becomussy.timeout_ms":
+		n, err := requireInt(value, field)
+		if err != nil {
+			return err
+		}
+		cfg.Becomussy.TimeoutMS = n
 	default:
 		return fmt.Errorf("field is not mutable: %s", field)
 	}
@@ -439,6 +469,16 @@ func configGetField(cfg config.Config, field string) (any, bool) {
 		return cfg.OpenClaw.Remote.PollTimeoutMS, true
 	case "openclaw.remote.prefer_tailnet_wss":
 		return cfg.OpenClaw.Remote.PreferTailnetWSS, true
+	case "becomussy.enabled":
+		return cfg.Becomussy.Enabled, true
+	case "becomussy.base_url":
+		return cfg.Becomussy.BaseURL, true
+	case "becomussy.user_id":
+		return cfg.Becomussy.UserID, true
+	case "becomussy.user_role":
+		return cfg.Becomussy.UserRole, true
+	case "becomussy.timeout_ms":
+		return cfg.Becomussy.TimeoutMS, true
 	case "config":
 		return cfg, true
 	default:

@@ -1,0 +1,121 @@
+{
+  "groupId": "api-rerun-deterministic",
+  "testedAt": "2026-03-14T20:05:35Z",
+  "isolation": {
+    "milestone": "typed-roles-delegation",
+    "missionDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3",
+    "apiBaseUrl": "http://localhost:8081",
+    "authToken": "change-me",
+    "deterministicRuns": [
+      "run_1773518562997498624",
+      "run_1773518588934334391"
+    ]
+  },
+  "toolsUsed": [
+    "curl",
+    "python3"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-DELEG-001",
+      "title": "Pre-delegation plan generated",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "GET /v1/runs/run_1773518562997498624",
+          "expected": "200 response with decomposition_plan (or trace.decomposition_plan) containing non-empty tasks",
+          "observed": "HTTP 200; planLocation=decomposition_plan; taskCount=2"
+        },
+        {
+          "action": "GET /api/admin/runs/run_1773518562997498624/decisions",
+          "expected": "200 response with non-empty decision records",
+          "observed": "HTTP 200; decisionRecordCount=10"
+        },
+        {
+          "action": "GET /v1/runs/run_1773518588934334391",
+          "expected": "200 response with decomposition_plan (or trace.decomposition_plan) containing non-empty tasks",
+          "observed": "HTTP 200; planLocation=decomposition_plan; taskCount=2"
+        },
+        {
+          "action": "GET /api/admin/runs/run_1773518588934334391/decisions",
+          "expected": "200 response with non-empty decision records",
+          "observed": "HTTP 200; decisionRecordCount=10"
+        }
+      ],
+      "evidence": {
+        "network": "GET /v1/runs/run_1773518562997498624 -> 200 (planLocation=decomposition_plan, taskCount=2)\nGET /api/admin/runs/run_1773518562997498624/decisions -> 200 (decisionRecordCount=10)\nGET /v1/runs/run_1773518588934334391 -> 200 (planLocation=decomposition_plan, taskCount=2)\nGET /api/admin/runs/run_1773518588934334391/decisions -> 200 (decisionRecordCount=10)",
+        "keyFields": [
+          {
+            "runId": "run_1773518562997498624",
+            "v1RunStatus": 200,
+            "decisionsStatus": 200,
+            "planLocation": "decomposition_plan",
+            "taskCount": 2,
+            "taskFields": [
+              "assigned_role",
+              "confidence",
+              "depends_on",
+              "description",
+              "rationale",
+              "task_id"
+            ],
+            "decisionRecordCount": 10,
+            "decisionRecordTypes": [
+              "constraint_activation",
+              "delegation_trigger",
+              "goal_interpretation",
+              "role_selection",
+              "strategy_selection",
+              "termination",
+              "tool_decision"
+            ]
+          },
+          {
+            "runId": "run_1773518588934334391",
+            "v1RunStatus": 200,
+            "decisionsStatus": 200,
+            "planLocation": "decomposition_plan",
+            "taskCount": 2,
+            "taskFields": [
+              "assigned_role",
+              "confidence",
+              "depends_on",
+              "description",
+              "rationale",
+              "task_id"
+            ],
+            "decisionRecordCount": 10,
+            "decisionRecordTypes": [
+              "constraint_activation",
+              "delegation_trigger",
+              "goal_interpretation",
+              "role_selection",
+              "strategy_selection",
+              "termination",
+              "tool_decision"
+            ]
+          }
+        ],
+        "rawFiles": [
+          "typed-roles-delegation/api-rerun-deterministic/run_1773518562997498624-v1-runs.status.txt",
+          "typed-roles-delegation/api-rerun-deterministic/run_1773518562997498624-v1-runs.headers.txt",
+          "typed-roles-delegation/api-rerun-deterministic/run_1773518562997498624-v1-runs.body.json",
+          "typed-roles-delegation/api-rerun-deterministic/run_1773518562997498624-decisions.status.txt",
+          "typed-roles-delegation/api-rerun-deterministic/run_1773518562997498624-decisions.headers.txt",
+          "typed-roles-delegation/api-rerun-deterministic/run_1773518562997498624-decisions.body.json",
+          "typed-roles-delegation/api-rerun-deterministic/run_1773518588934334391-v1-runs.status.txt",
+          "typed-roles-delegation/api-rerun-deterministic/run_1773518588934334391-v1-runs.headers.txt",
+          "typed-roles-delegation/api-rerun-deterministic/run_1773518588934334391-v1-runs.body.json",
+          "typed-roles-delegation/api-rerun-deterministic/run_1773518588934334391-decisions.status.txt",
+          "typed-roles-delegation/api-rerun-deterministic/run_1773518588934334391-decisions.headers.txt",
+          "typed-roles-delegation/api-rerun-deterministic/run_1773518588934334391-decisions.body.json",
+          "typed-roles-delegation/api-rerun-deterministic/analysis-summary.json"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 1 assertion (VAL-DELEG-001): PASS for both deterministic runs; decomposition_plan with non-empty tasks and decision records were both returned with HTTP 200."
+}

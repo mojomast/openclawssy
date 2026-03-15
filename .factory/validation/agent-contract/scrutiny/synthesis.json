@@ -1,0 +1,40 @@
+{
+  "milestone": "agent-contract",
+  "round": 2,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "cd \"/home/mojo/projects/openclawssy\" && go test -parallel 2 ./...",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "cd \"/home/mojo/projects/openclawssy/internal/channels/dashboard/ui\" && npx tsc --noEmit",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "cd \"/home/mojo/projects/openclawssy\" && go vet ./...",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": ".factory/skills/fullstack-worker/SKILL.md",
+      "suggestion": "Adjust Playwright validation guidance to allow scoped specs when mission guidance explicitly documents known unrelated full-suite failures.",
+      "evidence": "fix-agent-contract-ui-safe-rollback-snapshots review found a procedure mismatch: fullstack-worker step guidance expects full Playwright suite, while mission AGENTS.md directs scoped specs due pre-existing unrelated failures.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": ".factory/validation/agent-contract/scrutiny/synthesis.round1.json"
+}

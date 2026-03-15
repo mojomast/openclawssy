@@ -40,6 +40,10 @@ const (
 	DelegationModePromptOnly  DelegationMode = "prompt_only"
 	DelegationModeToolGated   DelegationMode = "tool_gated"
 	DelegationModeAutoExecute DelegationMode = "auto_execute"
+	DelegationModeSuggestOnly DelegationMode = "suggest_only"
+	DelegationModeApprovePlan DelegationMode = "approve_plan"
+	DelegationModeAutoTrusted DelegationMode = "auto_trusted"
+	DelegationModeFullAuto    DelegationMode = "full_autonomous"
 )
 
 type DelegationTrigger struct {
@@ -52,15 +56,22 @@ type DelegationTrigger struct {
 }
 
 type DecomposedTask struct {
-	TaskID         string   `json:"task_id"`
-	AgentID        string   `json:"agent_id"`
-	Message        string   `json:"message"`
-	AcceptanceCrit []string `json:"acceptance_criteria,omitempty"`
-	DependsOn      []string `json:"depends_on,omitempty"`
-	Produces       []string `json:"produces,omitempty"`
-	Priority       int      `json:"priority"`
-	TimeoutMS      int      `json:"timeout_ms,omitempty"`
-	ThinkingMode   string   `json:"thinking_mode,omitempty"`
+	TaskID                string   `json:"task_id"`
+	ParentRunID           string   `json:"parent_run_id,omitempty"`
+	AgentID               string   `json:"agent_id"`
+	Message               string   `json:"message"`
+	AcceptanceCrit        []string `json:"acceptance_criteria,omitempty"`
+	DependsOn             []string `json:"depends_on,omitempty"`
+	Produces              []string `json:"produces,omitempty"`
+	Priority              int      `json:"priority"`
+	TimeoutMS             int      `json:"timeout_ms,omitempty"`
+	ThinkingMode          string   `json:"thinking_mode,omitempty"`
+	AssignedRole          string   `json:"assigned_role,omitempty"`
+	RoutingConfidence     float64  `json:"routing_confidence,omitempty"`
+	RoutingRationale      string   `json:"routing_rationale,omitempty"`
+	RoleAllowedTools      []string `json:"role_allowed_tools,omitempty"`
+	RoleMaxToolIterations int      `json:"role_max_tool_iterations,omitempty"`
+	RoleTimeoutMS         int      `json:"role_timeout_ms,omitempty"`
 }
 
 type StateSnapshot struct {

@@ -1,0 +1,128 @@
+{
+  "groupId": "flow-b",
+  "testedAt": "2026-03-14T03:24:43Z",
+  "isolation": {
+    "missionDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3",
+    "surface": "Browser Dashboard",
+    "url": "http://localhost:8081/dashboard",
+    "authToken": "change-me",
+    "evidenceDir": "/home/mojo/.factory/missions/f0f27df9-2ad3-4bff-af4d-b8fe680f5ef3/evidence/react-foundation/flow-b"
+  },
+  "toolsUsed": [
+    "agent-browser",
+    "curl",
+    "python3"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-REACT-FND-003",
+      "status": "fail",
+      "reason": "Unauthenticated API behavior is correct (401) and authenticated behavior works, but the app did not prompt for a bearer token when none was stored; instead Workspace showed 'missing bearer token'.",
+      "evidence": [
+        "react-foundation/flow-b/VAL-REACT-FND-003-status-no-auth.headers.txt",
+        "react-foundation/flow-b/VAL-REACT-FND-003-status-with-auth.headers.txt",
+        "react-foundation/flow-b/VAL-REACT-FND-003-no-token-after-reload.png",
+        "react-foundation/flow-b/VAL-REACT-FND-003-no-token-after-reload-body.txt",
+        "react-foundation/flow-b/VAL-REACT-FND-003-workspace-with-token.png"
+      ]
+    },
+    {
+      "id": "VAL-REACT-FND-007",
+      "status": "pass",
+      "reason": "Embedded dashboard index and static JS/CSS assets were served successfully from /dashboard and /dashboard/static with HTTP 200.",
+      "evidence": [
+        "react-foundation/flow-b/VAL-REACT-FND-007-dashboard-index.headers.txt",
+        "react-foundation/flow-b/VAL-REACT-FND-007-dashboard-index.html",
+        "react-foundation/flow-b/VAL-REACT-FND-007-static-assets-status.json"
+      ]
+    },
+    {
+      "id": "VAL-REACT-FND-009",
+      "status": "fail",
+      "reason": "Help page deep-linking and copy-link behavior did not meet contract: '?topic=secrets' still rendered Getting Started, search for existing topic 'faq' returned 'No topics match your search', and copy-link showed 'Unable to copy topic link'.",
+      "evidence": [
+        "react-foundation/flow-b/VAL-REACT-FND-009-topic-list.png",
+        "react-foundation/flow-b/VAL-REACT-FND-009-search-filtered.png",
+        "react-foundation/flow-b/VAL-REACT-FND-009-search-faq-body.txt",
+        "react-foundation/flow-b/VAL-REACT-FND-009-deeplink-secrets.png",
+        "react-foundation/flow-b/VAL-REACT-FND-009-deeplink-secrets-body.txt",
+        "react-foundation/flow-b/VAL-REACT-FND-009-copy-link-body.txt"
+      ]
+    },
+    {
+      "id": "VAL-REACT-FND-010",
+      "status": "pass",
+      "reason": "Workspace page showed breadcrumb/root context, entry count, filter, auto-refresh toggle, Up/Refresh controls, and file preview metadata/content after selecting a file.",
+      "evidence": [
+        "react-foundation/flow-b/VAL-REACT-FND-010-directory-listing.png",
+        "react-foundation/flow-b/VAL-REACT-FND-010-file-preview.png",
+        "react-foundation/flow-b/VAL-REACT-FND-010-workspace-body.txt"
+      ]
+    },
+    {
+      "id": "VAL-REACT-FND-011",
+      "status": "pass",
+      "reason": "Secrets page rendered key list/search, copy-name and delete controls, write-only add form, naming guidance with Use key actions, and API GET /api/admin/secrets returned 200.",
+      "evidence": [
+        "react-foundation/flow-b/VAL-REACT-FND-011-key-list.png",
+        "react-foundation/flow-b/VAL-REACT-FND-011-add-secret-form.png",
+        "react-foundation/flow-b/VAL-REACT-FND-011-secrets-get.headers.txt"
+      ]
+    },
+    {
+      "id": "VAL-REACT-FND-012",
+      "status": "pass",
+      "reason": "Docs page rendered agent/document selectors, editor controls (save/reload), unsaved indicator after local edit, agent switch behavior, and API GET /api/admin/agent/docs returned 200.",
+      "evidence": [
+        "react-foundation/flow-b/VAL-REACT-FND-012-doc-editor.png",
+        "react-foundation/flow-b/VAL-REACT-FND-012-unsaved-indicator-body.txt",
+        "react-foundation/flow-b/VAL-REACT-FND-012-agent-switch-value.txt",
+        "react-foundation/flow-b/VAL-REACT-FND-012-agent-docs-get.headers.txt"
+      ]
+    },
+    {
+      "id": "VAL-REACT-FND-013",
+      "status": "pass",
+      "reason": "Skills page rendered agent selector, installable skills with install controls, activation controls, reload action, and API GET /api/admin/skills returned 200.",
+      "evidence": [
+        "react-foundation/flow-b/VAL-REACT-FND-013-skills-page.png",
+        "react-foundation/flow-b/VAL-REACT-FND-013-skills-get.headers.txt"
+      ]
+    },
+    {
+      "id": "VAL-REACT-FND-015",
+      "status": "pass",
+      "reason": "Under offline/network-failure simulation, Workspace/Secrets/Docs/Skills showed user-facing failure messages and retry/reload actions (Refresh/Retry/Reload), with no white-screen state observed.",
+      "evidence": [
+        "react-foundation/flow-b/VAL-REACT-FND-015-workspace-offline-error.png",
+        "react-foundation/flow-b/VAL-REACT-FND-015-workspace-offline-body.txt",
+        "react-foundation/flow-b/VAL-REACT-FND-015-secrets-offline-error.png",
+        "react-foundation/flow-b/VAL-REACT-FND-015-secrets-offline-body.txt",
+        "react-foundation/flow-b/VAL-REACT-FND-015-docs-offline-error.png",
+        "react-foundation/flow-b/VAL-REACT-FND-015-docs-offline-body.txt",
+        "react-foundation/flow-b/VAL-REACT-FND-015-skills-offline-error.png",
+        "react-foundation/flow-b/VAL-REACT-FND-015-skills-offline-body.txt"
+      ]
+    }
+  ],
+  "frictions": [
+    {
+      "description": "Clipboard read access is denied in this headless validation environment, so copy-link verification relied on in-app notification text.",
+      "resolved": true,
+      "resolution": "Used UI notification evidence ('Unable to copy topic link.') captured from page text.",
+      "affectedAssertions": [
+        "VAL-REACT-FND-009"
+      ]
+    },
+    {
+      "description": "Tokenless-path verification required explicit localStorage clear + full reload; route-only navigation retained in-memory app state.",
+      "resolved": true,
+      "resolution": "Forced full reload after storage clear to capture unauthenticated workspace error state.",
+      "affectedAssertions": [
+        "VAL-REACT-FND-003"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 8 assigned assertions: 6 passed, 2 failed (VAL-REACT-FND-003, VAL-REACT-FND-009)."
+}

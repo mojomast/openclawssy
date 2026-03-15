@@ -1,0 +1,21 @@
+{
+  "featureId": "misc-agent-browser-bootstrap-statefile-parse-hardening",
+  "reviewedAt": "2026-03-15T00:00:11Z",
+  "commitId": "3ce2958f2f84e4f20ca5fadb31a2063df59eae90",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Commit `3ce2958` implements the feature scope as specified: `.factory/scripts/agent-browser-bootstrap.sh` no longer uses `source` for state restoration and now parses state lines with an allowlisted key set (`MODE`, `CDP_PORT`, `CHROMIUM_PID`, `CHROMIUM_BIN`) and value guards, preventing shell evaluation from tampered state files. The hardening keeps direct/CDP control flow intact in `ensure_bootstrap`/`close` paths, and no remaining blocking issues were identified for this feature in the current milestone context.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The assigned `backend-worker` skill still lacks an explicit shell-script testing path, which causes predictable procedure deviations when mission work targets `.factory/scripts/*` rather than Go packages.",
+      "evidence": "Feature handoff for `misc-agent-browser-bootstrap-statefile-parse-hardening` reports `skillFeedback.followedProcedure=false` due to backend-worker Step 2 (TDD) mismatch, and suggests adding shell-script testing guidance; `.factory/skills/backend-worker/SKILL.md` currently defines only Go/package-oriented test workflow."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Re-reviewed `misc-agent-browser-bootstrap-statefile-parse-hardening` in the updated milestone context where the prior timeout-hardening blocker is superseded by `misc-agent-browser-runtime-deps-bootstrap`. The hardening diff itself is correct and complete for its stated security objective, so this feature is marked pass with no remaining blockers."
+}
