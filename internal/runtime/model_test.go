@@ -15,6 +15,7 @@ import (
 
 	"openclawssy/internal/agent"
 	"openclawssy/internal/config"
+	"openclawssy/internal/messagecontent"
 )
 
 type requestCapture struct {
@@ -25,12 +26,17 @@ type requestCapture struct {
 	ToolChoice any    `json:"tool_choice,omitempty"`
 	Messages   []struct {
 		Role    string `json:"role"`
-		Content string `json:"content"`
+		Content any    `json:"content"`
 	} `json:"messages"`
 }
 
 type staticToolExecutor struct {
 	result agent.ToolCallResult
+}
+
+func contentString(value any) string {
+	text, _ := value.(string)
+	return text
 }
 
 func (s *staticToolExecutor) Execute(_ context.Context, call agent.ToolCallRequest) (agent.ToolCallResult, error) {
@@ -114,7 +120,7 @@ func TestProviderModelRoutesToolResultsBackThroughModel(t *testing.T) {
 	if len(requests[1].Messages) < 1 {
 		t.Fatalf("expected second request messages")
 	}
-	systemPrompt := requests[1].Messages[0].Content
+	systemPrompt := contentString(requests[1].Messages[0].Content)
 	if !strings.Contains(systemPrompt, "## Tool Results") {
 		t.Fatalf("expected tool results section in follow-up prompt")
 	}
@@ -200,14 +206,57 @@ func TestProviderModelSendsStructuredHistoryMessages(t *testing.T) {
 	if captured.Messages[0].Role != "system" {
 		t.Fatalf("expected system role first, got %q", captured.Messages[0].Role)
 	}
-	if captured.Messages[1].Role != "user" || captured.Messages[1].Content != "first" {
+	if captured.Messages[1].Role != "user" || contentString(captured.Messages[1].Content) != "first" {
 		t.Fatalf("unexpected first history message: %+v", captured.Messages[1])
 	}
-	if captured.Messages[2].Role != "assistant" || captured.Messages[2].Content != "done" {
+	if captured.Messages[2].Role != "assistant" || contentString(captured.Messages[2].Content) != "done" {
 		t.Fatalf("unexpected second history message: %+v", captured.Messages[2])
 	}
-	if captured.Messages[3].Role != "user" || captured.Messages[3].Content != "second" {
+	if captured.Messages[3].Role != "user" || contentString(captured.Messages[3].Content) != "second" {
 		t.Fatalf("unexpected final user message: %+v", captured.Messages[3])
+	}
+}
+
+func TestProviderModelSendsMultimodalUserMessage(t *testing.T) {
+	var captured requestCapture
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": "ok"}}}})
+	}))
+	defer server.Close()
+	model := testProviderModel(t, server.URL)
+	_, err := model.Generate(context.Background(), agent.ModelRequest{
+		SystemPrompt: "system",
+		Messages: []agent.ChatMessage{{
+			Role:    "user",
+			Content: "use this sticker",
+			ContentParts: []messagecontent.Part{
+				{Type: messagecontent.TypeText, Text: "use this sticker"},
+				{Type: messagecontent.TypeImage, MIMEType: "image/webp", Data: "AAAA"},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("generate failed: %v", err)
+	}
+	if len(captured.Messages) != 2 {
+		t.Fatalf("expected system + user, got %#v", captured.Messages)
+	}
+	parts, ok := captured.Messages[1].Content.([]any)
+	if !ok || len(parts) != 2 {
+		t.Fatalf("expected multimodal content array, got %#v", captured.Messages[1].Content)
+	}
+	part0, _ := parts[0].(map[string]any)
+	part1, _ := parts[1].(map[string]any)
+	if part0["type"] != "text" || part1["type"] != "image_url" {
+		t.Fatalf("unexpected multimodal parts: %#v", parts)
+	}
+	img, _ := part1["image_url"].(map[string]any)
+	if !strings.HasPrefix(contentString(img["url"]), "data:image/webp;base64,") {
+		t.Fatalf("expected inline image data url, got %#v", img)
 	}
 }
 
@@ -979,12 +1028,12 @@ func TestProviderModelRequestsMaxTokensCap(t *testing.T) {
 	defer server.Close()
 
 	cfg := config.Default()
-	cfg.Model.Provider = "generic"
+	cfg.Model.Provider = "openai_compat"
 	cfg.Model.Name = "test-model"
 	cfg.Model.MaxTokens = 50000
-	cfg.Providers.Generic.BaseURL = server.URL
-	cfg.Providers.Generic.APIKey = "test-key"
-	cfg.Providers.Generic.APIKeyEnv = ""
+	cfg.Providers.OpenAICompat.BaseURL = server.URL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
 
 	model, err := NewProviderModel(cfg, nil)
 	if err != nil {
@@ -1036,17 +1085,17 @@ func TestProviderModelCompactsAtEightyPercentContext(t *testing.T) {
 	if len(captured.Messages) < 3 {
 		t.Fatalf("expected compacted request with system + history, got %d message(s)", len(captured.Messages))
 	}
-	if captured.Messages[1].Role != "system" || !strings.Contains(captured.Messages[1].Content, "Conversation compaction summary") {
+	if captured.Messages[1].Role != "system" || !strings.Contains(contentString(captured.Messages[1].Content), "Conversation compaction summary") {
 		t.Fatalf("expected compaction summary system message, got %+v", captured.Messages[1])
 	}
-	if captured.Messages[len(captured.Messages)-1].Role != "user" || captured.Messages[len(captured.Messages)-1].Content != "latest-question-marker" {
+	if captured.Messages[len(captured.Messages)-1].Role != "user" || contentString(captured.Messages[len(captured.Messages)-1].Content) != "latest-question-marker" {
 		t.Fatalf("expected latest user turn preserved, got %+v", captured.Messages[len(captured.Messages)-1])
 	}
 
-	reqSystem := captured.Messages[0].Content
+	reqSystem := contentString(captured.Messages[0].Content)
 	reqHistory := make([]agent.ChatMessage, 0, len(captured.Messages)-1)
 	for _, item := range captured.Messages[1:] {
-		reqHistory = append(reqHistory, agent.ChatMessage{Role: item.Role, Content: item.Content})
+		reqHistory = append(reqHistory, agent.ChatMessage{Role: item.Role, Content: contentString(item.Content)})
 	}
 	used := estimateConversationTokens(reqSystem, reqHistory)
 	budget := int(float64(model.contextWindow) * contextCompactionRatio)
@@ -1490,6 +1539,12 @@ func TestToolNameHelpersAndAllowlist(t *testing.T) {
 	if canonical, ok := canonicalToolName("net.fetch"); !ok || canonical != "http.request" {
 		t.Fatalf("expected net.fetch alias to canonicalize to http.request, got ok=%v canonical=%q", ok, canonical)
 	}
+	if canonical, ok := canonicalToolName("fs__list"); !ok || canonical != "fs.list" {
+		t.Fatalf("expected openai_compat encoded name fs__list to canonicalize to fs.list, got ok=%v canonical=%q", ok, canonical)
+	}
+	if canonical, ok := canonicalToolName("agent__profile__get"); !ok || canonical != "agent.profile.get" {
+		t.Fatalf("expected openai_compat encoded name agent__profile__get to canonicalize to agent.profile.get, got ok=%v canonical=%q", ok, canonical)
+	}
 	if _, ok := canonicalToolName("unknown.tool"); ok {
 		t.Fatal("expected unknown tool alias to fail")
 	}
@@ -1502,8 +1557,8 @@ func TestContextWindowForModel(t *testing.T) {
 	if got := contextWindowForModel("zai", "glm-4.7-flash"); got != 200000 {
 		t.Fatalf("expected GLM-4.7-Flash context window=200000, got %d", got)
 	}
-	if got := contextWindowForModel("generic", "test-model"); got != defaultContextWindow {
-		t.Fatalf("expected default context window=%d for generic provider, got %d", defaultContextWindow, got)
+	if got := contextWindowForModel("openai_compat", "test-model"); got != defaultContextWindow {
+		t.Fatalf("expected default context window=%d for openai_compat provider, got %d", defaultContextWindow, got)
 	}
 }
 
@@ -1576,7 +1631,7 @@ func TestNewProviderModelUsesConfiguredTimeout(t *testing.T) {
 
 func TestProviderEndpointAndMessageHelpers(t *testing.T) {
 	cfg := config.Default()
-	providers := []string{"openai", "openrouter", "requesty", "hatz", "zai", "generic"}
+	providers := []string{"openai", "openrouter", "requesty", "hatz", "zai", "openai_compat"}
 	for _, name := range providers {
 		if _, err := providerEndpoint(cfg, name); err != nil {
 			t.Fatalf("expected provider %q to resolve, got %v", name, err)
@@ -1744,10 +1799,10 @@ func TestGenerateRemapsToolHistoryRolesToUser(t *testing.T) {
 	if captured.Messages[2].Role != "user" {
 		t.Fatalf("expected tool history to be remapped to user, got %+v", captured.Messages[2])
 	}
-	if !strings.Contains(captured.Messages[2].Content, "tool fs.list result") {
+	if !strings.Contains(contentString(captured.Messages[2].Content), "tool fs.list result") {
 		t.Fatalf("expected remapped tool content to be preserved, got %+v", captured.Messages[2])
 	}
-	if captured.Messages[4].Role != "user" || captured.Messages[4].Content != "create foo.txt" {
+	if captured.Messages[4].Role != "user" || contentString(captured.Messages[4].Content) != "create foo.txt" {
 		t.Fatalf("expected last user turn preserved, got %+v", captured.Messages[4])
 	}
 	for _, msg := range captured.Messages {
@@ -1976,7 +2031,7 @@ func TestProviderModelStreamingParsesNativeToolCalls(t *testing.T) {
 			t.Fatalf("decode request: %v", err)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"fs.list\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n\n")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"fs__list\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n\n")
 		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\".\\\"}\"}}]}}]}\n\n")
 		_, _ = io.WriteString(w, "data: [DONE]\n\n")
 	}))
@@ -2010,6 +2065,24 @@ func TestProviderModelStreamingParsesNativeToolCalls(t *testing.T) {
 	if len(captured.Tools) != 1 {
 		t.Fatalf("expected tools array in streaming request, got %d", len(captured.Tools))
 	}
+	toolDef, ok := captured.Tools[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected first tool payload to be an object, got %#v", captured.Tools[0])
+	}
+	functionDef, ok := toolDef["function"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected function tool payload, got %#v", toolDef)
+	}
+	if got := strings.TrimSpace(toString(functionDef["name"])); got != "fs__list" {
+		t.Fatalf("expected openai_compat encoded tool name fs__list, got %q", got)
+	}
+	required, ok := functionDef["parameters"].(map[string]any)["required"].([]any)
+	if !ok {
+		t.Fatalf("expected required to be an array, got %#v", functionDef["parameters"])
+	}
+	if len(required) != 0 {
+		t.Fatalf("expected empty required array, got %#v", required)
+	}
 	if deltaCalls != 0 {
 		t.Fatalf("expected no text deltas for pure tool-call stream, got %d", deltaCalls)
 	}
@@ -2022,6 +2095,52 @@ func TestProviderModelStreamingParsesNativeToolCalls(t *testing.T) {
 	args := decodeToolArgs(t, resp.ToolCalls[0].Arguments)
 	if args["path"] != "." {
 		t.Fatalf("expected path='.', got %#v", args["path"])
+	}
+}
+
+func toString(value any) string {
+	if value == nil {
+		return ""
+	}
+	if text, ok := value.(string); ok {
+		return text
+	}
+	return ""
+}
+
+func TestNormalizeProviderToolParametersSetsRequiredArray(t *testing.T) {
+	params := normalizeProviderToolParameters(map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"agent_id": map[string]any{"type": "string"}},
+		"required":   nil,
+	})
+	required, ok := params["required"].([]string)
+	if !ok {
+		t.Fatalf("expected []string required, got %#v", params["required"])
+	}
+	if len(required) != 0 {
+		t.Fatalf("expected empty required slice, got %#v", required)
+	}
+}
+
+func TestNormalizeProviderToolParametersPreservesArrayItems(t *testing.T) {
+	params := normalizeProviderToolParameters(map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"allowed_tools": map[string]any{"type": "array", "items": map[string]any{}},
+		},
+		"required": []string{},
+	})
+	properties, ok := params["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected properties map, got %#v", params["properties"])
+	}
+	allowedTools, ok := properties["allowed_tools"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected allowed_tools schema map, got %#v", properties["allowed_tools"])
+	}
+	if _, ok := allowedTools["items"].(map[string]any); !ok {
+		t.Fatalf("expected allowed_tools.items object, got %#v", allowedTools["items"])
 	}
 }
 
@@ -2204,11 +2323,11 @@ func testProviderModel(t *testing.T, baseURL string) *ProviderModel {
 	t.Helper()
 
 	cfg := config.Default()
-	cfg.Model.Provider = "generic"
+	cfg.Model.Provider = "openai_compat"
 	cfg.Model.Name = "test-model"
-	cfg.Providers.Generic.BaseURL = baseURL
-	cfg.Providers.Generic.APIKey = "test-key"
-	cfg.Providers.Generic.APIKeyEnv = ""
+	cfg.Providers.OpenAICompat.BaseURL = baseURL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
 
 	model, err := NewProviderModel(cfg, nil)
 	if err != nil {

@@ -132,8 +132,16 @@ func CanonicalToolName(name string) (string, bool) {
 	if candidate == "" {
 		return "", false
 	}
-	toolName, ok := toolAliases[candidate]
-	return toolName, ok
+	if toolName, ok := toolAliases[candidate]; ok {
+		return toolName, true
+	}
+	if strings.Contains(candidate, "__") {
+		decoded := strings.ReplaceAll(candidate, "__", ".")
+		if toolName, ok := toolAliases[decoded]; ok {
+			return toolName, true
+		}
+	}
+	return "", false
 }
 
 func IsAllowed(toolName string, allowed []string) bool {

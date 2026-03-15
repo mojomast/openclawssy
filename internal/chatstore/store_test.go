@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"openclawssy/internal/messagecontent"
 )
 
 func TestCreateListGetAppendReadRecent(t *testing.T) {
@@ -375,6 +377,32 @@ func TestReadRecentMessagesSupportsLargeMessageLines(t *testing.T) {
 	}
 	if msgs[0].Content != large {
 		t.Fatalf("expected large content to round-trip; got %d chars", len(msgs[0].Content))
+	}
+}
+
+func TestAppendMessageAllowsImageOnlyContentParts(t *testing.T) {
+	agentsRoot := filepath.Join(t.TempDir(), ".openclawssy", "agents")
+	store, err := NewStore(agentsRoot)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+
+	session, err := store.CreateSession(CreateSessionInput{AgentID: "default", Channel: "telegram", UserID: "u1", RoomID: "r1"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	msg := Message{Role: "user", ContentParts: []messagecontent.Part{{Type: messagecontent.TypeImage, MIMEType: "image/png", Data: "AAAA"}}}
+	if err := store.AppendMessage(session.SessionID, msg); err != nil {
+		t.Fatalf("append image-only message: %v", err)
+	}
+
+	msgs, err := store.ReadRecentMessages(session.SessionID, 10)
+	if err != nil {
+		t.Fatalf("read recent messages: %v", err)
+	}
+	if len(msgs) != 1 || len(msgs[0].ContentParts) != 1 || msgs[0].ContentParts[0].Type != messagecontent.TypeImage {
+		t.Fatalf("unexpected stored image-only message: %+v", msgs)
 	}
 }
 

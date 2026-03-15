@@ -1,13 +1,23 @@
 package telegram
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
+	"image"
+	"image/color"
+	"image/png"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"openclawssy/internal/channels/chat"
+	"openclawssy/internal/config"
+	"openclawssy/internal/messagecontent"
 )
 
 func TestNormalizeInboundMessage(t *testing.T) {
@@ -216,4 +226,129 @@ func TestRenderOutcomeText(t *testing.T) {
 			t.Fatalf("expected fallback after responder error, got %q", got)
 		}
 	})
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
+func TestNormalizeIncomingContentStickerAddsImagePrompt(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	img.Set(0, 0, color.NRGBA{R: 255, A: 255})
+	var sticker bytes.Buffer
+	if err := png.Encode(&sticker, img); err != nil {
+		t.Fatalf("encode sticker png: %v", err)
+	}
+	b := &Bot{
+		cfg: config.TelegramConfig{},
+		api: func() *tgbotapi.BotAPI {
+			api, err := tgbotapi.NewBotAPIWithClient("tok", "https://api.telegram.org/bot%s/%s", &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if strings.Contains(req.URL.String(), "/getMe") {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": []string{"application/json"}},
+						Body:       io.NopCloser(strings.NewReader(`{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"bot","username":"bot"}}`)),
+					}, nil
+				}
+				if strings.Contains(req.URL.String(), "/getFile") {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": []string{"application/json"}},
+						Body:       io.NopCloser(strings.NewReader(`{"ok":true,"result":{"file_path":"sticker.webp"}}`)),
+					}, nil
+				}
+				t.Fatalf("unexpected telegram api url: %s", req.URL.String())
+				return nil, nil
+			})})
+			if err != nil {
+				t.Fatalf("new bot api: %v", err)
+			}
+			return api
+		}(),
+		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.String() != "https://api.telegram.org/file/bottok/sticker.webp" {
+				t.Fatalf("unexpected sticker url: %s", req.URL.String())
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"image/webp"}},
+				Body:       io.NopCloser(bytes.NewReader(sticker.Bytes())),
+			}, nil
+		})},
+	}
+	text, parts, err := b.normalizeIncomingContent(&tgbotapi.Message{Sticker: &tgbotapi.Sticker{FileID: "sticker.webp", Emoji: "🙂", SetName: "funpack"}})
+	if err != nil {
+		t.Fatalf("normalizeIncomingContent error: %v", err)
+	}
+	if text != "" {
+		t.Fatalf("expected no synthetic sticker text, got %q", text)
+	}
+	if len(parts) != 1 {
+		t.Fatalf("expected image-only content part, got %#v", parts)
+	}
+	if parts[0].Type != messagecontent.TypeImage || parts[0].MIMEType != "image/png" {
+		t.Fatalf("expected image part, got %#v", parts[0])
+	}
+	decoded, err := base64.StdEncoding.DecodeString(parts[0].Data)
+	if err != nil {
+		t.Fatalf("decode normalized image: %v", err)
+	}
+	if _, err := png.Decode(bytes.NewReader(decoded)); err != nil {
+		t.Fatalf("expected normalized png data, got err=%v", err)
+	}
+}
+
+func TestConvertStickerToPNGRejectsUndecodableSticker(t *testing.T) {
+	_, err := convertStickerToPNG([]byte("not-an-image"))
+	if err == nil {
+		t.Fatal("expected decode error")
+	}
+}
+
+func TestNormalizeIncomingContentRejectsAnimatedSticker(t *testing.T) {
+	b := &Bot{cfg: config.TelegramConfig{}}
+	_, _, err := b.normalizeIncomingContent(&tgbotapi.Message{Sticker: &tgbotapi.Sticker{FileID: "s1", IsAnimated: true}})
+	if err == nil || !strings.Contains(err.Error(), "animated") {
+		t.Fatalf("expected animated sticker error, got %v", err)
+	}
+}
+
+func TestStickerOnlyMessageSkipsThinkingParse(t *testing.T) {
+	b := &Bot{cfg: config.TelegramConfig{}}
+	if _, _, err := parseThinkingOverride(""); err == nil {
+		t.Fatal("expected empty text to fail direct thinking parse precondition")
+	}
+	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.NRGBA{G: 255, A: 255})
+	var sticker bytes.Buffer
+	if err := png.Encode(&sticker, img); err != nil {
+		t.Fatalf("encode sticker png: %v", err)
+	}
+	b.api = func() *tgbotapi.BotAPI {
+		api, err := tgbotapi.NewBotAPIWithClient("tok", "https://api.telegram.org/bot%s/%s", &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if strings.Contains(req.URL.String(), "/getMe") {
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"bot","username":"bot"}}`))}, nil
+			}
+			if strings.Contains(req.URL.String(), "/getFile") {
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"ok":true,"result":{"file_path":"sticker.webp"}}`))}, nil
+			}
+			return nil, errors.New("unexpected telegram api request")
+		})})
+		if err != nil {
+			t.Fatalf("new bot api: %v", err)
+		}
+		return api
+	}()
+	b.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"image/webp"}}, Body: io.NopCloser(bytes.NewReader(sticker.Bytes()))}, nil
+	})}
+	content, parts, err := b.normalizeIncomingContent(&tgbotapi.Message{Sticker: &tgbotapi.Sticker{FileID: "sticker.webp"}})
+	if err != nil {
+		t.Fatalf("normalizeIncomingContent error: %v", err)
+	}
+	if content != "" || len(parts) != 1 {
+		t.Fatalf("expected image-only sticker content, got content=%q parts=%#v", content, parts)
+	}
 }

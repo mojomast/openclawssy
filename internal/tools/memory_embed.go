@@ -114,8 +114,8 @@ func resolveProviderEndpoint(cfg config.Config, provider string) (config.Provide
 		return cfg.Providers.Requesty, nil
 	case "zai":
 		return cfg.Providers.ZAI, nil
-	case "generic":
-		return cfg.Providers.Generic, nil
+	case "openai_compat":
+		return cfg.Providers.OpenAICompat, nil
 	default:
 		return config.ProviderEndpointConfig{}, fmt.Errorf("unsupported provider: %s", provider)
 	}

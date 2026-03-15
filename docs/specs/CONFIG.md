@@ -21,7 +21,7 @@ Default shipping profile:
 - `requesty`
 - `hatz` (Hatz AI endpoint with `/chat/completions` and `/chat/models` support)
 - `zai` (ZAI coding-plan compatible OpenAI-style endpoint)
-- `generic` (any OpenAI-compatible base URL)
+- `openai_compat` (any OpenAI-compatible base URL)
 
 Provider API key env defaults:
 - `openai` -> `OPENAI_API_KEY`
@@ -29,7 +29,7 @@ Provider API key env defaults:
 - `requesty` -> `REQUESTY_API_KEY`
 - `hatz` -> `HATZ_API_KEY`
 - `zai` -> `ZAI_API_KEY`
-- `generic` -> `OPENAI_COMPAT_API_KEY`
+- `openai_compat` -> `OPENAI_COMPAT_API_KEY`
 
 ## Runtime Schema
 
@@ -106,7 +106,7 @@ Provider API key env defaults:
       "base_url": "https://api.z.ai/api/coding/paas/v4",
       "api_key_env": "ZAI_API_KEY"
     },
-    "generic": {
+    "openai_compat": {
       "base_url": "",
       "api_key_env": "OPENAI_COMPAT_API_KEY"
     }
@@ -299,7 +299,7 @@ When `SubAgentRunner` is not configured, execution-dependent delegation modes (`
 - `memory.auto_checkpoint` enables default scheduler checkpoint wiring (`@every 6h`).
 - `memory.proactive_enabled` enables proactive memory-triggered inter-agent message hooks.
 - `memory.embeddings_enabled` enables embedding sync and semantic hybrid recall.
-- `memory.embedding_provider` selects provider for embedding API calls (`openai|openrouter|requesty|zai|generic`).
+- `memory.embedding_provider` selects provider for embedding API calls (`openai|openrouter|requesty|zai|openai_compat`).
 - `memory.embedding_model` sets embedding model name for provider requests.
 - `memory.event_buffer_size` controls async event ingestion queue capacity.
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"openclawssy/internal/chatstore"
+	"openclawssy/internal/messagecontent"
 )
 
 func TestConnectorQueuesAllowedMessage(t *testing.T) {
@@ -24,7 +25,7 @@ func TestConnectorQueuesAllowedMessage(t *testing.T) {
 		RateLimiter:    limiter,
 		DefaultAgentID: "default",
 		Store:          store,
-		Queue: func(ctx context.Context, agentID, message, source, sessionID, thinkingMode string) (QueuedRun, error) {
+		Queue: func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
 			_ = ctx
 			if sessionID == "" {
 				t.Fatal("expected session id")
@@ -37,6 +38,9 @@ func TestConnectorQueuesAllowedMessage(t *testing.T) {
 			}
 			if thinkingMode != "" {
 				t.Fatalf("expected empty thinking mode, got %q", thinkingMode)
+			}
+			if len(contentParts) != 0 {
+				t.Fatalf("expected no content parts, got %#v", contentParts)
 			}
 			return QueuedRun{ID: "run-1", Status: "queued"}, nil
 		},
@@ -67,7 +71,8 @@ func TestConnectorRejectsUnallowlisted(t *testing.T) {
 			}
 			return store
 		}(),
-		Queue: func(ctx context.Context, agentID, message, source, sessionID, thinkingMode string) (QueuedRun, error) {
+		Queue: func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
+			_ = contentParts
 			return QueuedRun{}, nil
 		},
 	}
@@ -88,7 +93,8 @@ func TestConnectorNewResumeAndChatsCommands(t *testing.T) {
 	connector := &Connector{
 		Store:          store,
 		DefaultAgentID: "default",
-		Queue: func(ctx context.Context, agentID, message, source, sessionID, thinkingMode string) (QueuedRun, error) {
+		Queue: func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
+			_ = contentParts
 			if sessionID == "" {
 				t.Fatal("expected session id")
 			}
@@ -146,11 +152,14 @@ func TestConnectorQueuesRawMessageAndStoresHistory(t *testing.T) {
 	connector := &Connector{
 		Store:          store,
 		DefaultAgentID: "default",
-		Queue: func(ctx context.Context, agentID, message, source, sessionID, thinkingMode string) (QueuedRun, error) {
+		Queue: func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
 			queuedMessage = message
 			queuedSessionID = sessionID
 			if thinkingMode != "always" {
 				t.Fatalf("expected thinking mode override to propagate, got %q", thinkingMode)
+			}
+			if len(contentParts) != 0 {
+				t.Fatalf("expected no content parts, got %#v", contentParts)
 			}
 			return QueuedRun{ID: "run-1", Status: "queued"}, nil
 		},
@@ -208,7 +217,8 @@ func TestConnectorGlobalRateLimiterReturnsCooldown(t *testing.T) {
 		Store:          store,
 		DefaultAgentID: "default",
 		GlobalLimiter:  NewRateLimiterWithClock(1, time.Minute, clock),
-		Queue: func(ctx context.Context, agentID, message, source, sessionID, thinkingMode string) (QueuedRun, error) {
+		Queue: func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
+			_ = contentParts
 			return QueuedRun{ID: "run-1", Status: "queued"}, nil
 		},
 	}
@@ -245,7 +255,8 @@ func TestConnectorClosedSessionGetsReplacedAndCannotResume(t *testing.T) {
 	connector := &Connector{
 		Store:          store,
 		DefaultAgentID: "default",
-		Queue: func(ctx context.Context, agentID, message, source, sessionID, thinkingMode string) (QueuedRun, error) {
+		Queue: func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
+			_ = contentParts
 			queuedSessionIDs = append(queuedSessionIDs, sessionID)
 			return QueuedRun{ID: "run-1", Status: "queued"}, nil
 		},
@@ -300,7 +311,12 @@ func TestConnectorAgentSwitchCommand(t *testing.T) {
 	connector := &Connector{
 		Store:          store,
 		DefaultAgentID: "default",
-		Queue: func(ctx context.Context, agentID, message, source, sessionID, thinkingMode string) (QueuedRun, error) {
+		Queue: func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
+			_ = message
+			_ = source
+			_ = sessionID
+			_ = thinkingMode
+			_ = contentParts
 			queuedAgent = agentID
 			return QueuedRun{ID: "run-1", Status: "queued"}, nil
 		},
@@ -319,5 +335,47 @@ func TestConnectorAgentSwitchCommand(t *testing.T) {
 	}
 	if queuedAgent != "alpha" {
 		t.Fatalf("expected queued agent alpha, got %q", queuedAgent)
+	}
+}
+
+func TestConnectorQueuesContentPartsAndStoresHistory(t *testing.T) {
+	store, err := chatstore.NewStore(filepath.Join(t.TempDir(), ".openclawssy", "agents"))
+	if err != nil {
+		t.Fatalf("new chat store: %v", err)
+	}
+	var queuedParts []messagecontent.Part
+	connector := &Connector{
+		Store:          store,
+		DefaultAgentID: "default",
+		Queue: func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
+			_ = ctx
+			_ = agentID
+			_ = source
+			_ = sessionID
+			_ = thinkingMode
+			if !strings.Contains(message, "sticker") {
+				t.Fatalf("expected text prompt preserved, got %q", message)
+			}
+			queuedParts = append([]messagecontent.Part(nil), contentParts...)
+			return QueuedRun{ID: "run-1", Status: "queued"}, nil
+		},
+	}
+	parts := []messagecontent.Part{{Type: messagecontent.TypeText, Text: "use this sticker"}, {Type: messagecontent.TypeImage, MIMEType: "image/webp", Data: "AAAA"}}
+	if _, err := connector.HandleMessage(context.Background(), Message{UserID: "u1", RoomID: "dashboard", Source: "dashboard", Text: "use this sticker", ContentParts: parts}); err != nil {
+		t.Fatalf("handle message: %v", err)
+	}
+	if len(queuedParts) != 2 || queuedParts[1].Type != messagecontent.TypeImage {
+		t.Fatalf("expected queued content parts, got %#v", queuedParts)
+	}
+	sessions, err := store.ListSessions("default", "u1", "dashboard", "dashboard")
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	msgs, err := store.ReadRecentMessages(sessions[0].SessionID, 10)
+	if err != nil {
+		t.Fatalf("read recent messages: %v", err)
+	}
+	if len(msgs) != 1 || len(msgs[0].ContentParts) != 2 {
+		t.Fatalf("expected stored content parts, got %+v", msgs)
 	}
 }

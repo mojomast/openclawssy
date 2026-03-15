@@ -18,6 +18,7 @@ import (
 	"openclawssy/internal/channels/telegram"
 	"openclawssy/internal/chatstore"
 	"openclawssy/internal/config"
+	"openclawssy/internal/messagecontent"
 	"openclawssy/internal/scheduler"
 )
 
@@ -47,10 +48,11 @@ func TestChatAdaptersRouteBySource(t *testing.T) {
 	connector := &chat.Connector{
 		Store:          store,
 		DefaultAgentID: "default",
-		Queue: func(ctx context.Context, agentID, message, source, sessionID, thinkingMode string) (chat.QueuedRun, error) {
+		Queue: func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (chat.QueuedRun, error) {
 			_ = ctx
 			_ = agentID
 			_ = message
+			_ = contentParts
 			if sessionID == "" {
 				t.Fatal("expected session id")
 			}
@@ -151,10 +153,11 @@ func TestScopedChatAdapterRateLimitIncludesCooldown(t *testing.T) {
 		Store:          store,
 		DefaultAgentID: "default",
 		GlobalLimiter:  chat.NewRateLimiterWithClock(1, time.Minute, clock),
-		Queue: func(ctx context.Context, agentID, message, source, sessionID, thinkingMode string) (chat.QueuedRun, error) {
+		Queue: func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (chat.QueuedRun, error) {
 			_ = ctx
 			_ = agentID
 			_ = message
+			_ = contentParts
 			_ = source
 			_ = sessionID
 			_ = thinkingMode

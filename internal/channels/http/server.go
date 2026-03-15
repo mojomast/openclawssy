@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"openclawssy/internal/config"
+	"openclawssy/internal/messagecontent"
 )
 
 const defaultAddr = "127.0.0.1:8080"
@@ -42,11 +43,12 @@ type Server struct {
 }
 
 type ChatMessage struct {
-	UserID       string `json:"user_id"`
-	RoomID       string `json:"room_id"`
-	AgentID      string `json:"agent_id,omitempty"`
-	Message      string `json:"message"`
-	ThinkingMode string `json:"thinking_mode,omitempty"`
+	UserID       string                `json:"user_id"`
+	RoomID       string                `json:"room_id"`
+	AgentID      string                `json:"agent_id,omitempty"`
+	Message      string                `json:"message"`
+	ContentParts []messagecontent.Part `json:"content_parts,omitempty"`
+	ThinkingMode string                `json:"thinking_mode,omitempty"`
 }
 
 type ChatConnector interface {
@@ -64,6 +66,7 @@ type ExecutionInput struct {
 	RunID        string
 	AgentID      string
 	Message      string
+	ContentParts []messagecontent.Part
 	Source       string
 	SessionID    string
 	ThinkingMode string
@@ -165,8 +168,9 @@ func (s *Server) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "request.invalid_json", "invalid json body", 0)
 		return
 	}
-	if req.UserID == "" || req.Message == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "request.invalid_input", "user_id and message are required", 0)
+	req.ContentParts = messagecontent.Normalize(req.ContentParts)
+	if strings.TrimSpace(req.UserID) == "" || (strings.TrimSpace(req.Message) == "" && len(req.ContentParts) == 0) {
+		writeErrorJSON(w, http.StatusBadRequest, "request.invalid_input", "user_id and message or content_parts are required", 0)
 		return
 	}
 	if strings.TrimSpace(req.ThinkingMode) != "" {
@@ -293,6 +297,7 @@ func (s *Server) handlePostRun(w http.ResponseWriter, r *http.Request) {
 		s.executor,
 		req.AgentID,
 		req.Message,
+		nil,
 		"http",
 		"",
 		req.ThinkingMode,

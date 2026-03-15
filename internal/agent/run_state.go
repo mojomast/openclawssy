@@ -476,7 +476,7 @@ func (s *runState) prepareSystemPrompt(ctx context.Context, input RunInput) stri
 		systemPrompt = appendPromptDirective(systemPrompt, "# TOOL_PARSE_RECOVERY_MODE\n- Your previous response attempted tool calls in an invalid format and no tool executed.\n- Output tool calls only as fenced JSON objects with this exact shape:\n```json\n{\"tool_name\":\"<tool.name>\",\"arguments\":{...}}\n```\n- Do not use pseudo-XML tags such as <tool_call> or <arg_value>.")
 	}
 	if input.SystemPromptExt != nil {
-		extended := input.SystemPromptExt(ctx, systemPrompt, append([]ChatMessage(nil), s.messages...), input.Message, append([]ToolCallResult(nil), s.toolResults...))
+		extended := input.SystemPromptExt(ctx, systemPrompt, append([]ChatMessage(nil), s.messages...), input.Message, append([]ToolCallResult(nil), s.toolResults...), input.Source)
 		if strings.TrimSpace(extended) != "" {
 			systemPrompt = extended
 		}
@@ -894,7 +894,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 			}
 			if len(s.toolResults) > 0 {
 				if isTransientProviderModelError(err) {
-					if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, "# TRANSIENT_MODEL_ERROR_RECOVERY\n- Your previous model turn ended with a transient provider interruption after tool work.\n- Do not call tools in this recovery turn.\n- Use the latest tool results to answer the user directly.\n- If the tool results are incomplete, say what remains and mention that the stream was interrupted."); finalized != "" {
+					if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, input.Source, "# TRANSIENT_MODEL_ERROR_RECOVERY\n- Your previous model turn ended with a transient provider interruption after tool work.\n- Do not call tools in this recovery turn.\n- Use the latest tool results to answer the user directly.\n- If the tool results are incomplete, say what remains and mention that the stream was interrupted."); finalized != "" {
 						s.out.FinalText = strings.TrimSpace(finalized)
 						s.out.CompletedAt = time.Now().UTC()
 						return s.out, nil
@@ -942,7 +942,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 			finalText := strings.TrimSpace(resp.FinalText)
 			if finalText == "" {
 				if len(s.toolResults) > 0 {
-					if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, "# EMPTY_FINAL_TEXT_RECOVERY\n- Your previous final response was empty.\n- Provide a concise user-facing final answer from the latest tool results."); finalized != "" {
+					if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, input.Source, "# EMPTY_FINAL_TEXT_RECOVERY\n- Your previous final response was empty.\n- Provide a concise user-facing final answer from the latest tool results."); finalized != "" {
 						finalText = strings.TrimSpace(finalized)
 					}
 				}
@@ -971,7 +971,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 			s.out.ThinkingPresent = s.thinkingPresent
 			s.out.ToolParseFailure = s.toolParseFailure
 			if len(s.toolResults) > 0 {
-				if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, ""); finalized != "" {
+				if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, input.Source, ""); finalized != "" {
 					s.out.FinalText = finalized
 					s.out.CompletedAt = time.Now().UTC()
 					return s.out, nil
@@ -1124,7 +1124,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 
 		// Fast-finalize when all tool calls have been repetition-blocked for 2+ iterations
 		if s.allBlockedIterations >= 2 && len(s.toolResults) > 0 {
-			if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, ""); finalized != "" {
+			if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, input.Source, ""); finalized != "" {
 				s.out.FinalText = finalized
 			} else {
 				s.out.FinalText = fallbackFromNoProgressToolResults(s.toolResults)
@@ -1146,7 +1146,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 		}
 
 		if s.noProgressIterations >= repeatedNoProgressLoopCapTrigger && len(s.toolResults) > 0 {
-			if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, ""); finalized != "" {
+			if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, input.Source, ""); finalized != "" {
 				s.out.FinalText = finalized
 			} else {
 				s.out.FinalText = fallbackFromNoProgressToolResults(s.toolResults)

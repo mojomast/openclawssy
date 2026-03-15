@@ -141,7 +141,7 @@ Relevant `memory` settings:
 
 Embedding provider supports:
 
-- `openai`, `openrouter`, `requesty`, `zai`, `generic`
+- `openai`, `openrouter`, `requesty`, `zai`, `openai_compat`
 
 OpenRouter defaults are wired via `providers.openrouter.base_url` and `OPENROUTER_API_KEY`.
 

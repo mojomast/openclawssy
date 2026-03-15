@@ -18,6 +18,7 @@ import (
 	"openclawssy/internal/chatstore"
 	"openclawssy/internal/config"
 	"openclawssy/internal/memory"
+	"openclawssy/internal/messagecontent"
 	"openclawssy/internal/sandbox"
 	"openclawssy/internal/tools"
 )
@@ -85,6 +86,20 @@ func TestEngineInitBootstrapsClawDefuckifier(t *testing.T) {
 func TestNewEngineRequiresRootDir(t *testing.T) {
 	if _, err := NewEngine(""); err == nil {
 		t.Fatal("expected error when root dir is empty")
+	}
+}
+
+func TestToolArgPropertiesArrayIncludesItems(t *testing.T) {
+	props := toolArgProperties(map[string]tools.ArgType{"allowed_tools": tools.ArgTypeArray})
+	schema, ok := props["allowed_tools"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected schema object, got %#v", props["allowed_tools"])
+	}
+	if schema["type"] != "array" {
+		t.Fatalf("expected array type, got %#v", schema["type"])
+	}
+	if _, ok := schema["items"].(map[string]any); !ok {
+		t.Fatalf("expected items schema, got %#v", schema["items"])
 	}
 }
 
@@ -229,6 +244,73 @@ func TestExecuteWithInputWritesDecisionRecordsToAudit(t *testing.T) {
 	}
 	if !decisionTypes[agent.DecisionRecordTypeTermination] {
 		t.Fatalf("expected termination decision record, got %v", decisionTypes)
+	}
+}
+
+func TestExecuteWithInputAllowsImageOnlyMessage(t *testing.T) {
+	root := t.TempDir()
+	e, err := NewEngine(root)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	if err := e.Init("default", false); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{"message": map[string]string{"content": "ok"}}},
+		})
+	}))
+	defer server.Close()
+
+	cfgPath := filepath.Join(root, ".openclawssy", "config.json")
+	cfg, err := config.LoadOrDefault(cfgPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.Model.Provider = "openai_compat"
+	cfg.Model.Name = "test-model"
+	cfg.Providers.OpenAICompat.BaseURL = server.URL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	res, err := e.ExecuteWithInput(context.Background(), ExecuteInput{
+		AgentID:      "default",
+		ContentParts: []messagecontent.Part{{Type: messagecontent.TypeImage, MIMEType: "image/png", Data: "AAAA"}},
+		Source:       "telegram",
+	})
+	if err != nil {
+		t.Fatalf("execute image-only input: %v", err)
+	}
+	if strings.TrimSpace(res.RunID) == "" {
+		t.Fatalf("expected run id, got %+v", res)
+	}
+}
+
+func TestSystemPromptExtenderAddsTelegramStickerChatDirective(t *testing.T) {
+	e, err := NewEngine(t.TempDir())
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	ext := e.systemPromptExtender(config.Default(), "default", "run-1")
+	if ext == nil {
+		t.Fatal("expected system prompt extender")
+	}
+	prompt := ext(context.Background(), "base prompt", nil, "", nil, "telegram")
+	if !strings.Contains(prompt, "TELEGRAM_STICKER_CHAT_CONTEXT") {
+		t.Fatalf("expected telegram sticker chat directive, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "Do not respond by merely describing the sticker") {
+		t.Fatalf("expected anti-description guidance, got %q", prompt)
+	}
+	prompt = ext(context.Background(), "base prompt", nil, "", nil, "dashboard")
+	if strings.Contains(prompt, "TELEGRAM_STICKER_CHAT_CONTEXT") {
+		t.Fatalf("did not expect telegram directive for dashboard source, got %q", prompt)
 	}
 }
 
@@ -908,11 +990,11 @@ func TestExecuteWithInputUsesStructuredHistoryForSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Model.Provider = "generic"
+	cfg.Model.Provider = "openai_compat"
 	cfg.Model.Name = "test-model"
-	cfg.Providers.Generic.BaseURL = server.URL
-	cfg.Providers.Generic.APIKey = "test-key"
-	cfg.Providers.Generic.APIKeyEnv = ""
+	cfg.Providers.OpenAICompat.BaseURL = server.URL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -984,11 +1066,11 @@ func TestExecuteWithInputIncludesHistoricalToolMessagesInModelContext(t *testing
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Model.Provider = "generic"
+	cfg.Model.Provider = "openai_compat"
 	cfg.Model.Name = "test-model"
-	cfg.Providers.Generic.BaseURL = server.URL
-	cfg.Providers.Generic.APIKey = "test-key"
-	cfg.Providers.Generic.APIKeyEnv = ""
+	cfg.Providers.OpenAICompat.BaseURL = server.URL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -1216,11 +1298,11 @@ func TestExecuteWithInputPersistsMultiToolChatFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Model.Provider = "generic"
+	cfg.Model.Provider = "openai_compat"
 	cfg.Model.Name = "test-model"
-	cfg.Providers.Generic.BaseURL = server.URL
-	cfg.Providers.Generic.APIKey = "test-key"
-	cfg.Providers.Generic.APIKeyEnv = ""
+	cfg.Providers.OpenAICompat.BaseURL = server.URL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -1375,12 +1457,12 @@ func TestExecuteWithInputTruncatesLongHistoryAndKeepsLatestTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Model.Provider = "generic"
+	cfg.Model.Provider = "openai_compat"
 	cfg.Model.Name = "test-model"
 	cfg.Model.MaxTokens = 20000
-	cfg.Providers.Generic.BaseURL = server.URL
-	cfg.Providers.Generic.APIKey = "test-key"
-	cfg.Providers.Generic.APIKeyEnv = ""
+	cfg.Providers.OpenAICompat.BaseURL = server.URL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -1447,11 +1529,11 @@ func TestExecuteWithInputRepeatedToolCallIsHandledWithoutFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Model.Provider = "generic"
+	cfg.Model.Provider = "openai_compat"
 	cfg.Model.Name = "test-model"
-	cfg.Providers.Generic.BaseURL = server.URL
-	cfg.Providers.Generic.APIKey = "test-key"
-	cfg.Providers.Generic.APIKeyEnv = ""
+	cfg.Providers.OpenAICompat.BaseURL = server.URL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -1507,11 +1589,11 @@ func TestExecuteWithInputPersistsToolMessageEvenWhenRunFailsLater(t *testing.T) 
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Model.Provider = "generic"
+	cfg.Model.Provider = "openai_compat"
 	cfg.Model.Name = "test-model"
-	cfg.Providers.Generic.BaseURL = server.URL
-	cfg.Providers.Generic.APIKey = "test-key"
-	cfg.Providers.Generic.APIKeyEnv = ""
+	cfg.Providers.OpenAICompat.BaseURL = server.URL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -1594,11 +1676,11 @@ func TestExecuteWithInputLogsAndTracesOnToolCallCallbackFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Model.Provider = "generic"
+	cfg.Model.Provider = "openai_compat"
 	cfg.Model.Name = "test-model"
-	cfg.Providers.Generic.BaseURL = server.URL
-	cfg.Providers.Generic.APIKey = "test-key"
-	cfg.Providers.Generic.APIKeyEnv = ""
+	cfg.Providers.OpenAICompat.BaseURL = server.URL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -1672,11 +1754,11 @@ func TestExecuteDefaultNeverDoesNotShowThinkingOnSuccessfulRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Model.Provider = "generic"
+	cfg.Model.Provider = "openai_compat"
 	cfg.Model.Name = "test-model"
-	cfg.Providers.Generic.BaseURL = server.URL
-	cfg.Providers.Generic.APIKey = "test-key"
-	cfg.Providers.Generic.APIKeyEnv = ""
+	cfg.Providers.OpenAICompat.BaseURL = server.URL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -1713,11 +1795,11 @@ func TestExecuteOnErrorShowsThinkingOnParseFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Model.Provider = "generic"
+	cfg.Model.Provider = "openai_compat"
 	cfg.Model.Name = "test-model"
-	cfg.Providers.Generic.BaseURL = server.URL
-	cfg.Providers.Generic.APIKey = "test-key"
-	cfg.Providers.Generic.APIKeyEnv = ""
+	cfg.Providers.OpenAICompat.BaseURL = server.URL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
 	cfg.Output.ThinkingMode = config.ThinkingModeOnError
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)
@@ -1755,11 +1837,11 @@ func TestExecuteDefaultNeverHidesThinkingOnParseFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Model.Provider = "generic"
+	cfg.Model.Provider = "openai_compat"
 	cfg.Model.Name = "test-model"
-	cfg.Providers.Generic.BaseURL = server.URL
-	cfg.Providers.Generic.APIKey = "test-key"
-	cfg.Providers.Generic.APIKeyEnv = ""
+	cfg.Providers.OpenAICompat.BaseURL = server.URL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -1796,11 +1878,11 @@ func TestExecuteAlwaysThinkingModeAlwaysShowsThinking(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Model.Provider = "generic"
+	cfg.Model.Provider = "openai_compat"
 	cfg.Model.Name = "test-model"
-	cfg.Providers.Generic.BaseURL = server.URL
-	cfg.Providers.Generic.APIKey = "test-key"
-	cfg.Providers.Generic.APIKeyEnv = ""
+	cfg.Providers.OpenAICompat.BaseURL = server.URL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -1837,11 +1919,11 @@ func TestExecutePersistsRedactedThinkingInTraceArtifactAndAudit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Model.Provider = "generic"
+	cfg.Model.Provider = "openai_compat"
 	cfg.Model.Name = "test-model"
-	cfg.Providers.Generic.BaseURL = server.URL
-	cfg.Providers.Generic.APIKey = "test-key"
-	cfg.Providers.Generic.APIKeyEnv = ""
+	cfg.Providers.OpenAICompat.BaseURL = server.URL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -1908,11 +1990,11 @@ func TestExecuteTruncatesThinkingUsingConfiguredMaxChars(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Model.Provider = "generic"
+	cfg.Model.Provider = "openai_compat"
 	cfg.Model.Name = "test-model"
-	cfg.Providers.Generic.BaseURL = server.URL
-	cfg.Providers.Generic.APIKey = "test-key"
-	cfg.Providers.Generic.APIKeyEnv = ""
+	cfg.Providers.OpenAICompat.BaseURL = server.URL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
 	cfg.Output.MaxThinkingChars = 90
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)
@@ -1960,11 +2042,11 @@ func TestExecuteIncludesParseDiagnosticsOnParseFailureEvenWhenThinkingNever(t *t
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Model.Provider = "generic"
+	cfg.Model.Provider = "openai_compat"
 	cfg.Model.Name = "test-model"
-	cfg.Providers.Generic.BaseURL = server.URL
-	cfg.Providers.Generic.APIKey = "test-key"
-	cfg.Providers.Generic.APIKeyEnv = ""
+	cfg.Providers.OpenAICompat.BaseURL = server.URL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
 	cfg.Output.ThinkingMode = config.ThinkingModeNever
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)
@@ -2012,11 +2094,11 @@ func TestExecuteDoesNotExposeParseDiagnosticsWithoutParseFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Model.Provider = "generic"
+	cfg.Model.Provider = "openai_compat"
 	cfg.Model.Name = "test-model"
-	cfg.Providers.Generic.BaseURL = server.URL
-	cfg.Providers.Generic.APIKey = "test-key"
-	cfg.Providers.Generic.APIKeyEnv = ""
+	cfg.Providers.OpenAICompat.BaseURL = server.URL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -2053,11 +2135,11 @@ func TestExecuteRejectsWhenEngineConcurrencyLimitExceeded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Model.Provider = "generic"
+	cfg.Model.Provider = "openai_compat"
 	cfg.Model.Name = "test-model"
-	cfg.Providers.Generic.BaseURL = server.URL
-	cfg.Providers.Generic.APIKey = "test-key"
-	cfg.Providers.Generic.APIKeyEnv = ""
+	cfg.Providers.OpenAICompat.BaseURL = server.URL
+	cfg.Providers.OpenAICompat.APIKey = "test-key"
+	cfg.Providers.OpenAICompat.APIKeyEnv = ""
 	cfg.Engine.MaxConcurrentRuns = 1
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)

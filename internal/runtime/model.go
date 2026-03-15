@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 
 	"openclawssy/internal/agent"
 	"openclawssy/internal/config"
+	"openclawssy/internal/messagecontent"
 	"openclawssy/internal/toolparse"
 )
 
@@ -65,6 +67,16 @@ type providerStreamingToolCallDelta struct {
 type providerResponseContentPart struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
+}
+
+type providerRequestImageURL struct {
+	URL string `json:"url"`
+}
+
+type providerRequestContentPart struct {
+	Type     string                   `json:"type"`
+	Text     string                   `json:"text,omitempty"`
+	ImageURL *providerRequestImageURL `json:"image_url,omitempty"`
 }
 
 type providerResponseOutputItem struct {
@@ -353,6 +365,56 @@ func normalizeProviderMessageRole(providerName, role string) string {
 	return cleanRole
 }
 
+func buildProviderChatMessage(item agent.ChatMessage) any {
+	parts := messagecontent.Normalize(item.ContentParts)
+	if len(parts) == 0 {
+		return map[string]string{"role": item.Role, "content": item.Content}
+	}
+	providerParts := buildProviderContentParts(strings.TrimSpace(item.Content), parts)
+	if len(providerParts) == 0 {
+		return map[string]string{"role": item.Role, "content": item.Content}
+	}
+	return map[string]any{"role": item.Role, "content": providerParts}
+}
+
+func buildProviderContentParts(content string, parts []messagecontent.Part) []providerRequestContentPart {
+	providerParts := make([]providerRequestContentPart, 0, len(parts)+1)
+	hasTextPart := false
+	for _, part := range parts {
+		switch strings.ToLower(strings.TrimSpace(part.Type)) {
+		case messagecontent.TypeText:
+			text := strings.TrimSpace(part.Text)
+			if text == "" {
+				continue
+			}
+			hasTextPart = true
+			providerParts = append(providerParts, providerRequestContentPart{Type: "text", Text: text})
+		case messagecontent.TypeImage:
+			url := inlineImageDataURL(part)
+			if url == "" {
+				continue
+			}
+			providerParts = append(providerParts, providerRequestContentPart{Type: "image_url", ImageURL: &providerRequestImageURL{URL: url}})
+		}
+	}
+	if !hasTextPart && strings.TrimSpace(content) != "" {
+		providerParts = append([]providerRequestContentPart{{Type: "text", Text: strings.TrimSpace(content)}}, providerParts...)
+	}
+	return providerParts
+}
+
+func inlineImageDataURL(part messagecontent.Part) string {
+	mimeType := strings.TrimSpace(part.MIMEType)
+	data := strings.TrimSpace(part.Data)
+	if mimeType == "" || data == "" {
+		return ""
+	}
+	if _, err := base64.StdEncoding.DecodeString(data); err != nil {
+		return ""
+	}
+	return "data:" + mimeType + ";base64," + data
+}
+
 func (m *ProviderModel) ProviderName() string { return m.providerName }
 func (m *ProviderModel) ModelName() string    { return m.modelName }
 
@@ -386,18 +448,19 @@ func (m *ProviderModel) Generate(ctx context.Context, req agent.ModelRequest) (a
 		}
 		role = normalizeProviderMessageRole(m.providerName, role)
 		content := strings.TrimSpace(item.Content)
-		if content == "" {
+		parts := messagecontent.Normalize(item.ContentParts)
+		if content == "" && len(parts) == 0 {
 			continue
 		}
-		normalizedMessages = append(normalizedMessages, agent.ChatMessage{Role: role, Content: content})
+		normalizedMessages = append(normalizedMessages, agent.ChatMessage{Role: role, Content: content, ContentParts: parts})
 	}
 
 	normalizedMessages = compactMessagesForContext(promptText, normalizedMessages, m.contextWindow)
 
-	chatMessages := make([]map[string]string, 0, len(normalizedMessages)+1)
+	chatMessages := make([]any, 0, len(normalizedMessages)+1)
 	chatMessages = append(chatMessages, map[string]string{"role": "system", "content": promptText})
 	for _, item := range normalizedMessages {
-		chatMessages = append(chatMessages, map[string]string{"role": item.Role, "content": item.Content})
+		chatMessages = append(chatMessages, buildProviderChatMessage(item))
 	}
 
 	body := map[string]any{
@@ -406,7 +469,7 @@ func (m *ProviderModel) Generate(ctx context.Context, req agent.ModelRequest) (a
 		"max_tokens": m.responseMaxTokens,
 	}
 	if len(req.ToolSchemas) > 0 {
-		body["tools"] = buildProviderTools(req.ToolSchemas)
+		body["tools"] = buildProviderTools(m.providerName, req.ToolSchemas)
 		body["tool_choice"] = "auto"
 	}
 	if req.OnTextDelta != nil {
@@ -1373,6 +1436,12 @@ func estimateConversationTokens(systemPrompt string, messages []agent.ChatMessag
 	for _, msg := range messages {
 		total += estimateTokens(msg.Role)
 		total += estimateTokens(msg.Content)
+		for _, part := range msg.ContentParts {
+			total += estimateTokens(part.Type)
+			total += estimateTokens(part.Text)
+			total += estimateTokens(part.MIMEType)
+			total += len(part.Data) / 16
+		}
 		total += 4
 	}
 	return total
@@ -2393,19 +2462,19 @@ func parseArgsString(argsStr string) map[string]any {
 	return args
 }
 
-func buildProviderTools(schemas []agent.ToolSchema) []map[string]any {
+func buildProviderTools(providerName string, schemas []agent.ToolSchema) []map[string]any {
 	if len(schemas) == 0 {
 		return nil
 	}
 	out := make([]map[string]any, 0, len(schemas))
 	for _, schema := range schemas {
-		name := strings.TrimSpace(schema.Name)
+		name := normalizeProviderToolSchemaName(providerName, schema.Name)
 		if name == "" {
 			continue
 		}
 		fn := map[string]any{
 			"name":       name,
-			"parameters": schema.Parameters,
+			"parameters": normalizeProviderToolParameters(schema.Parameters),
 		}
 		if desc := strings.TrimSpace(schema.Description); desc != "" {
 			fn["description"] = desc
@@ -2419,6 +2488,62 @@ func buildProviderTools(schemas []agent.ToolSchema) []map[string]any {
 		})
 	}
 	return out
+}
+
+func normalizeProviderToolSchemaName(providerName, name string) string {
+	clean := strings.TrimSpace(name)
+	if clean == "" {
+		return ""
+	}
+	if strings.EqualFold(strings.TrimSpace(providerName), "openai_compat") {
+		return strings.ReplaceAll(clean, ".", "__")
+	}
+	return clean
+}
+
+func normalizeProviderToolParameters(parameters map[string]any) map[string]any {
+	if len(parameters) == 0 {
+		return map[string]any{"type": "object", "properties": map[string]any{}, "required": []string{}}
+	}
+	clean := normalizeToolSchemaValue(parameters).(map[string]any)
+	if _, ok := clean["type"]; !ok {
+		clean["type"] = "object"
+	}
+	if _, ok := clean["properties"]; !ok || clean["properties"] == nil {
+		clean["properties"] = map[string]any{}
+	}
+	if _, ok := clean["required"]; !ok || clean["required"] == nil {
+		clean["required"] = []string{}
+	}
+	return clean
+}
+
+func normalizeToolSchemaValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, child := range typed {
+			if key == "required" && child == nil {
+				out[key] = []string{}
+				continue
+			}
+			out[key] = normalizeToolSchemaValue(child)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, child := range typed {
+			out[i] = normalizeToolSchemaValue(child)
+		}
+		return out
+	case []string:
+		if typed == nil {
+			return []string{}
+		}
+		return append([]string(nil), typed...)
+	default:
+		return value
+	}
 }
 
 func parseNativeProviderToolCalls(rawCalls []providerToolCall, allowed []string) ([]agent.ToolCallRequest, bool, string) {
@@ -2472,7 +2597,11 @@ func formatNativeToolCallParseFailureUserMessage(reason string) string {
 
 func requestMessages(req agent.ModelRequest) []agent.ChatMessage {
 	if len(req.Messages) > 0 {
-		return append([]agent.ChatMessage(nil), req.Messages...)
+		out := append([]agent.ChatMessage(nil), req.Messages...)
+		for i := range out {
+			out[i].ContentParts = append([]messagecontent.Part(nil), out[i].ContentParts...)
+		}
+		return out
 	}
 	msg := strings.TrimSpace(req.Message)
 	if msg == "" {
@@ -2528,8 +2657,8 @@ func providerEndpoint(cfg config.Config, provider string) (config.ProviderEndpoi
 		return cfg.Providers.Hatz, nil
 	case "zai":
 		return cfg.Providers.ZAI, nil
-	case "generic":
-		return cfg.Providers.Generic, nil
+	case "openai_compat":
+		return cfg.Providers.OpenAICompat, nil
 	default:
 		return config.ProviderEndpointConfig{}, fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -2630,8 +2759,14 @@ func canonicalToolName(name string) (string, bool) {
 		return "", false
 	}
 	canonical, ok := toolNameAliases[key]
-	if !ok {
-		return "", false
+	if ok {
+		return canonical, true
 	}
-	return canonical, true
+	if strings.Contains(key, "__") {
+		decoded := strings.ReplaceAll(key, "__", ".")
+		if canonical, ok := toolNameAliases[decoded]; ok {
+			return canonical, true
+		}
+	}
+	return "", false
 }
