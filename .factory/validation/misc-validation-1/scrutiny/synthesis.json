@@ -1,7 +1,7 @@
 {
   "milestone": "misc-validation-1",
-  "round": 1,
-  "status": "fail",
+  "round": 2,
+  "status": "pass",
   "validatorsRun": {
     "test": {
       "passed": true,
@@ -20,34 +20,30 @@
     }
   },
   "reviewsSummary": {
-    "total": 5,
-    "passed": 4,
-    "failed": 1,
-    "failedFeatures": [
-      "misc-validation-flow-validator-timeout-hardening"
-    ]
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "failedFeatures": []
   },
-  "blockingIssues": [
-    {
-      "featureId": "misc-validation-flow-validator-timeout-hardening",
-      "severity": "blocking",
-      "description": "Startup hardening for browser validators is incomplete: timeout/heartbeat guidance was improved, but deterministic bootstrap for known launcher/runtime-linker failures is still not codified in flow-validator instructions. Review evidence shows browser startup still failed on missing libnspr4 and required ad-hoc manual workaround."
-    }
-  ],
+  "blockingIssues": [],
   "appliedUpdates": [],
   "suggestedGuidanceUpdates": [
     {
-      "target": "AGENTS.md",
-      "suggestion": "Add mission-planning guidance to avoid assigning validation-infrastructure-only features to fullstack-worker, or explicitly define an approved procedure for such assignments, to reduce repeated skill-procedure drift.",
-      "evidence": "Two reviewed features in this milestone (misc-validation-flow-validator-timeout-hardening and misc-agent-browser-runtime-deps-bootstrap) were assigned fullstack-worker but changed only .factory validation assets/scripts and both reviews flagged predictable procedure misalignment.",
-      "isSystemic": true
+      "target": "skills/backend-worker",
+      "suggestion": "Add an explicit shell-script validation path for features that target `.factory/scripts/*` or other non-Go mission infrastructure files, so workers can follow procedure without forced TDD-step deviation.",
+      "evidence": "Review for `misc-agent-browser-bootstrap-statefile-parse-hardening` notes `skillFeedback.followedProcedure=false` due to backend-worker test-first steps being Go/package-only while the implementation target was shell script hardening.",
+      "isSystemic": false
     }
   ],
   "rejectedObservations": [
     {
       "observation": "The assigned fullstack-worker skill procedure does not fit validation-infrastructure-only features.",
-      "reason": "duplicate"
+      "reason": "duplicate from round 1 synthesis recommendation"
+    },
+    {
+      "observation": "`load_state` uses `source` on mutable bootstrap state file in runtime-deps bootstrap feature",
+      "reason": "resolved by misc-agent-browser-bootstrap-statefile-parse-hardening (commit 3ce2958)"
     }
   ],
-  "previousRound": null
+  "previousRound": ".factory/validation/misc-validation-1/scrutiny/synthesis.round1.json"
 }
