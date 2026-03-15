@@ -38,13 +38,79 @@ Use dashboard admin sections to manage runtime behavior:
 - **Settings**: editable safe runtime config fields
 - **Secrets**: write-only secret updates and key cleanup (values are not re-displayed)
 - **Scheduler**: recurring job create/pause/resume/delete
-- **Agents**: profile and routing controls
+- **Settings > Agents**: profile and routing controls
 - **Agent Monitor**: live main/subagent monitoring, launch, cancel, task IDs, and checkpoint visibility
 - **Memory**: memory health/stat visibility per agent
 - **Custom Dashboards**: operator-defined widget layouts with server-backed persistence
 - **Help**: full Help Center with searchable docs and a route-aware Help Drawer
+- **Control Plane**: Agent Contract, Prompt Stack, Role Templates, Delegation, and Eval pages
 
 Depending on your build/runtime features, additional pages (for example sandbox manager) may appear.
+
+## Control-plane pages
+
+All control-plane routes are hash-based under `/dashboard/#/...`.
+
+### Agent Contract (`/#/agent-contract`)
+
+- Primary APIs: `GET /api/admin/agents`, `GET /api/admin/agents/{id}/resolved`, `GET /api/admin/agents/{id}/diff?base=...`, `POST /api/admin/agents/{id}/rollback-snapshot`, `POST /api/admin/agents/{id}/rollback-restore`
+- Use it to inspect resolved vs raw contract fields, inheritance source labels, and field-level diffs against global defaults or another agent.
+- Verification notes:
+  - Switch `Resolved`/`Raw` and confirm raw view hides inherited global-only rows.
+  - Open `Diff` panel and compare against `global`.
+  - Save a rollback snapshot and restore it to validate rollback wiring.
+
+### Prompt Stack (`/#/prompt-stack`)
+
+- Primary APIs: `GET /api/admin/agents/{id}/prompt-stack`, `PUT /api/admin/agents/{id}/prompt-stack/{layer}`, `GET /preview`, `GET /history`, `GET /diff?v1=&v2=`, `POST /rollback`, `POST /lint`, `POST /test`
+- Includes all five layers: `global_operator_policy`, `agent_identity`, `tool_safety_rules`, `delegation_policy`, `session_overlay`.
+- Verification notes:
+  - Edit and save a layer, then confirm merged preview and per-layer token counts refresh.
+  - Run lint + structural tests and confirm result cards render.
+  - Load a version diff and run rollback to a selected version.
+
+### Role Templates (`/#/roles`)
+
+- Primary APIs: `GET/POST /api/admin/roles`, `PUT/DELETE /api/admin/roles/{name}`
+- Built-in roles are read-only; custom roles are fully editable/deletable.
+- Verification notes:
+  - Create a custom role with tool + timeout constraints.
+  - Confirm built-in roles show read-only messaging.
+  - Update and delete the custom role and verify list refresh.
+
+### Delegation (`/#/delegation`)
+
+- Primary APIs: `PATCH /api/admin/config` (delegation fields), `GET /v1/runs`, `GET /v1/runs/{id}`, `GET /api/admin/runs/{id}/decisions`
+- Policy editor controls `delegation_mode`, `delegation_threshold`, `delegation_cooldown_iterations`, and `auto_delegate`.
+- Task Graph Preview reads decomposition plans from selected runs; Run Comparison renders decision-ledger timelines side by side.
+- Verification notes:
+  - Save policy changes and confirm success state.
+  - Load a run with decomposition data and verify graph nodes/edges render.
+  - Compare two runs and confirm divergence summary + timeline panels.
+
+### Eval Results (`/#/eval`)
+
+- Primary API: `GET /api/admin/eval/results?limit=...&suite=...`
+- Shows suite history table with expandable details: metrics cards, case-level pass/fail table, and baseline regression panel.
+- Verification notes:
+  - Run `openclawssy eval run --suite basic` first so data exists.
+  - Refresh page and expand a row to verify metrics + baseline comparison blocks.
+
+## Runtime and validation notes
+
+- Dashboard routing is hash-based (`/#/...`) to stay compatible with embedded SPA serving.
+- Prompt stack history is persisted in `.openclawssy` via the prompt-stack version store; first-load defaults are seeded from agent docs (`SOUL.md`, `RULES.md`, `TOOLS.md`, `SPECPLAN.md`, `DEVPLAN.md`, `HEARTBEAT.md`, `HANDOFF.md`).
+- Delegation run comparison depends on decision records emitted to per-agent audit logs (`.openclawssy/agents/<agent>/audit/events.jsonl`).
+- Eval UI data is read from `.openclawssy/eval/results.db`; baseline comparisons use saved baselines under `.openclawssy/eval/baselines/`.
+- Current validation commands for this control-plane surface:
+
+```bash
+go test -parallel 2 ./...
+go vet ./...
+cd internal/channels/dashboard/ui && npx tsc --noEmit
+```
+
+- Manual sanity pass for docs/features: ensure README + this guide reflect shipped routes, APIs, and CLI commands (`openclawssy eval run|list|results|baseline set|compare`).
 
 ## Agent Monitor
 

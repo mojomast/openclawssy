@@ -89,11 +89,25 @@ Come chat about Openclawssy and other Ussyverse projects.
 ## Core Capabilities
 
 - Runtime and channels
-  - `openclawssy ask`, `openclawssy run`, `openclawssy serve`, `openclawssy cron`
+  - `openclawssy ask`, `openclawssy run`, `openclawssy serve`, `openclawssy cron`, `openclawssy eval`
   - `openclawssy remote` delegates to standalone `openclawremoteussy`
   - HTTP APIs for runs and chat queueing
-  - Dashboard admin surface for status/config/scheduler/secrets/docs
+  - Dashboard admin surface for status/config/scheduler/secrets/docs + control-plane pages
   - Discord bridge with allowlists and rate limiting
+
+- Operator control plane (Dashboard)
+  - `/#/agent-contract`: resolved/raw contract viewer with inheritance sources, diff, and rollback snapshots
+  - `/#/prompt-stack`: 5-layer prompt editor, merged preview, token budget/overflow warning, history, diff, rollback, lint, and structural tests
+  - `/#/roles`: built-in role templates (read-only) plus custom role CRUD with tool/timeout/schema constraints
+  - `/#/delegation`: delegation policy editor, decomposition task-graph preview, and run decision-ledger comparison
+  - `/#/eval`: suite history UI with metrics cards, case-level outcomes, and baseline regression highlights
+
+- Control-plane API and CLI surfaces
+  - Agent contract APIs: `GET /api/admin/agents/{id}/resolved`, `POST /api/admin/agents/{id}/validate`, `GET /api/admin/agents/{id}/diff`
+  - Prompt stack APIs: `GET /api/admin/agents/{id}/prompt-stack`, `PUT /api/admin/agents/{id}/prompt-stack/{layer}`, `GET /preview|/history|/diff`, `POST /rollback|/lint|/test`
+  - Role template APIs: `GET/POST /api/admin/roles`, `PUT/DELETE /api/admin/roles/{name}`
+  - Delegation + ledger APIs: `PATCH /api/admin/config` (`agents.delegation_*` fields), `GET /api/admin/runs/{id}/decisions`
+  - Eval APIs + CLI: `GET /api/admin/eval/results`, `openclawssy eval run|list|results|baseline set|compare`
 
 - Agent and policy control
   - Agent lifecycle tools (`agent.list`, `agent.create`, `agent.switch`)
@@ -238,6 +252,16 @@ curl -s -X POST http://127.0.0.1:8080/v1/runs \
   -H 'Authorization: Bearer change-me' \
   -H 'Content-Type: application/json' \
   -d '{"agent_id":"default","message":"summarize project status"}'
+```
+
+- Eval harness quick loop:
+
+```bash
+./bin/openclawssy eval list
+./bin/openclawssy eval run --suite basic
+./bin/openclawssy eval results --limit 10
+./bin/openclawssy eval baseline set --suite basic
+./bin/openclawssy eval compare --suite basic
 ```
 
 ## OpenClaw Remote Integration (External Repo)
