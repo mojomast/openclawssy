@@ -1,0 +1,17 @@
+{
+  "milestone": "docs-finalization",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 0,
+    "passed": 0,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "previousRound": null,
+  "notes": "No testable assertions mapped to docs-finalization: the only completed non-validator feature for this milestone has an empty fulfills list."
+}
