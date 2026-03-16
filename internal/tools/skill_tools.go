@@ -136,19 +136,22 @@ func skillRead(configuredPath string) Handler {
 			return nil, err
 		}
 
-		store, err := openSecretsStore(req.Workspace, configuredPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to open secret store: %w", err)
-		}
-		secretFound, err := readSecretPresenceMap(store)
-		if err != nil {
-			return nil, err
-		}
-		missing := missingSecrets(selected.RequiredSecrets, secretFound)
-		if len(missing) > 0 {
-			return nil, fmt.Errorf("missing required secrets for skill %s: %s (set via /api/admin/secrets or secrets.set)", selected.Name, strings.Join(missing, ", "))
-		}
 		required := standardizeRequiredSecrets(selected.RequiredSecrets)
+		missing := []string{}
+		if len(required) > 0 {
+			store, err := openSecretsStore(req.Workspace, configuredPath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to open secret store: %w", err)
+			}
+			secretFound, err := readSecretPresenceMap(store)
+			if err != nil {
+				return nil, err
+			}
+			missing = missingSecrets(selected.RequiredSecrets, secretFound)
+			if len(missing) > 0 {
+				return nil, fmt.Errorf("missing required secrets for skill %s: %s (set via /api/admin/secrets or secrets.set)", selected.Name, strings.Join(missing, ", "))
+			}
+		}
 
 		res := map[string]any{
 			"name":             selected.Name,

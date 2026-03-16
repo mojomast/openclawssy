@@ -52,6 +52,18 @@ type persistedJobs struct {
 	Jobs   []Job `json:"jobs"`
 }
 
+func normalizeSchedule(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	switch strings.ToLower(trimmed) {
+	case "@hourly", "hourly", "0 * * * *":
+		return "@every 1h"
+	case "@daily", "daily", "0 0 * * *":
+		return "@every 24h"
+	default:
+		return trimmed
+	}
+}
+
 func NewStore(path string) (*Store, error) {
 	if path == "" {
 		return nil, errors.New("scheduler: path is required")
@@ -67,6 +79,7 @@ func (s *Store) Add(job Job) error {
 	if job.ID == "" {
 		return errors.New("scheduler: job id is required")
 	}
+	job.Schedule = normalizeSchedule(job.Schedule)
 	if job.Schedule == "" {
 		return errors.New("scheduler: job schedule is required")
 	}
@@ -403,8 +416,9 @@ func (e *Executor) check(now time.Time) {
 }
 
 func isMissedRun(job Job, now time.Time) bool {
-	if strings.HasPrefix(job.Schedule, "@every ") {
-		raw := strings.TrimSpace(strings.TrimPrefix(job.Schedule, "@every "))
+	schedule := normalizeSchedule(job.Schedule)
+	if strings.HasPrefix(schedule, "@every ") {
+		raw := strings.TrimSpace(strings.TrimPrefix(schedule, "@every "))
 		d, err := time.ParseDuration(raw)
 		if err != nil || d <= 0 {
 			return false
@@ -415,7 +429,7 @@ func isMissedRun(job Job, now time.Time) bool {
 		}
 		return now.Sub(last) >= d
 	}
-	oneShotAt, err := time.Parse(time.RFC3339, job.Schedule)
+	oneShotAt, err := time.Parse(time.RFC3339, schedule)
 	if err != nil {
 		return false
 	}
@@ -427,8 +441,9 @@ func isMissedRun(job Job, now time.Time) bool {
 }
 
 func nextDue(job Job, now time.Time) (bool, bool, error) {
-	if strings.HasPrefix(job.Schedule, "@every ") {
-		raw := strings.TrimSpace(strings.TrimPrefix(job.Schedule, "@every "))
+	schedule := normalizeSchedule(job.Schedule)
+	if strings.HasPrefix(schedule, "@every ") {
+		raw := strings.TrimSpace(strings.TrimPrefix(schedule, "@every "))
 		d, err := time.ParseDuration(raw)
 		if err != nil {
 			return false, false, fmt.Errorf("scheduler: invalid duration %q: %w", raw, err)
@@ -446,9 +461,9 @@ func nextDue(job Job, now time.Time) (bool, bool, error) {
 		return now.Sub(last) >= d, false, nil
 	}
 
-	oneShotAt, err := time.Parse(time.RFC3339, job.Schedule)
+	oneShotAt, err := time.Parse(time.RFC3339, schedule)
 	if err != nil {
-		return false, false, fmt.Errorf("scheduler: invalid schedule %q", job.Schedule)
+		return false, false, fmt.Errorf("scheduler: invalid schedule %q (supported: @every <duration>, @hourly, @daily, 0 * * * *, 0 0 * * *, or RFC3339 timestamp)", job.Schedule)
 	}
 	last, err := parseLastRun(job.LastRun)
 	if err != nil {

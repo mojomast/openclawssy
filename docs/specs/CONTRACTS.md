@@ -137,8 +137,10 @@ Rules:
 - `agentID` and `message` should be provided for runnable jobs.
 - `schedule` supports only:
   - `@every <duration>` (Go duration format, for example `@every 30m`)
+  - recurring aliases `@hourly`, `hourly`, `@daily`, `daily`
+  - hourly/daily cron shorthands `0 * * * *` and `0 0 * * *` (normalized to recurring intervals)
   - one-shot RFC3339 timestamp (for example `2026-02-18T09:00:00Z`)
-- Cron expressions are not supported in v0.2 and are rejected on create/update.
+- General cron expressions are not supported in v0.2 and are rejected on create/update.
 - Missed-job policy:
   - Scheduler evaluates due jobs at each tick/startup check; it does not reconstruct every missed interval.
   - `@every` jobs that were missed while offline run at most once on the next check, then continue from that run time.

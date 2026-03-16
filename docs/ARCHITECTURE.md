@@ -32,7 +32,7 @@ Input -> ExecuteWithInput
 
 ## Scheduler Execution Path
 - Scheduler store persists jobs and pause state on disk.
-- Executor ticks at a fixed interval and computes due jobs (`@every` or RFC3339 one-shot).
+- Executor ticks at a fixed interval and computes due jobs (`@every`, normalized hourly/daily aliases, or RFC3339 one-shot).
 - Startup behavior is controlled by `scheduler.catch_up`.
 - Due jobs are dispatched through a bounded worker pool (`scheduler.max_concurrent_jobs`).
 - Each scheduled execution enqueues a normal runtime run via channel/runtime integration.

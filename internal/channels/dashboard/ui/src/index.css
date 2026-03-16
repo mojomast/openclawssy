@@ -57,3 +57,171 @@
     @apply bg-background text-foreground;
   }
 }
+
+@layer components {
+  .settings-toolbar {
+    @apply mb-4 grid gap-3 rounded-lg border bg-muted/40 p-4;
+  }
+
+  .settings-breadcrumbs {
+    @apply m-0 text-sm font-medium text-muted-foreground;
+  }
+
+  .settings-search {
+    @apply grid gap-1;
+  }
+
+  .settings-search-label {
+    @apply text-sm font-medium text-foreground;
+  }
+
+  .settings-toolbar-actions,
+  .settings-advanced-actions {
+    @apply flex flex-wrap gap-2;
+  }
+
+  .settings-toolbar-actions button,
+  .settings-advanced-actions button {
+    @apply inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .settings-toolbar-actions button.secondary,
+  .settings-advanced-actions button.secondary {
+    @apply bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80;
+  }
+
+  .settings-workspace {
+    @apply grid gap-4;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-categories {
+    @apply grid content-start gap-2 rounded-lg border bg-muted/40 p-3;
+  }
+
+  .settings-category-button {
+    @apply grid gap-1 rounded-md border bg-background p-3 text-left text-foreground transition-colors hover:bg-accent hover:text-accent-foreground;
+  }
+
+  .settings-category-button strong {
+    @apply text-sm font-semibold;
+  }
+
+  .settings-category-button span {
+    @apply text-xs text-muted-foreground;
+  }
+
+  .settings-category-button.active {
+    @apply border-primary bg-primary/10 shadow-sm;
+  }
+
+  .settings-category-content {
+    @apply rounded-lg border bg-background p-4;
+  }
+
+  .settings-category-content h3 {
+    @apply mb-1 text-xl font-semibold tracking-tight;
+  }
+
+  .settings-panel {
+    @apply grid gap-3;
+  }
+
+  .settings-field {
+    @apply grid gap-1.5 rounded-md border bg-muted/40 p-3;
+  }
+
+  .settings-field input[type="checkbox"] {
+    @apply h-4 w-4;
+  }
+
+  .settings-field-title {
+    @apply text-sm font-semibold text-foreground;
+  }
+
+  .settings-help {
+    @apply m-0 text-sm text-muted-foreground;
+  }
+
+  .settings-input,
+  .settings-select,
+  .settings-textarea,
+  .settings-raw-editor {
+    @apply w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground shadow-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring;
+  }
+
+  .settings-textarea,
+  .settings-raw-editor {
+    @apply resize-y;
+  }
+
+  .settings-raw-editor {
+    @apply min-h-[24rem] font-mono;
+  }
+
+  .settings-inline-error,
+  .settings-save-error {
+    @apply text-sm font-medium text-destructive;
+  }
+
+  .settings-save-success {
+    @apply text-sm font-medium text-emerald-600 dark:text-emerald-400;
+  }
+
+  .settings-subheading {
+    @apply mt-2 text-base font-semibold text-foreground;
+  }
+
+  .settings-diff-section {
+    @apply mt-4 border-t pt-4;
+  }
+
+  .settings-diff-summary {
+    @apply overflow-x-auto rounded-md border bg-muted/40;
+  }
+
+  .settings-diff-table {
+    @apply w-full table-fixed border-collapse;
+  }
+
+  .settings-diff-table th,
+  .settings-diff-table td {
+    @apply border-b p-2 text-left align-top text-sm;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .settings-diff-table th {
+    @apply bg-muted/80 font-semibold;
+  }
+
+  .settings-diff-table tr:last-child td {
+    @apply border-b-0;
+  }
+
+  .settings-capabilities-list {
+    @apply grid gap-2;
+  }
+
+  .settings-capability-card {
+    @apply rounded-md border border-l-4 bg-muted/40 p-3;
+  }
+
+  .settings-capability-card.enabled {
+    @apply border-l-emerald-500;
+  }
+
+  .settings-capability-card.disabled {
+    @apply border-l-amber-500;
+  }
+
+  .settings-capability-title {
+    @apply mb-1 text-sm font-semibold text-foreground;
+  }
+
+  @media (min-width: 1280px) {
+    .settings-workspace {
+      grid-template-columns: minmax(15rem, 17rem) minmax(0, 1fr);
+    }
+  }
+}

@@ -631,7 +631,7 @@ func TestNextDueAndParseLastRunValidation(t *testing.T) {
 	if _, _, err := nextDue(Job{ID: "zero-duration", Schedule: "@every 0s"}, now); err == nil {
 		t.Fatal("expected zero duration error")
 	}
-	if _, _, err := nextDue(Job{ID: "bad-schedule", Schedule: "daily"}, now); err == nil {
+	if _, _, err := nextDue(Job{ID: "bad-schedule", Schedule: "every hour please"}, now); err == nil {
 		t.Fatal("expected invalid schedule error")
 	}
 
@@ -647,5 +647,29 @@ func TestNextDueAndParseLastRunValidation(t *testing.T) {
 
 	if _, err := parseLastRun("not-a-time"); err == nil {
 		t.Fatal("expected invalid lastRun parse error")
+	}
+}
+
+func TestNextDueNormalizesHelpfulRecurringAliases(t *testing.T) {
+	now := time.Date(2026, 2, 17, 12, 0, 0, 0, time.UTC)
+
+	for _, schedule := range []string{"@hourly", "hourly", "0 * * * *"} {
+		due, disable, err := nextDue(Job{ID: "alias", Schedule: schedule, LastRun: now.Add(-2 * time.Hour).Format(time.RFC3339)}, now)
+		if err != nil {
+			t.Fatalf("nextDue %s: %v", schedule, err)
+		}
+		if !due || disable {
+			t.Fatalf("expected %s alias to behave like supported recurring schedule, got due=%v disable=%v", schedule, due, disable)
+		}
+	}
+
+	for _, schedule := range []string{"@daily", "daily", "0 0 * * *"} {
+		due, disable, err := nextDue(Job{ID: "alias", Schedule: schedule, LastRun: now.Add(-48 * time.Hour).Format(time.RFC3339)}, now)
+		if err != nil {
+			t.Fatalf("nextDue %s: %v", schedule, err)
+		}
+		if !due || disable {
+			t.Fatalf("expected %s alias to behave like supported recurring schedule, got due=%v disable=%v", schedule, due, disable)
+		}
 	}
 }

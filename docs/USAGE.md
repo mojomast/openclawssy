@@ -16,6 +16,7 @@ openclawssy run --agent default --message "summarize changes"
 openclawssy run --agent default --message-file ./prompt.txt
 openclawssy serve --addr 127.0.0.1:8787 --token local-dev-token
 openclawssy cron add --agent default --schedule "@every 1h" --message "status report"
+openclawssy cron add --agent default --schedule "@hourly" --message "status report"
 openclawssy cron delete --id job_123
 openclawssy cron pause
 openclawssy cron resume --id job_123
@@ -80,6 +81,7 @@ openclawssy run --agent default --message '/tool secrets.list {}'
 
 # scheduler and sessions
 openclawssy run --agent default --message '/tool scheduler.add {"id":"job_1","schedule":"@every 1h","message":"status report"}'
+openclawssy run --agent default --message '/tool scheduler.add {"id":"job_2","schedule":"0 * * * *","message":"hourly status report"}'
 openclawssy run --agent default --message '/tool session.list {"agent_id":"default","limit":10}'
 
 # agent and policy control
