@@ -29,6 +29,7 @@ const (
 	agentCreateGlobalCap         = 8
 	shellExecRepetitionCap       = 3
 	memoryWriteRepetitionCap     = 2
+	stateMutationRepetitionCap   = 1
 	becomussyWriteRepetitionCap  = 2
 	becomussyReadRepetitionCap   = 6
 	noChoicesRetryCap            = 3
@@ -1284,6 +1285,9 @@ func extractAgentIDFromArgs(args []byte) string {
 
 func repeatedCallRepetitionKey(call ToolCallRequest) (string, int, bool) {
 	name := strings.TrimSpace(call.Name)
+	if key, ok := oneShotMutationRepetitionKey(name, call.Arguments); ok {
+		return key, stateMutationRepetitionCap, true
+	}
 	if name == "agent.message.send" {
 		args, ok := parseToolArgs(call.Arguments)
 		if !ok {
@@ -1420,6 +1424,64 @@ func repetitionCapForToolPath(toolName, path string) (int, bool) {
 	return 0, false
 }
 
+func oneShotMutationRepetitionKey(name string, argsJSON []byte) (string, bool) {
+	args, ok := parseToolArgs(argsJSON)
+	if !ok {
+		return "", false
+	}
+	canonicalName := strings.TrimSpace(name)
+	switch canonicalName {
+	case "scheduler.add":
+		id := strings.ToLower(firstTrimmedStringFromMap(args, "id"))
+		if id == "" {
+			return "", false
+		}
+		return canonicalName + "|" + id, true
+	case "scheduler.remove", "scheduler.pause", "scheduler.resume":
+		id := strings.ToLower(firstTrimmedStringFromMap(args, "id"))
+		if id == "" {
+			id = "global"
+		}
+		return canonicalName + "|" + id, true
+	case "policy.grant", "policy.revoke":
+		agentID := strings.ToLower(firstTrimmedStringFromMap(args, "agent_id"))
+		capability := strings.ToLower(firstTrimmedStringFromMap(args, "capability", "tool"))
+		if agentID == "" || capability == "" {
+			return "", false
+		}
+		return canonicalName + "|" + agentID + "|" + capability, true
+	case "session.close":
+		sessionID := strings.ToLower(firstTrimmedStringFromMap(args, "session_id", "id"))
+		if sessionID == "" {
+			return "", false
+		}
+		return canonicalName + "|" + sessionID, true
+	case "agent.switch":
+		agentID := strings.ToLower(firstTrimmedStringFromMap(args, "agent_id", "id", "agent"))
+		if agentID == "" {
+			return "", false
+		}
+		scope := strings.ToLower(firstTrimmedStringFromMap(args, "scope"))
+		if scope == "" {
+			scope = "both"
+		}
+		return canonicalName + "|" + agentID + "|" + scope, true
+	case "config.set":
+		rawUpdates, ok := args["updates"]
+		if !ok || rawUpdates == nil {
+			return "", false
+		}
+		encoded, err := json.Marshal(rawUpdates)
+		if err != nil {
+			return "", false
+		}
+		dryRun := strings.EqualFold(firstTrimmedStringFromMap(args, "dry_run", "dryRun"), "true")
+		return fmt.Sprintf("%s|dry_run=%t|%s", canonicalName, dryRun, string(encoded)), true
+	default:
+		return "", false
+	}
+}
+
 func parseToolArgs(args []byte) (map[string]any, bool) {
 	if len(args) == 0 {
 		return nil, false
@@ -1437,6 +1499,21 @@ func toolCallCacheKey(call ToolCallRequest) string {
 	// contents change after writes.  Returning stale cached results causes the
 	// agent to believe files are missing or have old content.
 	if name == "fs.list" || name == "fs.read" {
+		return "|"
+	}
+	// Control-plane state readers must not be cached. Their outputs can change
+	// within a single run after successful mutations such as scheduler.add,
+	// policy.grant, config.set, session.close, or agent.create. Returning stale
+	// cached state makes the model think prior successful actions did not stick,
+	// which leads to repeated mutations.
+	if name == "scheduler.list" ||
+		name == "policy.list" ||
+		name == "config.get" ||
+		name == "session.list" ||
+		name == "agent.list" ||
+		name == "run.list" ||
+		name == "run.get" ||
+		name == "metrics.get" {
 		return "|"
 	}
 	// becomussy tools should not be cached — each call should either

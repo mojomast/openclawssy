@@ -85,11 +85,13 @@ All tools are deny-by-default through capability policy, and all tool inputs are
 ### `scheduler.list`
 - Required: none
 - Optional: none
+- Notes: always reads fresh scheduler state; results are not reused from the intra-run tool cache.
 
 ### `scheduler.add`
 - Required: `schedule`, `message`
 - Optional: `id`, `agent_id`, `enabled`
 - Notes: accepts `@every <duration>`, helpful recurring aliases (`@hourly`, `@daily`), common hourly/daily cron shorthands (`0 * * * *`, `0 0 * * *`), or one-shot RFC3339 timestamps. Recurring aliases are normalized before persistence.
+- Notes: repeated attempts to add the same explicit job `id` in a single run are loop-guarded after the first successful mutation.
 
 ### `scheduler.remove`
 - Required: `id`

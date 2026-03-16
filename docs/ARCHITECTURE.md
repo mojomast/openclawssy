@@ -37,6 +37,10 @@ Input -> ExecuteWithInput
 - Due jobs are dispatched through a bounded worker pool (`scheduler.max_concurrent_jobs`).
 - Each scheduled execution enqueues a normal runtime run via channel/runtime integration.
 
+## Agent Loop Safeguards
+- Successful one-shot state mutations in a single run are repetition-guarded so the model does not re-apply the same action after it already succeeded.
+- Control-plane state readers such as `scheduler.list`, `policy.list`, `config.get`, `session.list`, and `agent.list` are always executed fresh rather than served from intra-run cache, so the model sees post-mutation state instead of stale results.
+
 ## Sandbox Provider Architecture
 
 All agent filesystem and shell operations are routed through a `sandbox.Provider` interface. Docker is the recommended provider when sandboxing is enabled. Three implementations exist:
