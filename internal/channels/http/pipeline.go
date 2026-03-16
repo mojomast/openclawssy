@@ -13,6 +13,9 @@ import (
 )
 
 type ExecutionResult struct {
+	InstanceID   string
+	AgentID      string
+	ParentRunID  string
 	Output       string
 	ArtifactPath string
 	DurationMS   int64
@@ -114,6 +117,9 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 		if errors.Is(err, context.Canceled) {
 			run.Status = "canceled"
 			run.Error = "run canceled"
+			run.InstanceID = firstNonEmptyHTTPString(strings.TrimSpace(result.InstanceID), run.InstanceID)
+			run.AgentID = firstNonEmptyHTTPString(strings.TrimSpace(result.AgentID), run.AgentID)
+			run.ParentRunID = firstNonEmptyHTTPString(strings.TrimSpace(result.ParentRunID), run.ParentRunID)
 			run.Trace = result.Trace
 			run.Provider = result.Provider
 			run.Model = result.Model
@@ -128,6 +134,9 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 		} else {
 			run.Status = "failed"
 			run.Error = err.Error()
+			run.InstanceID = firstNonEmptyHTTPString(strings.TrimSpace(result.InstanceID), run.InstanceID)
+			run.AgentID = firstNonEmptyHTTPString(strings.TrimSpace(result.AgentID), run.AgentID)
+			run.ParentRunID = firstNonEmptyHTTPString(strings.TrimSpace(result.ParentRunID), run.ParentRunID)
 			run.Trace = result.Trace
 			run.Provider = result.Provider
 			run.Model = result.Model
@@ -142,6 +151,9 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 		}
 	} else {
 		run.Status = "completed"
+		run.InstanceID = firstNonEmptyHTTPString(strings.TrimSpace(result.InstanceID), run.InstanceID)
+		run.AgentID = firstNonEmptyHTTPString(strings.TrimSpace(result.AgentID), run.AgentID)
+		run.ParentRunID = firstNonEmptyHTTPString(strings.TrimSpace(result.ParentRunID), run.ParentRunID)
 		output := strings.TrimSpace(result.Output)
 		if output == "" {
 			output = "Run completed without assistant output. Check run trace/tool activity for details."
@@ -227,6 +239,15 @@ func cloneProgressData(data map[string]any) map[string]any {
 		out[key] = value
 	}
 	return out
+}
+
+func firstNonEmptyHTTPString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func executeWithRetry(ctx context.Context, executor RunExecutor, input ExecutionInput) (ExecutionResult, error) {

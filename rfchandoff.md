@@ -118,6 +118,28 @@ Current capabilities:
 - eval storage persists additive identity metadata via `identity_json` with migration compatibility handling
 - dashboard eval API now returns the additive eval identity block
 
+### 2.7 Messaging lifecycle and deeper lineage metadata
+
+Implemented in:
+
+- `internal/tools/agent_tools.go`
+- `internal/chatstore/store.go`
+- `internal/runtime/trace.go`
+- `internal/runtime/engine.go`
+- `internal/audit/logger.go`
+- `internal/channels/http/store.go`
+
+Current capabilities:
+
+- inter-agent inbox messages now carry stable `message_id`
+- `agent.message.send` returns lifecycle metadata (`message_id`, `status`) and persists structured envelope fields alongside legacy raw content
+- inbox entries now expose structured lifecycle metadata and collapse repeated status updates by `message_id`
+- sender/recipient communication allowlists are enforced when present (`can_message`, `can_receive_from`)
+- cross-agent inbox reads now require `policy.admin`
+- runtime trace, audit, and stored HTTP runs now carry additive `parent_run_id`
+- trace and audit metadata now surface additive `instance_id` / `agent_id` lineage directly instead of forcing all consumers to infer from file paths
+- eval storage now preserves richer additive identity/runtime metadata (`root_run_id`, `source`, `task_id`, `session_id`, artifact/checkpoint/delegation/trace metadata)
+
 ### 3. Tests currently passing
 
 Verified:
@@ -191,10 +213,10 @@ Not finished:
 
 - canonical wizard backend
 - dashboard/UI integration
-- first-class messaging / inbox lifecycle model (`message_id`, ack/run states, permissions beyond current scoped compatibility layer)
-- finish composite run identity adoption across remaining runtime + HTTP + eval/dashboard consumers
+- deepen first-class messaging / inbox lifecycle wiring so more producers/consumers emit `running` / `completed` / `failed` updates through the same message model
+- finish composite run identity adoption across remaining runtime + HTTP + eval/dashboard consumers, especially SSE/event-bus addressing
 - feature flag enforcement from one canonical source across UI/API/runtime
-- deepen eval/delegation metadata normalization beyond the new additive identity block
+- connect richer eval/delegation metadata to more real producers/CLI flows beyond the current additive storage contract
 - migration cleanup of remaining legacy flat-agent callers
 
 ## Required Parallel Subagent Plan

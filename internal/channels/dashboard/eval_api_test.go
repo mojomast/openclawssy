@@ -54,7 +54,8 @@ func TestEvalResultsEndpointReturnsHistoryMetricsAndRegressions(t *testing.T) {
 	_, err = store.SaveRun(context.Background(), eval.SuiteRun{
 		Suite:     "basic",
 		Timestamp: latestTimestamp,
-		Identity:  eval.RunIdentity{InstanceID: "lab", AgentID: "default", RunID: "eval-run-2", ParentRunID: "eval-run-1"},
+		Identity:  eval.RunIdentity{InstanceID: "lab", AgentID: "default", RunID: "eval-run-2", ParentRunID: "eval-run-1", RootRunID: "eval-root", Source: "eval-cli", TaskID: "eval-task", SessionID: "eval-session"},
+		Metadata:  eval.RunMetadata{ArtifactPath: "artifacts/eval-run-2", CheckpointPath: "checkpoints/eval-run-2", DecompositionPlan: map[string]any{"delegation_mode": "suggest_only"}, DelegationEvents: []map[string]any{{"outcome": "planned"}}, Trace: map[string]any{"instance_id": "lab", "parent_run_id": "eval-run-1"}},
 		Results: []eval.CaseResult{
 			{Name: "case-pass", Result: eval.TestResult{Passed: true, Expected: "ok", Actual: "ok", DurationMS: 11}},
 			{Name: "case-regression", Result: eval.TestResult{Passed: false, Expected: "stable", Actual: "changed", DurationMS: 13, Error: "mismatch"}},
@@ -87,6 +88,7 @@ func TestEvalResultsEndpointReturnsHistoryMetricsAndRegressions(t *testing.T) {
 		Runs []struct {
 			Suite    string           `json:"suite"`
 			Identity eval.RunIdentity `json:"identity"`
+			Metadata eval.RunMetadata `json:"metadata"`
 			Status   string           `json:"status"`
 			Total    int              `json:"total"`
 			Passed   int              `json:"passed"`
@@ -110,8 +112,11 @@ func TestEvalResultsEndpointReturnsHistoryMetricsAndRegressions(t *testing.T) {
 	if run.Suite != "basic" {
 		t.Fatalf("expected suite basic, got %q", run.Suite)
 	}
-	if run.Identity.InstanceID != "lab" || run.Identity.AgentID != "default" || run.Identity.RunID != "eval-run-2" || run.Identity.ParentRunID != "eval-run-1" {
+	if run.Identity.InstanceID != "lab" || run.Identity.AgentID != "default" || run.Identity.RunID != "eval-run-2" || run.Identity.ParentRunID != "eval-run-1" || run.Identity.RootRunID != "eval-root" || run.Identity.Source != "eval-cli" || run.Identity.TaskID != "eval-task" || run.Identity.SessionID != "eval-session" {
 		t.Fatalf("unexpected identity: %+v", run.Identity)
+	}
+	if run.Metadata.ArtifactPath != "artifacts/eval-run-2" || run.Metadata.CheckpointPath != "checkpoints/eval-run-2" {
+		t.Fatalf("unexpected metadata: %+v", run.Metadata)
 	}
 	if run.Total != 2 || run.Passed != 1 || run.Failed != 1 {
 		t.Fatalf("unexpected run summary: total=%d passed=%d failed=%d", run.Total, run.Passed, run.Failed)

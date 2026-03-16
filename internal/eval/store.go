@@ -89,11 +89,15 @@ func (s *Store) SaveRun(ctx context.Context, run SuiteRun) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("eval store: encode identity: %w", err)
 	}
+	metadataJSON, err := json.Marshal(run.Metadata)
+	if err != nil {
+		return 0, fmt.Errorf("eval store: encode metadata: %w", err)
+	}
 
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO eval_results (suite, timestamp, results_json, metrics_json, identity_json)
-		VALUES (?, ?, ?, ?, ?)
-	`, run.Suite, run.Timestamp.UTC(), string(resultsJSON), string(metricsJSON), string(identityJSON))
+		INSERT INTO eval_results (suite, timestamp, results_json, metrics_json, identity_json, metadata_json)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, run.Suite, run.Timestamp.UTC(), string(resultsJSON), string(metricsJSON), string(identityJSON), string(metadataJSON))
 	if err != nil {
 		return 0, fmt.Errorf("eval store: insert run: %w", err)
 	}
@@ -115,7 +119,7 @@ func (s *Store) LatestRun(ctx context.Context, suite string) (SuiteRun, bool, er
 	}
 
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, suite, timestamp, results_json, metrics_json, identity_json
+		SELECT id, suite, timestamp, results_json, metrics_json, identity_json, metadata_json
 		FROM eval_results
 		WHERE suite = ?
 		ORDER BY timestamp DESC, id DESC
@@ -146,7 +150,7 @@ func (s *Store) ListRuns(ctx context.Context, suite string, limit int) ([]SuiteR
 	suite = strings.TrimSpace(suite)
 
 	query := `
-		SELECT id, suite, timestamp, results_json, metrics_json, identity_json
+		SELECT id, suite, timestamp, results_json, metrics_json, identity_json, metadata_json
 		FROM eval_results
 	`
 	args := make([]any, 0, 2)
@@ -186,9 +190,11 @@ func (s *Store) migrate(ctx context.Context) error {
 			timestamp DATETIME NOT NULL,
 			results_json TEXT NOT NULL,
 			metrics_json TEXT NOT NULL,
-			identity_json TEXT NOT NULL DEFAULT '{}'
+			identity_json TEXT NOT NULL DEFAULT '{}',
+			metadata_json TEXT NOT NULL DEFAULT '{}'
 		)`,
 		`ALTER TABLE eval_results ADD COLUMN identity_json TEXT NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE eval_results ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`,
 		`CREATE INDEX IF NOT EXISTS idx_eval_results_suite_timestamp
 			ON eval_results(suite, timestamp DESC, id DESC)`,
 	}
@@ -214,9 +220,10 @@ func scanSuiteRun(scanner suiteRunScanner) (SuiteRun, error) {
 		resultsJSON  string
 		metricsJSON  string
 		identityJSON string
+		metadataJSON string
 	)
 
-	if err := scanner.Scan(&run.ID, &run.Suite, &run.Timestamp, &resultsJSON, &metricsJSON, &identityJSON); err != nil {
+	if err := scanner.Scan(&run.ID, &run.Suite, &run.Timestamp, &resultsJSON, &metricsJSON, &identityJSON, &metadataJSON); err != nil {
 		return SuiteRun{}, err
 	}
 	if err := json.Unmarshal([]byte(resultsJSON), &run.Results); err != nil {
@@ -228,6 +235,11 @@ func scanSuiteRun(scanner suiteRunScanner) (SuiteRun, error) {
 	if strings.TrimSpace(identityJSON) != "" {
 		if err := json.Unmarshal([]byte(identityJSON), &run.Identity); err != nil {
 			return SuiteRun{}, fmt.Errorf("eval store: decode identity: %w", err)
+		}
+	}
+	if strings.TrimSpace(metadataJSON) != "" {
+		if err := json.Unmarshal([]byte(metadataJSON), &run.Metadata); err != nil {
+			return SuiteRun{}, fmt.Errorf("eval store: decode metadata: %w", err)
 		}
 	}
 	return run, nil

@@ -65,13 +65,27 @@ func (s Session) IsClosed() bool {
 }
 
 type Message struct {
-	Role         string                `json:"role"`
-	Content      string                `json:"content"`
-	ContentParts []messagecontent.Part `json:"content_parts,omitempty"`
-	TS           time.Time             `json:"ts"`
-	RunID        string                `json:"run_id,omitempty"`
-	ToolCallID   string                `json:"tool_call_id,omitempty"`
-	ToolName     string                `json:"tool_name,omitempty"`
+	Role            string                `json:"role"`
+	Content         string                `json:"content"`
+	ContentParts    []messagecontent.Part `json:"content_parts,omitempty"`
+	TS              time.Time             `json:"ts"`
+	MessageID       string                `json:"message_id,omitempty"`
+	Status          string                `json:"status,omitempty"`
+	InstanceID      string                `json:"instance_id,omitempty"`
+	FromAgentID     string                `json:"from_agent_id,omitempty"`
+	ToAgentID       string                `json:"to_agent_id,omitempty"`
+	TaskID          string                `json:"task_id,omitempty"`
+	Subject         string                `json:"subject,omitempty"`
+	Channel         string                `json:"channel,omitempty"`
+	UserID          string                `json:"user_id,omitempty"`
+	SourceSessionID string                `json:"source_session_id,omitempty"`
+	RelatedRunID    string                `json:"related_run_id,omitempty"`
+	Note            string                `json:"note,omitempty"`
+	Error           string                `json:"error,omitempty"`
+	UpdatedAt       time.Time             `json:"updated_at,omitempty"`
+	RunID           string                `json:"run_id,omitempty"`
+	ToolCallID      string                `json:"tool_call_id,omitempty"`
+	ToolName        string                `json:"tool_name,omitempty"`
 }
 
 type CreateSessionInput struct {

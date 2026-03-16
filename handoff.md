@@ -18,6 +18,8 @@ Date: 2026-03-16
 - HTTP queued-run tracking now stores both bare `run_id` and composite `instance_id:agent_id:run_id`, and cancel falls back through the composite key.
 - Dashboard monitor/status/trace/decision surfaces now emit `instance_id` and avoid cross-instance `run_id` collisions.
 - Eval storage and dashboard eval API now carry additive `identity { instance_id, agent_id, run_id, parent_run_id }` metadata.
+- Messaging now has a first-class envelope foundation with stable `message_id`, lifecycle status metadata, inbox authorization checks, and communication allowlist enforcement.
+- Runtime trace, audit, stored HTTP runs, dashboard trace/decision surfaces, and eval storage now carry deeper lineage metadata including `parent_run_id` and richer eval identity/runtime fields.
 
 ## Validation completed
 
@@ -47,8 +49,11 @@ Date: 2026-03-16
 - `internal/channels/http/run_cancel_tracker.go`
 - `internal/channels/http/store.go`
 - `internal/runtime/engine.go`
+- `internal/runtime/trace.go`
+- `internal/audit/logger.go`
 - `internal/eval/store.go`
 - `internal/eval/types.go`
+- `internal/chatstore/store.go`
 - `internal/tools/registry.go`
 - `internal/tools/agent_tools.go`
 - `cmd/openclawssy/main.go`
@@ -57,9 +62,9 @@ Date: 2026-03-16
 
 Highest priority next:
 
-1. Replace the current messaging compatibility layer with a first-class message lifecycle model (`message_id`, queued/ack/running/completed/failed).
-2. Deepen eval and delegation metadata normalization to the shared `(instance_id, agent_id, run_id)` contract.
-3. Finish composite identity adoption in remaining dashboard/runtime consumers.
+1. Extend the new messaging lifecycle foundation so more producers/consumers emit `running` / `completed` / `failed` updates through the same `message_id` model.
+2. Connect the richer eval/delegation metadata contract to more real producers and dashboard consumers.
+3. Finish composite identity adoption in remaining dashboard/runtime/SSE consumers.
 
 Still open overall:
 
@@ -73,8 +78,8 @@ Still open overall:
 
 - Dashboard instance projection still has lossy compatibility shaping in some paths.
 - Canonical clone fidelity and metadata provenance are not fully complete.
-- Messaging is now instance-scoped, but it is still chatstore-backed rather than a dedicated canonical inbox model.
-- Dashboard/eval/decision views are improved, but some broader composite identity and delegation metadata adoption is still incomplete.
+- Messaging is now instance-scoped and lifecycle-aware, but it is still chatstore-backed rather than a dedicated canonical inbox store.
+- Dashboard/eval/decision views are improved, but some broader composite identity, SSE addressing, and delegation metadata adoption is still incomplete.
 
 ## Recommended next starting point
 

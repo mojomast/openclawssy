@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ type Run struct {
 	ID                string                `json:"id"`
 	InstanceID        string                `json:"instance_id,omitempty"`
 	AgentID           string                `json:"agent_id"`
+	ParentRunID       string                `json:"parent_run_id,omitempty"`
 	Message           string                `json:"message"`
 	ContentParts      []messagecontent.Part `json:"content_parts,omitempty"`
 	ThinkingMode      string                `json:"thinking_mode,omitempty"`
@@ -87,6 +89,7 @@ func normalizeRunDerivedFields(run *Run) {
 type RunStore interface {
 	Create(ctx context.Context, run Run) (Run, error)
 	Get(ctx context.Context, id string) (Run, error)
+	GetByIdentity(ctx context.Context, instanceID, agentID, id string) (Run, error)
 	Update(ctx context.Context, run Run) error
 	List(ctx context.Context) ([]Run, error)
 }
@@ -119,6 +122,27 @@ func (s *InMemoryRunStore) Get(_ context.Context, id string) (Run, error) {
 	return run, nil
 }
 
+func (s *InMemoryRunStore) GetByIdentity(_ context.Context, instanceID, agentID, id string) (Run, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	run, ok := s.runs[id]
+	if ok && matchesRunIdentity(run, instanceID, agentID) {
+		normalizeRunDerivedFields(&run)
+		return run, nil
+	}
+	for _, candidate := range s.runs {
+		if candidate.ID != id {
+			continue
+		}
+		if !matchesRunIdentity(candidate, instanceID, agentID) {
+			continue
+		}
+		normalizeRunDerivedFields(&candidate)
+		return candidate, nil
+	}
+	return Run{}, ErrRunNotFound
+}
+
 func (s *InMemoryRunStore) Update(_ context.Context, run Run) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -139,4 +163,14 @@ func (s *InMemoryRunStore) List(_ context.Context) ([]Run, error) {
 		runs = append(runs, run)
 	}
 	return runs, nil
+}
+
+func matchesRunIdentity(run Run, instanceID, agentID string) bool {
+	if strings.TrimSpace(instanceID) != "" && strings.TrimSpace(run.InstanceID) != strings.TrimSpace(instanceID) {
+		return false
+	}
+	if strings.TrimSpace(agentID) != "" && strings.TrimSpace(run.AgentID) != strings.TrimSpace(agentID) {
+		return false
+	}
+	return true
 }

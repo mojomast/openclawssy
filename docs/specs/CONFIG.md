@@ -230,6 +230,7 @@ Provider API key env defaults:
 - `agents.allow_inter_agent_messaging` toggles `agent.message.send` and `agent.message.inbox` workflows.
 - Inter-agent messaging is instance-scoped first: sender and recipient must both belong to the active/requested instance unless future cross-instance policy explicitly allows otherwise.
 - Canonical instance messaging policy lives in `instances/<instance>/manifest.json` (`messaging.enabled`, `messaging.allow_inter_agent_messaging`); the legacy `agents.allow_inter_agent_messaging` flag remains a compatibility gate during migration.
+- When `AgentManifest.Communication.CanMessage` or `AgentManifest.Communication.CanReceiveFrom` are populated, inter-agent messaging now enforces those allowlists in addition to instance-level and global feature gates.
 - `agents.self_improvement_enabled` gates prompt file mutation tools (`agent.prompt.update`).
 - `agents.profiles.<agent_id>.self_improvement=true` must also be set for that agent before prompt mutation is allowed.
 

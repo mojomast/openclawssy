@@ -300,6 +300,32 @@ func TestServer_ListRunsSupportsInstanceFilter(t *testing.T) {
 	}
 }
 
+func TestServer_GetRunByIdentityQuery(t *testing.T) {
+	store := NewInMemoryRunStore()
+	now := time.Now().UTC()
+	for _, run := range []Run{
+		{ID: "run-shared", InstanceID: "instance-a", AgentID: "agent-1", Message: "a", Status: "completed", CreatedAt: now, UpdatedAt: now},
+		{ID: "run-shared", InstanceID: "instance-b", AgentID: "agent-2", Message: "b", Status: "completed", CreatedAt: now.Add(time.Second), UpdatedAt: now.Add(time.Second)},
+	} {
+		store.runs[run.InstanceID+":"+run.AgentID+":"+run.ID] = run
+	}
+	s := NewServer(Config{BearerToken: "secret", Store: store, Executor: NopExecutor{}})
+	req := httptest.NewRequest(http.MethodGet, "/v1/runs/run-shared?instance_id=instance-b&agent_id=agent-2", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d body=%s", http.StatusOK, rr.Code, rr.Body.String())
+	}
+	var payload Run
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.InstanceID != "instance-b" || payload.AgentID != "agent-2" {
+		t.Fatalf("unexpected run payload: %+v", payload)
+	}
+}
+
 func TestServer_GetRunIncludesDerivedDecompositionPlanFromTrace(t *testing.T) {
 	store := NewInMemoryRunStore()
 	now := time.Now().UTC()

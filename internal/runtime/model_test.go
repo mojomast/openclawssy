@@ -282,7 +282,7 @@ func TestProviderModelTraceCapturesModelInputAndToolExtraction(t *testing.T) {
 	defer server.Close()
 
 	model := testProviderModel(t, server.URL)
-	collector := newRunTraceCollector("run_1", "chat_1", "dashboard", "list files")
+	collector := newRunTraceCollector("default", "agent-a", "run_1", "", "chat_1", "dashboard", "list files")
 	ctx := withRunTraceCollector(context.Background(), collector)
 
 	resp, err := model.Generate(ctx, agent.ModelRequest{
@@ -1215,7 +1215,7 @@ func TestProviderModelTraceIncludesRejectedParseDiagnostics(t *testing.T) {
 	defer server.Close()
 
 	model := testProviderModel(t, server.URL)
-	collector := newRunTraceCollector("run_2", "chat_2", "dashboard", "list files")
+	collector := newRunTraceCollector("default", "agent-a", "run_2", "", "chat_2", "dashboard", "list files")
 	ctx := withRunTraceCollector(context.Background(), collector)
 
 	_, err := model.Generate(ctx, agent.ModelRequest{
@@ -1293,7 +1293,7 @@ func TestProviderModelToolDirectiveSupportsBashAlias(t *testing.T) {
 }
 
 func TestParseLooseJSONToolCallsDedupesCandidates(t *testing.T) {
-	trace := newRunTraceCollector("run-loose", "", "", "")
+	trace := newRunTraceCollector("default", "agent-a", "run-loose", "", "", "", "")
 	content := `first {"tool_name":"fs.list","arguments":{"path":"."}} then {"tool_name":"fs.list","arguments":{"path":"."}} and {"tool_name":"fs.read","arguments":{"path":"README.md"}}`
 	calls := parseLooseJSONToolCalls(content, []string{"fs.list", "fs.read"}, trace)
 

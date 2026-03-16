@@ -57,6 +57,27 @@ func (s *FileRunStore) Get(_ context.Context, id string) (Run, error) {
 	return run, nil
 }
 
+func (s *FileRunStore) GetByIdentity(_ context.Context, instanceID, agentID, id string) (Run, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	run, ok := s.runs[id]
+	if ok && matchesRunIdentity(run, instanceID, agentID) {
+		normalizeRunDerivedFields(&run)
+		return run, nil
+	}
+	for _, candidate := range s.runs {
+		if candidate.ID != id {
+			continue
+		}
+		if !matchesRunIdentity(candidate, instanceID, agentID) {
+			continue
+		}
+		normalizeRunDerivedFields(&candidate)
+		return candidate, nil
+	}
+	return Run{}, ErrRunNotFound
+}
+
 func (s *FileRunStore) Update(_ context.Context, run Run) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -71,6 +71,7 @@ type monitorRunRecord struct {
 	RunID          string `json:"run_id"`
 	InstanceID     string `json:"instance_id,omitempty"`
 	AgentID        string `json:"agent_id"`
+	ParentRunID    string `json:"parent_run_id,omitempty"`
 	TaskID         string `json:"task_id,omitempty"`
 	Source         string `json:"source,omitempty"`
 	Role           string `json:"role"`
@@ -1201,7 +1202,7 @@ func (h *Handler) getRunTrace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run, err := h.store.Get(r.Context(), runID)
+	run, err := h.resolveHTTPRun(r.Context(), runID, strings.TrimSpace(r.URL.Query().Get("instance_id")), strings.TrimSpace(r.URL.Query().Get("agent_id")))
 	if err != nil {
 		if errors.Is(err, httpchannel.ErrRunNotFound) {
 			http.Error(w, "run not found", http.StatusNotFound)
@@ -1216,10 +1217,11 @@ func (h *Handler) getRunTrace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]any{
-		"instance_id": normalizeDashboardInstanceID(run.InstanceID),
-		"agent_id":    strings.TrimSpace(run.AgentID),
-		"run_id":      run.ID,
-		"trace":       run.Trace,
+		"instance_id":   normalizeDashboardInstanceID(run.InstanceID),
+		"agent_id":      strings.TrimSpace(run.AgentID),
+		"run_id":        run.ID,
+		"parent_run_id": strings.TrimSpace(run.ParentRunID),
+		"trace":         run.Trace,
 	})
 }
 
@@ -1794,6 +1796,7 @@ func (h *Handler) collectMonitorRunsForAgent(instanceID string, auditPath string
 					switch strings.TrimSpace(event.Type) {
 					case "run.start":
 						record.StartedAt = event.Timestamp.UTC().Format(time.RFC3339)
+						record.ParentRunID = firstStringFromMap(event.Payload, "parent_run_id")
 						record.TaskID = firstStringFromMap(event.Payload, "task_id")
 						record.Source = firstStringFromMap(event.Payload, "source")
 						record.Message = firstStringFromMap(event.Payload, "message")
@@ -1805,6 +1808,9 @@ func (h *Handler) collectMonitorRunsForAgent(instanceID string, auditPath string
 						}
 					case "run.end":
 						record.CompletedAt = event.Timestamp.UTC().Format(time.RFC3339)
+						if record.ParentRunID == "" {
+							record.ParentRunID = firstStringFromMap(event.Payload, "parent_run_id")
+						}
 						record.ArtifactPath = firstStringFromMap(event.Payload, "artifact_path")
 						record.CheckpointPath = firstStringFromMap(event.Payload, "checkpoint_path")
 						record.Error = firstStringFromMap(event.Payload, "error")
@@ -1927,7 +1933,7 @@ func (h *Handler) monitorRunStatusFromStore(ctx context.Context, runID string) (
 	if h == nil || h.store == nil {
 		return "", false
 	}
-	run, err := h.store.Get(ctx, runID)
+	run, err := h.resolveHTTPRun(ctx, runID, "", "")
 	if err != nil {
 		return "", false
 	}
@@ -1940,6 +1946,9 @@ func (h *Handler) monitorRunStatusFromStore(ctx context.Context, runID string) (
 
 func mergeStoredRunIntoMonitorRecord(record monitorRunRecord, run httpchannel.Run) monitorRunRecord {
 	record.InstanceID = normalizeDashboardInstanceID(firstNonEmptyString(record.InstanceID, run.InstanceID))
+	if strings.TrimSpace(record.ParentRunID) == "" {
+		record.ParentRunID = strings.TrimSpace(run.ParentRunID)
+	}
 	if strings.TrimSpace(record.Source) == "" {
 		record.Source = strings.TrimSpace(run.Source)
 	}
@@ -1982,6 +1991,7 @@ func monitorRecordFromStoredRun(run httpchannel.Run) monitorRunRecord {
 		RunID:         strings.TrimSpace(run.ID),
 		InstanceID:    normalizeDashboardInstanceID(run.InstanceID),
 		AgentID:       strings.TrimSpace(run.AgentID),
+		ParentRunID:   strings.TrimSpace(run.ParentRunID),
 		Source:        strings.TrimSpace(run.Source),
 		Role:          classifyMonitorRunRole(run.Source),
 		Message:       strings.TrimSpace(run.Message),
@@ -2181,7 +2191,7 @@ func (h *Handler) resolveDashboardRunIdentity(ctx context.Context, runID, instan
 	resolvedInstanceID := strings.TrimSpace(instanceID)
 	resolvedAgentID := strings.TrimSpace(agentID)
 	if h != nil && h.store != nil {
-		if run, err := h.store.Get(ctx, strings.TrimSpace(runID)); err == nil {
+		if run, err := h.resolveHTTPRun(ctx, strings.TrimSpace(runID), resolvedInstanceID, resolvedAgentID); err == nil {
 			if resolvedInstanceID == "" {
 				resolvedInstanceID = strings.TrimSpace(run.InstanceID)
 			}
@@ -2207,6 +2217,38 @@ func (h *Handler) resolveDashboardRunIdentity(ctx context.Context, runID, instan
 		}
 	}
 	return normalizeDashboardInstanceID(resolvedInstanceID), resolvedAgentID
+}
+
+func (h *Handler) resolveHTTPRun(ctx context.Context, runID, instanceID, agentID string) (httpchannel.Run, error) {
+	if h == nil || h.store == nil {
+		return httpchannel.Run{}, httpchannel.ErrRunNotFound
+	}
+	runID = strings.TrimSpace(runID)
+	instanceID = strings.TrimSpace(instanceID)
+	agentID = strings.TrimSpace(agentID)
+	if runID == "" {
+		return httpchannel.Run{}, httpchannel.ErrRunNotFound
+	}
+	if instanceID == "" && agentID == "" {
+		return h.store.Get(ctx, runID)
+	}
+	runs, err := h.store.List(ctx)
+	if err != nil {
+		return httpchannel.Run{}, err
+	}
+	for _, run := range runs {
+		if strings.TrimSpace(run.ID) != runID {
+			continue
+		}
+		if instanceID != "" && normalizeDashboardInstanceID(run.InstanceID) != normalizeDashboardInstanceID(instanceID) {
+			continue
+		}
+		if agentID != "" && strings.TrimSpace(run.AgentID) != agentID {
+			continue
+		}
+		return run, nil
+	}
+	return httpchannel.Run{}, httpchannel.ErrRunNotFound
 }
 
 func firstStringFromMap(values map[string]any, keys ...string) string {

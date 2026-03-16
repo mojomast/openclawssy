@@ -30,6 +30,7 @@ Input -> ExecuteWithInput
 - Bare `run_id` is still accepted in some compatibility paths, but new runtime/HTTP tracker work stores both bare and composite keys.
 - Delegated child runs inherit the parent `instance_id`.
 - Inter-agent messaging is same-instance by default and now persists `instance_id` explicitly.
+- Inter-agent messaging now has a first-class envelope with stable `message_id` and lifecycle states that begin with `queued` and `acknowledged`, with runtime/tooling prepared to carry later `running` / `completed` / `failed` transitions.
 
 ## Control-plane layout
 
@@ -214,3 +215,4 @@ Compatibility note:
 
 - Some run/audit/chat persistence still uses legacy flat-agent paths for compatibility.
 - Canonical configuration, prompt stack, roles, skills, messaging scope, and effective runtime resolution now come from instance-aware storage.
+- Trace and audit metadata now carry normalized `instance_id` and `parent_run_id` fields in addition to `run_id` and `agent_id`.

@@ -84,6 +84,7 @@ All control-plane routes are hash-based under `/dashboard/#/...`.
 - Policy editor controls `delegation_mode`, `delegation_threshold`, `delegation_cooldown_iterations`, and `auto_delegate`.
 - Task Graph Preview reads decomposition plans from selected runs; Run Comparison renders decision-ledger timelines side by side.
 - Decision and monitor payloads now surface explicit `instance_id` alongside `agent_id` and `run_id`, matching the RFC identity direction.
+- Debug trace and monitor payloads now also surface `parent_run_id` when runtime lineage is available.
 - Verification notes:
   - Save policy changes and confirm success state.
   - Load a run with decomposition data and verify graph nodes/edges render.
@@ -92,7 +93,7 @@ All control-plane routes are hash-based under `/dashboard/#/...`.
 ### Eval Results (`/#/eval`)
 
 - Primary API: `GET /api/admin/eval/results?limit=...&suite=...`
-- Shows suite history table with expandable details: metrics cards, case-level pass/fail table, baseline regression panel, and additive normalized eval identity metadata (`instance_id`, `agent_id`, `run_id`, `parent_run_id`) when present.
+- Shows suite history table with expandable details: metrics cards, case-level pass/fail table, baseline regression panel, additive normalized eval identity metadata (`instance_id`, `agent_id`, `run_id`, `parent_run_id`, `root_run_id`, `source`, `task_id`, `session_id`) when present, and additive runtime metadata (`artifact_path`, `checkpoint_path`, decomposition/delegation summaries) when stored.
 - Verification notes:
   - Run `openclawssy eval run --suite basic` first so data exists.
   - Refresh page and expand a row to verify metrics + baseline comparison blocks.

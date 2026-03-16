@@ -47,6 +47,9 @@ type Engine struct {
 
 type RunResult struct {
 	RunID            string
+	InstanceID       string
+	AgentID          string
+	ParentRunID      string
 	FinalText        string
 	ArtifactPath     string
 	DurationMS       int64
@@ -328,6 +331,9 @@ resolvedRuntime:
 	}()
 
 	startEvent := map[string]any{"run_id": runID, "agent_id": agentID, "message": message, "model_provider": selectedModel.Provider, "model_name": selectedModel.Name}
+	if instanceID != "" {
+		startEvent["instance_id"] = instanceID
+	}
 	if source != "" {
 		startEvent["source"] = source
 	}
@@ -359,7 +365,7 @@ resolvedRuntime:
 		maxToolIterations = in.MaxToolIterations
 	}
 	effectiveCaps := e.effectiveCapabilities(agentID, allowedTools)
-	traceCollector := newRunTraceCollector(runID, sessionID, source, message)
+	traceCollector := newRunTraceCollector(instanceID, agentID, runID, strings.TrimSpace(in.ParentRunID), sessionID, source, message)
 	runCtx = withRunTraceCollector(runCtx, traceCollector)
 	enforcer := policy.NewEnforcer(workspaceRoot, map[string][]string{agentID: effectiveCaps})
 
@@ -532,6 +538,7 @@ resolvedRuntime:
 		fields := map[string]any{
 			"run_id":        record.RunID,
 			"agent_id":      record.AgentID,
+			"instance_id":   instanceID,
 			"record_type":   record.RecordType,
 			"human_summary": record.HumanSummary,
 			"payload":       recordPayload,
@@ -685,6 +692,9 @@ resolvedRuntime:
 	}
 
 	fields := map[string]any{"run_id": runID, "agent_id": agentID}
+	if instanceID != "" {
+		fields["instance_id"] = instanceID
+	}
 	if source != "" {
 		fields["source"] = source
 	}
@@ -715,6 +725,9 @@ resolvedRuntime:
 		}
 		return RunResult{
 			RunID:            runID,
+			InstanceID:       instanceID,
+			AgentID:          agentID,
+			ParentRunID:      strings.TrimSpace(in.ParentRunID),
 			ArtifactPath:     artifactPath,
 			DurationMS:       time.Since(start).Milliseconds(),
 			ToolCalls:        len(out.ToolCalls),
@@ -727,6 +740,9 @@ resolvedRuntime:
 
 	return RunResult{
 		RunID:            runID,
+		InstanceID:       instanceID,
+		AgentID:          agentID,
+		ParentRunID:      strings.TrimSpace(in.ParentRunID),
 		FinalText:        out.FinalText,
 		ArtifactPath:     artifactPath,
 		DurationMS:       time.Since(start).Milliseconds(),
@@ -2123,6 +2139,8 @@ func (s *subAgentRunner) ExecuteSubAgent(ctx context.Context, input tools.AgentR
 		ToolCalls:    result.ToolCalls,
 		Provider:     result.Provider,
 		Model:        result.Model,
+		Status:       "completed",
+		MessageID:    strings.TrimSpace(input.MessageID),
 	}, nil
 }
 
