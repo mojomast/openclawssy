@@ -2523,7 +2523,8 @@ func (m *mockAgentRunner) ExecuteSubAgent(_ context.Context, input tools.AgentRu
 func TestSubAgentAdapterPassesDefaultRestrictions(t *testing.T) {
 	mock := &mockAgentRunner{output: tools.AgentRunOutput{RunID: "run-1", FinalText: "ok"}}
 	adapter := &agentSubAgentRunnerAdapter{
-		runner: mock,
+		runner:     mock,
+		instanceID: "instance-a",
 		subAgentDefaults: config.SubAgentRestrictions{
 			AllowedTools:      []string{"fs.read", "fs.list"},
 			MaxToolIterations: 15,
@@ -2548,6 +2549,9 @@ func TestSubAgentAdapterPassesDefaultRestrictions(t *testing.T) {
 		t.Fatalf("expected 1 call, got %d", len(mock.inputs))
 	}
 	input := mock.inputs[0]
+	if input.InstanceID != "instance-a" {
+		t.Fatalf("expected InstanceID=instance-a, got %q", input.InstanceID)
+	}
 	if len(input.AllowedTools) != 2 || input.AllowedTools[0] != "fs.read" || input.AllowedTools[1] != "fs.list" {
 		t.Fatalf("expected default AllowedTools [fs.read, fs.list], got %v", input.AllowedTools)
 	}
@@ -2562,7 +2566,8 @@ func TestSubAgentAdapterPassesDefaultRestrictions(t *testing.T) {
 func TestSubAgentAdapterAppliesOverridesForTargetAgent(t *testing.T) {
 	mock := &mockAgentRunner{output: tools.AgentRunOutput{RunID: "run-2", FinalText: "done"}}
 	adapter := &agentSubAgentRunnerAdapter{
-		runner: mock,
+		runner:     mock,
+		instanceID: "instance-b",
 		subAgentDefaults: config.SubAgentRestrictions{
 			AllowedTools:      []string{"fs.read", "fs.list"},
 			MaxToolIterations: 15,
@@ -2613,7 +2618,8 @@ func TestSubAgentAdapterAppliesOverridesForTargetAgent(t *testing.T) {
 func TestSubAgentAdapterFallsBackToDefaultsForUnknownAgent(t *testing.T) {
 	mock := &mockAgentRunner{output: tools.AgentRunOutput{RunID: "run-3", FinalText: "ok"}}
 	adapter := &agentSubAgentRunnerAdapter{
-		runner: mock,
+		runner:     mock,
+		instanceID: "instance-c",
 		subAgentDefaults: config.SubAgentRestrictions{
 			AllowedTools:      []string{"fs.read"},
 			MaxToolIterations: 10,
@@ -2649,7 +2655,8 @@ func TestSubAgentAdapterFallsBackToDefaultsForUnknownAgent(t *testing.T) {
 func TestSubAgentAdapterOverrideMergesWithDefaults(t *testing.T) {
 	mock := &mockAgentRunner{output: tools.AgentRunOutput{RunID: "run-4", FinalText: "merged"}}
 	adapter := &agentSubAgentRunnerAdapter{
-		runner: mock,
+		runner:     mock,
+		instanceID: "instance-d",
 		subAgentDefaults: config.SubAgentRestrictions{
 			AllowedTools:      []string{"fs.read", "fs.list"},
 			MaxToolIterations: 15,
@@ -2691,7 +2698,8 @@ func TestSubAgentAdapterOverrideMergesWithDefaults(t *testing.T) {
 func TestSubAgentAdapterTaskThinkingModeOverridesConfig(t *testing.T) {
 	mock := &mockAgentRunner{output: tools.AgentRunOutput{RunID: "run-5", FinalText: "ok"}}
 	adapter := &agentSubAgentRunnerAdapter{
-		runner: mock,
+		runner:     mock,
+		instanceID: "instance-e",
 		subAgentDefaults: config.SubAgentRestrictions{
 			AllowedTools:      []string{"fs.read"},
 			MaxToolIterations: 10,
@@ -2722,7 +2730,8 @@ func TestSubAgentAdapterMarksContinuationHintAsUnsuccessful(t *testing.T) {
 		FinalText: "The response stream was interrupted before I could finish. Send `continue` and I will resume from the cutoff point.\n\nLast error: context deadline exceeded",
 	}}
 	adapter := &agentSubAgentRunnerAdapter{
-		runner: mock,
+		runner:     mock,
+		instanceID: "instance-f",
 		subAgentDefaults: config.SubAgentRestrictions{
 			AllowedTools:      []string{"fs.read"},
 			MaxToolIterations: 10,
@@ -2750,7 +2759,8 @@ func TestSubAgentAdapterMarksContinuationHintAsUnsuccessful(t *testing.T) {
 func TestSubAgentAdapterAppliesRoleConstraints(t *testing.T) {
 	mock := &mockAgentRunner{output: tools.AgentRunOutput{RunID: "run-role", FinalText: "ok"}}
 	adapter := &agentSubAgentRunnerAdapter{
-		runner: mock,
+		runner:     mock,
+		instanceID: "instance-g",
 		subAgentDefaults: config.SubAgentRestrictions{
 			AllowedTools:      []string{"fs.read", "test.run", "check.run", "fs.write"},
 			MaxToolIterations: 50,

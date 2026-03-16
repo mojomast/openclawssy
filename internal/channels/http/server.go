@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"openclawssy/internal/config"
+	"openclawssy/internal/instances"
 	"openclawssy/internal/messagecontent"
 )
 
@@ -63,6 +64,7 @@ type ChatResponse struct {
 }
 
 type ExecutionInput struct {
+	InstanceID   string
 	RunID        string
 	AgentID      string
 	Message      string
@@ -84,14 +86,16 @@ func (NopExecutor) Execute(_ context.Context, _ ExecutionInput) (ExecutionResult
 }
 
 type postRunRequest struct {
+	InstanceID   string `json:"instance_id,omitempty"`
 	AgentID      string `json:"agent_id"`
 	Message      string `json:"message"`
 	ThinkingMode string `json:"thinking_mode,omitempty"`
 }
 
 type postRunResponse struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
+	InstanceID string `json:"instance_id,omitempty"`
+	ID         string `json:"id"`
+	Status     string `json:"status"`
 }
 
 type errorResponse struct {
@@ -282,6 +286,14 @@ func (s *Server) handlePostRun(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "request.invalid_input", "agent_id and message are required", 0)
 		return
 	}
+	if strings.TrimSpace(req.InstanceID) != "" {
+		validated, err := instances.ValidateInstanceID(req.InstanceID)
+		if err != nil {
+			writeErrorJSON(w, http.StatusBadRequest, "request.invalid_instance_id", "instance_id is invalid", 0)
+			return
+		}
+		req.InstanceID = validated
+	}
 	if strings.TrimSpace(req.ThinkingMode) != "" {
 		normalized := config.NormalizeThinkingMode(req.ThinkingMode)
 		if !config.IsValidThinkingMode(normalized) {
@@ -301,7 +313,7 @@ func (s *Server) handlePostRun(w http.ResponseWriter, r *http.Request) {
 		"http",
 		"",
 		req.ThinkingMode,
-		QueueRunOptions{EventBus: s.eventBus, Tracker: s.runTracker},
+		QueueRunOptions{InstanceID: req.InstanceID, EventBus: s.eventBus, Tracker: s.runTracker},
 	)
 	if err != nil {
 		if errors.Is(err, ErrQueueFull) {
@@ -314,13 +326,22 @@ func (s *Server) handlePostRun(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(postRunResponse{ID: created.ID, Status: created.Status})
+	_ = json.NewEncoder(w).Encode(postRunResponse{InstanceID: created.InstanceID, ID: created.ID, Status: created.Status})
 }
 
 func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	statusFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
+	instanceFilter := strings.TrimSpace(r.URL.Query().Get("instance_id"))
 	agentFilter := strings.TrimSpace(r.URL.Query().Get("agent_id"))
 	sourceFilter := strings.TrimSpace(r.URL.Query().Get("source"))
+	if instanceFilter != "" {
+		validated, err := instances.ValidateInstanceID(instanceFilter)
+		if err != nil {
+			writeErrorJSON(w, http.StatusBadRequest, "request.invalid_instance_id", "instance_id is invalid", 0)
+			return
+		}
+		instanceFilter = validated
+	}
 	limit, offset, err := parseListPagination(r, 50, 500)
 	if err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, "request.invalid_input", err.Error(), 0)
@@ -336,6 +357,9 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	filtered := make([]Run, 0, len(runs))
 	for _, run := range runs {
 		if statusFilter != "" && strings.ToLower(strings.TrimSpace(run.Status)) != statusFilter {
+			continue
+		}
+		if instanceFilter != "" && strings.TrimSpace(run.InstanceID) != instanceFilter {
 			continue
 		}
 		if agentFilter != "" && strings.TrimSpace(run.AgentID) != agentFilter {
@@ -501,6 +525,15 @@ func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request, runID s
 	}
 	if err := s.runTracker.Cancel(runID); err != nil {
 		if errors.Is(err, ErrTrackedRunNotFound) {
+			if compositeErr := s.runTracker.CancelComposite(run.InstanceID, run.AgentID, run.ID); compositeErr == nil {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"id":        runID,
+					"status":    "canceling",
+					"cancelled": true,
+				})
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":        runID,

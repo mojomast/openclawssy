@@ -24,6 +24,7 @@ If `openclawssy` is already on your PATH, you can drop the `./bin/` prefix.
 - A running local agent service with a dashboard UI.
 - A real tool-capable run (not just plain chat output).
 - Inspectable artifacts at `.openclawssy/agents/<agent>/runs/<run-id>/`.
+- Canonical instance-aware control-plane state under `.openclawssy/instances/<instance>/...`.
 - A secure baseline: policy controls, workspace guards, and redacted secrets.
 
 Try this once `serve` is running:
@@ -112,7 +113,7 @@ Come chat about Openclawssy and other Ussyverse projects.
 - Agent and policy control
   - Agent lifecycle tools (`agent.list`, `agent.create`, `agent.switch`)
   - Per-agent config profiles (`agents.profiles.<agent_id>`) with model override fields
-  - Inter-agent tooling (`agent.message.send`, `agent.message.inbox`, `agent.run`)
+  - Inter-agent tooling (`agent.message.send`, `agent.message.inbox`, `agent.run`) with same-instance defaults
   - Workspace skill loading (`skill.list`, `skill.read`) plus built-in `clawdefuckifier` bootstrap with a globally seeded workspace skill
   - Policy-gated admin operations (`policy.admin` for sensitive cross-agent edits)
 

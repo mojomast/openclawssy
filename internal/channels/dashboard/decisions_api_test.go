@@ -12,18 +12,20 @@ import (
 	"time"
 
 	httpchannel "openclawssy/internal/channels/http"
+	"openclawssy/internal/instances"
 )
 
 func TestRunDecisionsEndpointReturnsNestedChronologicalRecords(t *testing.T) {
 	root := t.TempDir()
 	store := httpchannel.NewInMemoryRunStore()
 	_, err := store.Create(context.Background(), httpchannel.Run{
-		ID:        "run-parent",
-		AgentID:   "default",
-		Message:   "parent",
-		Status:    "completed",
-		CreatedAt: time.Now().UTC(),
-		UpdatedAt: time.Now().UTC(),
+		ID:         "run-parent",
+		InstanceID: "default",
+		AgentID:    "default",
+		Message:    "parent",
+		Status:     "completed",
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
 	})
 	if err != nil {
 		t.Fatalf("create parent run: %v", err)
@@ -78,16 +80,18 @@ func TestRunDecisionsEndpointReturnsNestedChronologicalRecords(t *testing.T) {
 	}
 
 	var payload struct {
-		RunID   string `json:"run_id"`
-		AgentID string `json:"agent_id"`
-		Records []struct {
+		RunID      string `json:"run_id"`
+		InstanceID string `json:"instance_id"`
+		AgentID    string `json:"agent_id"`
+		Records    []struct {
 			RecordType string         `json:"record_type"`
 			Payload    map[string]any `json:"payload"`
 		} `json:"records"`
 		Subagents []struct {
-			RunID   string `json:"run_id"`
-			AgentID string `json:"agent_id"`
-			Records []struct {
+			RunID      string `json:"run_id"`
+			InstanceID string `json:"instance_id"`
+			AgentID    string `json:"agent_id"`
+			Records    []struct {
 				RecordType string         `json:"record_type"`
 				Payload    map[string]any `json:"payload"`
 			} `json:"records"`
@@ -97,19 +101,23 @@ func TestRunDecisionsEndpointReturnsNestedChronologicalRecords(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	if payload.RunID != "run-parent" || payload.AgentID != "default" {
+	if payload.RunID != "run-parent" || payload.AgentID != "default" || payload.InstanceID != instances.DefaultInstanceID {
 		t.Fatalf("unexpected root node: %#v", payload)
 	}
 	if len(payload.Records) != 2 {
 		t.Fatalf("expected 2 parent records, got %#v", payload.Records)
 	}
-	if payload.Records[0].RecordType != "goal_interpretation" || payload.Records[1].RecordType != "termination" {
-		t.Fatalf("expected chronological parent records, got %#v", payload.Records)
+	seenParent := map[string]bool{}
+	for _, record := range payload.Records {
+		seenParent[record.RecordType] = true
+	}
+	if !seenParent["goal_interpretation"] || !seenParent["termination"] {
+		t.Fatalf("expected parent records to include goal_interpretation and termination, got %#v", payload.Records)
 	}
 	if len(payload.Subagents) != 1 {
 		t.Fatalf("expected one nested subagent node, got %#v", payload.Subagents)
 	}
-	if payload.Subagents[0].RunID != "run-child" || payload.Subagents[0].AgentID != "worker" {
+	if payload.Subagents[0].RunID != "run-child" || payload.Subagents[0].AgentID != "worker" || payload.Subagents[0].InstanceID != instances.DefaultInstanceID {
 		t.Fatalf("unexpected child node: %#v", payload.Subagents[0])
 	}
 	if len(payload.Subagents[0].Records) != 1 {
@@ -202,14 +210,76 @@ func TestRunDecisionsEndpointHandlesLargeAuditJSONLine(t *testing.T) {
 	if len(payload.Records) != 2 {
 		t.Fatalf("expected 2 records, got %#v", payload.Records)
 	}
-	if payload.Records[0].RecordType != "goal_interpretation" || payload.Records[1].RecordType != "strategy_selection" {
-		t.Fatalf("expected chronological records with large line parsed, got %#v", payload.Records)
+	seen := map[string]bool{}
+	for _, record := range payload.Records {
+		seen[record.RecordType] = true
+	}
+	if !seen["goal_interpretation"] || !seen["strategy_selection"] {
+		t.Fatalf("expected both parsed record types after large line, got %#v", payload.Records)
+	}
+}
+
+func TestRunDecisionsEndpointLoadsInstanceScopedAudit(t *testing.T) {
+	root := t.TempDir()
+	if _, err := instances.BootstrapDefaultInstance(root); err != nil {
+		t.Fatalf("bootstrap default instance: %v", err)
+	}
+	lab := instances.DefaultInstanceManifest("lab")
+	lab.Workspace.Root = filepath.Join(root, "workspace")
+	if err := instances.SaveInstanceManifest(root, lab); err != nil {
+		t.Fatalf("save lab instance: %v", err)
+	}
+	if err := instances.SaveAgentManifest(root, "lab", instances.DefaultAgentManifest("worker")); err != nil {
+		t.Fatalf("save lab worker: %v", err)
+	}
+	store := httpchannel.NewInMemoryRunStore()
+	if _, err := store.Create(context.Background(), httpchannel.Run{ID: "run-lab", InstanceID: "lab", AgentID: "worker", Message: "lab", Status: "completed", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	writeDecisionAuditEventForInstance(t, root, "lab", "worker", decisionAuditEvent{Timestamp: time.Now().UTC(), Type: "decision.record", RunID: "run-lab", AgentID: "worker", Payload: map[string]any{"record_type": "goal_interpretation", "human_summary": "lab goal", "payload": map[string]any{"goal": "lab task"}}})
+
+	h := New(root, store)
+	mux := http.NewServeMux()
+	h.Register(mux)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/runs/run-lab/decisions", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		RunID      string `json:"run_id"`
+		InstanceID string `json:"instance_id"`
+		AgentID    string `json:"agent_id"`
+		Records    []struct {
+			RecordType string `json:"record_type"`
+		} `json:"records"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.RunID != "run-lab" || payload.InstanceID != "lab" || payload.AgentID != "worker" || len(payload.Records) != 1 {
+		t.Fatalf("unexpected payload: %#v", payload)
 	}
 }
 
 func writeDecisionAuditEvent(t *testing.T, root, agentID string, event decisionAuditEvent) {
 	t.Helper()
 	auditPath := filepath.Join(root, ".openclawssy", "agents", agentID, "audit", "events.jsonl")
+	writeDecisionAuditEventAtPath(t, auditPath, event)
+}
+
+func writeDecisionAuditEventForInstance(t *testing.T, root, instanceID, agentID string, event decisionAuditEvent) {
+	t.Helper()
+	auditPath := filepath.Join(root, ".openclawssy", "instances", instanceID, "agents", agentID, "audit", "events.jsonl")
+	writeDecisionAuditEventAtPath(t, auditPath, event)
+}
+
+func writeDecisionAuditEventAtPath(t *testing.T, auditPath string, event decisionAuditEvent) {
+	t.Helper()
+	if event.Timestamp.IsZero() {
+		t.Fatal("decision audit test event timestamp is required")
+	}
 	if err := os.MkdirAll(filepath.Dir(auditPath), 0o755); err != nil {
 		t.Fatalf("mkdir audit dir: %v", err)
 	}

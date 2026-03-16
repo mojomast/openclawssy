@@ -44,6 +44,7 @@ type Handler func(ctx context.Context, req Request) (map[string]any, error)
 
 type Request struct {
 	AgentID              string
+	InstanceID           string
 	Tool                 string
 	Workspace            string
 	Args                 map[string]any
@@ -51,6 +52,31 @@ type Request struct {
 	Shell                ShellExecutor
 	ShellAllowedCommands []string
 	SandboxProvider      SandboxFileOps // nil = use host OS directly
+}
+
+type requestContextKey struct{}
+
+type RequestContext struct {
+	InstanceID string
+}
+
+func WithRequestContext(ctx context.Context, meta RequestContext) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, requestContextKey{}, meta)
+}
+
+func RequestContextFromContext(ctx context.Context) RequestContext {
+	if ctx == nil {
+		return RequestContext{}
+	}
+	meta, ok := ctx.Value(requestContextKey{}).(RequestContext)
+	if !ok {
+		return RequestContext{}
+	}
+	meta.InstanceID = strings.TrimSpace(meta.InstanceID)
+	return meta
 }
 
 type registryItem struct {
@@ -183,8 +209,10 @@ func (r *Registry) Execute(ctx context.Context, agentID, name, workspace string,
 		}
 	}
 
+	meta := RequestContextFromContext(ctx)
 	res, err := item.handler(ctx, Request{
 		AgentID:              agentID,
+		InstanceID:           meta.InstanceID,
 		Tool:                 name,
 		Workspace:            workspace,
 		Args:                 args,

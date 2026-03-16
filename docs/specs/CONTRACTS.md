@@ -89,6 +89,7 @@ Failure-loop handling contract:
 Event minimum fields:
 - `event_id`, `event_type`, `ts`
 - `run_id`, `agent_id`
+- `instance_id` when the caller or runtime resolved an instance-scoped run
 - `seq` (strictly increasing per run)
 - `payload` (event-specific object)
 
@@ -158,6 +159,7 @@ Request:
 
 ```json
 {
+  "instance_id": "default",
   "agent_id": "agent_default",
   "message": "Summarize repository status",
   "thinking_mode": "always"
@@ -165,6 +167,7 @@ Request:
 ```
 
 Request notes:
+- `instance_id` is optional and must be a valid canonical instance id when present.
 - `thinking_mode` is optional and must be one of `never|on_error|always`.
 - When omitted, runtime uses `output.thinking_mode` from config.
 
@@ -172,6 +175,7 @@ Response `202`:
 
 ```json
 {
+  "instance_id": "default",
   "id": "run_123",
   "status": "queued"
 }
@@ -179,6 +183,7 @@ Response `202`:
 
 ### GET `/v1/runs`
 Query params:
+- `instance_id` (optional exact instance filter)
 - `status` (optional exact status filter)
 - `limit` (optional, default `50`, max `500`)
 - `offset` (optional, default `0`)
@@ -200,6 +205,7 @@ Response `200`:
 ```json
 {
   "id": "run_123",
+  "instance_id": "default",
   "agent_id": "agent_default",
   "source": "http",
   "status": "completed",
@@ -227,6 +233,7 @@ Response `200`:
 Notes:
 - `trace` is optional but typically present for completed/failed runs.
 - `tool_execution_results[].summary` is a short display-friendly summary when available.
+- External route compatibility still centers on bare `run_id`, but runtime and HTTP tracking are converging on `(instance_id, agent_id, run_id)` internally.
 
 Queue-overload response for `POST /v1/runs`:
 

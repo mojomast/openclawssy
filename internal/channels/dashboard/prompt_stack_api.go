@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"openclawssy/internal/instances"
 	"openclawssy/internal/promptstack"
 )
 
@@ -53,8 +53,8 @@ type promptStackStructuralCheck struct {
 	Explanation string `json:"explanation"`
 }
 
-func (h *Handler) handlePromptStackAPI(w http.ResponseWriter, r *http.Request, agentID string, segments []string) {
-	store, err := h.promptStackStore()
+func (h *Handler) handlePromptStackAPI(w http.ResponseWriter, r *http.Request, instanceID, agentID string, segments []string) {
+	store, err := h.promptStackStore(instanceID)
 	if err != nil {
 		writeDashboardError(w, http.StatusInternalServerError, "promptstack.store_init_failed", "failed to initialize prompt stack store", nil)
 		return
@@ -65,7 +65,7 @@ func (h *Handler) handlePromptStackAPI(w http.ResponseWriter, r *http.Request, a
 			writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 			return
 		}
-		h.getPromptStack(w, agentID, store)
+		h.getPromptStack(w, instanceID, agentID, store)
 		return
 	}
 
@@ -81,76 +81,90 @@ func (h *Handler) handlePromptStackAPI(w http.ResponseWriter, r *http.Request, a
 			writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 			return
 		}
-		h.getPromptStackPreview(w, agentID, store)
+		h.getPromptStackPreview(w, instanceID, agentID, store)
 	case "history":
 		if r.Method != http.MethodGet {
 			writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 			return
 		}
-		h.getPromptStackHistory(w, agentID, store)
+		h.getPromptStackHistory(w, instanceID, agentID, store)
 	case "diff":
 		if r.Method != http.MethodGet {
 			writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 			return
 		}
-		h.getPromptStackDiff(w, r, agentID, store)
+		h.getPromptStackDiff(w, r, instanceID, agentID, store)
 	case "rollback":
 		if r.Method != http.MethodPost {
 			writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 			return
 		}
-		h.rollbackPromptStack(w, r, agentID, store)
+		h.rollbackPromptStack(w, r, instanceID, agentID, store)
 	case "lint":
 		if r.Method != http.MethodPost {
 			writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 			return
 		}
-		h.lintPromptStack(w, agentID, store)
+		h.lintPromptStack(w, instanceID, agentID, store)
 	case "test":
 		if r.Method != http.MethodPost {
 			writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 			return
 		}
-		h.testPromptStack(w, agentID, store)
+		h.testPromptStack(w, instanceID, agentID, store)
 	default:
 		if r.Method != http.MethodPut {
 			writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 			return
 		}
-		h.updatePromptStackLayer(w, r, agentID, target, store)
+		h.updatePromptStackLayer(w, r, instanceID, agentID, target, store)
 	}
 }
 
-func (h *Handler) promptStackStore() (*promptstack.VersionStore, error) {
+func (h *Handler) promptStackStore(instanceID string) (*promptstack.VersionStore, error) {
 	h.promptStackMu.Lock()
 	defer h.promptStackMu.Unlock()
 
-	if h.promptStack != nil {
-		return h.promptStack, nil
+	resolvedInstanceID := strings.TrimSpace(instanceID)
+	if resolvedInstanceID == "" {
+		activeInstanceID, err := instances.LoadActiveInstanceID(h.rootDir)
+		if err == nil {
+			resolvedInstanceID = activeInstanceID
+		}
+	}
+	if resolvedInstanceID == "" {
+		resolvedInstanceID = instances.DefaultInstanceID
+	}
+	if store := h.promptStackByInstance[resolvedInstanceID]; store != nil {
+		return store, nil
 	}
 
-	store, err := promptstack.NewVersionStore(filepath.Join(h.rootDir, ".openclawssy"))
+	store, err := promptstack.NewVersionStore(instances.ControlPlaneDir(h.rootDir), resolvedInstanceID)
 	if err != nil {
 		return nil, err
 	}
-	h.promptStack = store
-	return h.promptStack, nil
+	h.promptStackByInstance[resolvedInstanceID] = store
+	if resolvedInstanceID == instances.DefaultInstanceID {
+		h.promptStack = store
+	}
+	return store, nil
 }
 
-func (h *Handler) getPromptStack(w http.ResponseWriter, agentID string, store *promptstack.VersionStore) {
-	stack, err := h.ensurePromptStackInitialized(agentID, store)
+func (h *Handler) getPromptStack(w http.ResponseWriter, instanceID, agentID string, store *promptstack.VersionStore) {
+	stack, err := h.ensurePromptStackInitialized(instanceID, agentID, store)
 	if err != nil {
 		h.writePromptStackError(w, err)
 		return
 	}
 
 	writeJSON(w, map[string]any{
-		"agent_id": agentID,
-		"layers":   stack.LayersInOrder(),
+		"instance_id": instanceID,
+		"agent_id":    agentID,
+		"layers":      stack.LayersInOrder(),
 	})
 }
 
-func (h *Handler) updatePromptStackLayer(w http.ResponseWriter, r *http.Request, agentID, layerID string, store *promptstack.VersionStore) {
+func (h *Handler) updatePromptStackLayer(w http.ResponseWriter, r *http.Request, instanceID, agentID, layerID string, store *promptstack.VersionStore) {
 	var req struct {
 		Content string `json:"content"`
 	}
@@ -159,7 +173,7 @@ func (h *Handler) updatePromptStackLayer(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	if _, err := h.ensurePromptStackInitialized(agentID, store); err != nil {
+	if _, err := h.ensurePromptStackInitialized(instanceID, agentID, store); err != nil {
 		h.writePromptStackError(w, err)
 		return
 	}
@@ -177,14 +191,15 @@ func (h *Handler) updatePromptStackLayer(w http.ResponseWriter, r *http.Request,
 	}
 
 	writeJSON(w, map[string]any{
+		"instance_id":   instanceID,
 		"ok":            true,
 		"updated_layer": updated,
 		"layers":        stack.LayersInOrder(),
 	})
 }
 
-func (h *Handler) getPromptStackPreview(w http.ResponseWriter, agentID string, store *promptstack.VersionStore) {
-	stack, err := h.ensurePromptStackInitialized(agentID, store)
+func (h *Handler) getPromptStackPreview(w http.ResponseWriter, instanceID, agentID string, store *promptstack.VersionStore) {
+	stack, err := h.ensurePromptStackInitialized(instanceID, agentID, store)
 	if err != nil {
 		h.writePromptStackError(w, err)
 		return
@@ -210,6 +225,7 @@ func (h *Handler) getPromptStackPreview(w http.ResponseWriter, agentID string, s
 	}
 
 	writeJSON(w, map[string]any{
+		"instance_id":       instanceID,
 		"agent_id":          agentID,
 		"layers":            previewLayers,
 		"assembled_prompt":  promptstack.Assemble(stack),
@@ -218,8 +234,8 @@ func (h *Handler) getPromptStackPreview(w http.ResponseWriter, agentID string, s
 	})
 }
 
-func (h *Handler) getPromptStackHistory(w http.ResponseWriter, agentID string, store *promptstack.VersionStore) {
-	if _, err := h.ensurePromptStackInitialized(agentID, store); err != nil {
+func (h *Handler) getPromptStackHistory(w http.ResponseWriter, instanceID, agentID string, store *promptstack.VersionStore) {
+	if _, err := h.ensurePromptStackInitialized(instanceID, agentID, store); err != nil {
 		h.writePromptStackError(w, err)
 		return
 	}
@@ -236,15 +252,16 @@ func (h *Handler) getPromptStackHistory(w http.ResponseWriter, agentID string, s
 	}
 
 	writeJSON(w, map[string]any{
-		"agent_id": agentID,
-		"layers":   layerHistory,
-		"versions": versions,
-		"count":    len(versions),
+		"instance_id": instanceID,
+		"agent_id":    agentID,
+		"layers":      layerHistory,
+		"versions":    versions,
+		"count":       len(versions),
 	})
 }
 
-func (h *Handler) getPromptStackDiff(w http.ResponseWriter, r *http.Request, agentID string, store *promptstack.VersionStore) {
-	if _, err := h.ensurePromptStackInitialized(agentID, store); err != nil {
+func (h *Handler) getPromptStackDiff(w http.ResponseWriter, r *http.Request, instanceID, agentID string, store *promptstack.VersionStore) {
+	if _, err := h.ensurePromptStackInitialized(instanceID, agentID, store); err != nil {
 		h.writePromptStackError(w, err)
 		return
 	}
@@ -282,6 +299,7 @@ func (h *Handler) getPromptStackDiff(w http.ResponseWriter, r *http.Request, age
 	diff := buildPromptStackTextDiff(fromVersion, toVersion, fromPrompt, toPrompt)
 
 	writeJSON(w, map[string]any{
+		"instance_id":  instanceID,
 		"agent_id":     agentID,
 		"from_version": fromVersion,
 		"to_version":   toVersion,
@@ -291,7 +309,7 @@ func (h *Handler) getPromptStackDiff(w http.ResponseWriter, r *http.Request, age
 	})
 }
 
-func (h *Handler) rollbackPromptStack(w http.ResponseWriter, r *http.Request, agentID string, store *promptstack.VersionStore) {
+func (h *Handler) rollbackPromptStack(w http.ResponseWriter, r *http.Request, instanceID, agentID string, store *promptstack.VersionStore) {
 	var req struct {
 		Version int `json:"version"`
 	}
@@ -304,7 +322,7 @@ func (h *Handler) rollbackPromptStack(w http.ResponseWriter, r *http.Request, ag
 		return
 	}
 
-	if _, err := h.ensurePromptStackInitialized(agentID, store); err != nil {
+	if _, err := h.ensurePromptStackInitialized(instanceID, agentID, store); err != nil {
 		h.writePromptStackError(w, err)
 		return
 	}
@@ -352,14 +370,15 @@ func (h *Handler) rollbackPromptStack(w http.ResponseWriter, r *http.Request, ag
 	}
 
 	writeJSON(w, map[string]any{
-		"ok":      true,
-		"version": req.Version,
-		"layers":  stack.LayersInOrder(),
+		"instance_id": instanceID,
+		"ok":          true,
+		"version":     req.Version,
+		"layers":      stack.LayersInOrder(),
 	})
 }
 
-func (h *Handler) lintPromptStack(w http.ResponseWriter, agentID string, store *promptstack.VersionStore) {
-	stack, err := h.ensurePromptStackInitialized(agentID, store)
+func (h *Handler) lintPromptStack(w http.ResponseWriter, instanceID, agentID string, store *promptstack.VersionStore) {
+	stack, err := h.ensurePromptStackInitialized(instanceID, agentID, store)
 	if err != nil {
 		h.writePromptStackError(w, err)
 		return
@@ -367,14 +386,15 @@ func (h *Handler) lintPromptStack(w http.ResponseWriter, agentID string, store *
 
 	issues := promptstack.Lint(stack, nil)
 	writeJSON(w, map[string]any{
-		"agent_id": agentID,
-		"issues":   issues,
-		"count":    len(issues),
+		"instance_id": instanceID,
+		"agent_id":    agentID,
+		"issues":      issues,
+		"count":       len(issues),
 	})
 }
 
-func (h *Handler) testPromptStack(w http.ResponseWriter, agentID string, store *promptstack.VersionStore) {
-	stack, err := h.ensurePromptStackInitialized(agentID, store)
+func (h *Handler) testPromptStack(w http.ResponseWriter, instanceID, agentID string, store *promptstack.VersionStore) {
+	stack, err := h.ensurePromptStackInitialized(instanceID, agentID, store)
 	if err != nil {
 		h.writePromptStackError(w, err)
 		return
@@ -390,13 +410,14 @@ func (h *Handler) testPromptStack(w http.ResponseWriter, agentID string, store *
 	}
 
 	writeJSON(w, map[string]any{
-		"agent_id": agentID,
-		"passed":   passed,
-		"checks":   checks,
+		"instance_id": instanceID,
+		"agent_id":    agentID,
+		"passed":      passed,
+		"checks":      checks,
 	})
 }
 
-func (h *Handler) ensurePromptStackInitialized(agentID string, store *promptstack.VersionStore) (promptstack.PromptStack, error) {
+func (h *Handler) ensurePromptStackInitialized(instanceID, agentID string, store *promptstack.VersionStore) (promptstack.PromptStack, error) {
 	stack, err := store.GetCurrent(agentID)
 	if err != nil {
 		return promptstack.PromptStack{}, err
@@ -405,7 +426,7 @@ func (h *Handler) ensurePromptStackInitialized(agentID string, store *promptstac
 		return stack, nil
 	}
 
-	seed := h.seedPromptStackFromDocs(agentID)
+	seed := h.seedPromptStackFromDocs(instanceID, agentID)
 	for _, layer := range seed.LayersInOrder() {
 		if strings.TrimSpace(layer.Content) == "" {
 			continue
@@ -430,20 +451,20 @@ func promptStackHasPersistedContent(stack promptstack.PromptStack) bool {
 	return false
 }
 
-func (h *Handler) seedPromptStackFromDocs(agentID string) promptstack.PromptStack {
+func (h *Handler) seedPromptStackFromDocs(instanceID, agentID string) promptstack.PromptStack {
 	stack := promptstack.NewPromptStack()
 
 	layerContent := map[string]string{
-		promptstack.LayerGlobalOperatorPolicy: h.readPromptStackDoc(agentID, "SPECPLAN.md"),
-		promptstack.LayerAgentIdentity:        h.readPromptStackDoc(agentID, "SOUL.md"),
+		promptstack.LayerGlobalOperatorPolicy: h.readPromptStackDoc(instanceID, agentID, "SPECPLAN.md"),
+		promptstack.LayerAgentIdentity:        h.readPromptStackDoc(instanceID, agentID, "SOUL.md"),
 		promptstack.LayerToolSafetyRules: joinPromptStackSeedDocs(
-			h.readPromptStackDoc(agentID, "RULES.md"),
-			h.readPromptStackDoc(agentID, "TOOLS.md"),
+			h.readPromptStackDoc(instanceID, agentID, "RULES.md"),
+			h.readPromptStackDoc(instanceID, agentID, "TOOLS.md"),
 		),
-		promptstack.LayerDelegationPolicy: h.readPromptStackDoc(agentID, "DEVPLAN.md"),
+		promptstack.LayerDelegationPolicy: h.readPromptStackDoc(instanceID, agentID, "DEVPLAN.md"),
 		promptstack.LayerSessionOverlay: joinPromptStackSeedDocs(
-			h.readPromptStackDoc(agentID, "HEARTBEAT.md"),
-			h.readPromptStackDoc(agentID, "HANDOFF.md"),
+			h.readPromptStackDoc(instanceID, agentID, "HEARTBEAT.md"),
+			h.readPromptStackDoc(instanceID, agentID, "HANDOFF.md"),
 		),
 	}
 
@@ -457,12 +478,14 @@ func (h *Handler) seedPromptStackFromDocs(agentID string) promptstack.PromptStac
 	return stack
 }
 
-func (h *Handler) readPromptStackDoc(agentID, name string) string {
-	doc, err := h.readAgentDoc(agentID, name)
-	if err != nil || !doc.Exists {
-		return ""
+func (h *Handler) readPromptStackDoc(instanceID, agentID, name string) string {
+	if doc, err := h.readAgentDocInInstance(instanceID, agentID, name); err == nil && doc.Exists {
+		return strings.TrimSpace(doc.Content)
 	}
-	return strings.TrimSpace(doc.Content)
+	if doc, err := h.readAgentDoc(agentID, name); err == nil && doc.Exists {
+		return strings.TrimSpace(doc.Content)
+	}
+	return ""
 }
 
 func joinPromptStackSeedDocs(parts ...string) string {

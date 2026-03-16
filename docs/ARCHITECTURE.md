@@ -2,6 +2,7 @@
 
 ## Runtime Flow
 - Channel adapters (CLI, HTTP, chat, Discord, Telegram, scheduler) normalize requests into `runtime.ExecuteInput`.
+- Runtime resolves effective state from canonical instance + agent manifests before prompt/model/tool execution.
 - Engine acquires a global run slot (`engine.max_concurrent_runs`) before execution.
 - Prompt assembly merges: system policy, agent files, optional chat/session context, and user input.
 - Model response is parsed for tool calls and visible text in a bounded loop.
@@ -20,6 +21,27 @@ Input -> ExecuteWithInput
       -> repeat until terminal assistant output
       -> write run bundle + audit + release slot
 ```
+
+## Canonical identity model
+
+- Instance is the packaging boundary.
+- Agents belong to instances.
+- Runtime identity is converging on `(instance_id, agent_id, run_id)`.
+- Bare `run_id` is still accepted in some compatibility paths, but new runtime/HTTP tracker work stores both bare and composite keys.
+- Delegated child runs inherit the parent `instance_id`.
+- Inter-agent messaging is same-instance by default and now persists `instance_id` explicitly.
+
+## Control-plane layout
+
+Canonical control-plane state lives under:
+
+- `.openclawssy/instances/<instance>/manifest.json`
+- `.openclawssy/instances/<instance>/agents/<agent>/agent.json`
+- `.openclawssy/instances/<instance>/agents/<agent>/promptstack/...`
+- `.openclawssy/instances/<instance>/roles.json`
+- `.openclawssy/instances/<instance>/skills.json`
+
+Legacy flat-agent docs and paths still exist as compatibility mirrors in parts of the system, but they are no longer the architectural source of truth.
 
 ## Parser and Thinking Extraction
 - Parsing captures malformed tool snippets and normalized rejection reasons.
@@ -171,6 +193,8 @@ restrictions per target agent: check `subagent_overrides[agentID]` first, fall b
 `AllowedTools` and `MaxToolIterations` flow through `AgentRunInput` into `ExecuteInput`,
 and `TimeoutMS` is applied as a context deadline on the subagent run.
 
+Delegated subagent execution is instance-stable: once a parent run resolves to an instance, child runs reuse that same `instance_id` rather than falling back to the active/default instance.
+
 ### Context Token Tracking
 
 The delegation trigger uses live token counts from model responses (`PromptTokens`,
@@ -185,3 +209,8 @@ modes are downgraded to `prompt_only` automatically.
 - Chat sessions: persisted chat store files (session metadata + messages).
 - Scheduler: persisted jobs/state file with backup/restore safeguards.
 - Docker workspace: named volume `openclawssy_ws_<agent_id>` on Docker host (when provider=docker).
+
+Compatibility note:
+
+- Some run/audit/chat persistence still uses legacy flat-agent paths for compatibility.
+- Canonical configuration, prompt stack, roles, skills, messaging scope, and effective runtime resolution now come from instance-aware storage.

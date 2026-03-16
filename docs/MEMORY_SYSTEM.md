@@ -97,6 +97,8 @@ On successful checkpoint/maintenance signals, runtime may send a proactive inter
 
 No context means safe skip.
 
+Proactive messages are instance-scoped: the runtime sends them within the same `instance_id` as the originating run, and the resulting inbox payload records that `instance_id` for traceability.
+
 ### 7) Embeddings (optional)
 
 When enabled:
@@ -122,7 +124,7 @@ Memory-related tools:
 
 Related proactive tool surface:
 
-- `agent.message.send` (supports optional source context fields)
+- `agent.message.send` (supports optional source context fields and persists `instance_id`)
 - `agent.message.inbox`
 
 ## Configuration

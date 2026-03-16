@@ -16,6 +16,7 @@ import (
 	"openclawssy/internal/chatstore"
 	clawdefuckifierpkg "openclawssy/internal/clawdefuckifier"
 	"openclawssy/internal/config"
+	"openclawssy/internal/instances"
 )
 
 const (
@@ -24,6 +25,7 @@ const (
 )
 
 type AgentRunInput struct {
+	InstanceID        string
 	CallerAgentID     string
 	TargetAgentID     string
 	ParentRunID       string
@@ -456,6 +458,13 @@ func agentProfileSet(configPath string) Handler {
 
 func agentMessageSend(agentsPath, configPath string) Handler {
 	return func(_ context.Context, req Request) (map[string]any, error) {
+		instanceID, rootDir, instanceManifest, err := resolveAgentMessagingContext(req, configPath)
+		if err != nil {
+			return nil, err
+		}
+		if !instanceManifest.Messaging.Enabled || !instanceManifest.Messaging.AllowInterAgentMessaging {
+			return nil, errors.New("inter-agent messaging is disabled for this instance")
+		}
 		cfgPath, err := resolveOpenClawssyPath(req.Workspace, configPath, "config", "config.json")
 		if err != nil {
 			return nil, err
@@ -475,6 +484,16 @@ func agentMessageSend(agentsPath, configPath string) Handler {
 		toAgentID, err := validatedAgentID(valueString(req.Args, "to_agent_id"))
 		if err != nil {
 			return nil, err
+		}
+		if _, err := instances.LoadAgentManifest(rootDir, instanceID, fromAgentID); err != nil {
+			return nil, fmt.Errorf("sender agent is not available in instance %q: %w", instanceID, err)
+		}
+		toManifest, err := instances.LoadAgentManifest(rootDir, instanceID, toAgentID)
+		if err != nil {
+			return nil, fmt.Errorf("recipient agent is not available in instance %q: %w", instanceID, err)
+		}
+		if !toManifest.Enabled {
+			return nil, fmt.Errorf("recipient agent %q is inactive in instance %q", toAgentID, instanceID)
 		}
 		message := strings.TrimSpace(valueString(req.Args, "message"))
 		if message == "" {
@@ -519,6 +538,7 @@ func agentMessageSend(agentsPath, configPath string) Handler {
 		}
 
 		payload := map[string]any{
+			"instance_id":   instanceID,
 			"from_agent_id": fromAgentID,
 			"to_agent_id":   toAgentID,
 			"subject":       subject,
@@ -536,6 +556,7 @@ func agentMessageSend(agentsPath, configPath string) Handler {
 
 		return map[string]any{
 			"sent":              true,
+			"instance_id":       instanceID,
 			"session_id":        session.SessionID,
 			"source_session_id": sessionID,
 			"from_agent_id":     fromAgentID,
@@ -549,6 +570,13 @@ func agentMessageSend(agentsPath, configPath string) Handler {
 
 func agentMessageInbox(agentsPath, configPath string) Handler {
 	return func(_ context.Context, req Request) (map[string]any, error) {
+		instanceID, rootDir, instanceManifest, err := resolveAgentMessagingContext(req, configPath)
+		if err != nil {
+			return nil, err
+		}
+		if !instanceManifest.Messaging.Enabled || !instanceManifest.Messaging.AllowInterAgentMessaging {
+			return nil, errors.New("inter-agent messaging is disabled for this instance")
+		}
 		cfgPath, err := resolveOpenClawssyPath(req.Workspace, configPath, "config", "config.json")
 		if err != nil {
 			return nil, err
@@ -568,6 +596,9 @@ func agentMessageInbox(agentsPath, configPath string) Handler {
 		target, err = validatedAgentID(target)
 		if err != nil {
 			return nil, err
+		}
+		if _, err := instances.LoadAgentManifest(rootDir, instanceID, target); err != nil {
+			return nil, fmt.Errorf("agent is not available in instance %q: %w", instanceID, err)
 		}
 		store, err := openAgentChatStore(req.Workspace, agentsPath)
 		if err != nil {
@@ -592,13 +623,22 @@ func agentMessageInbox(agentsPath, configPath string) Handler {
 				continue
 			}
 			for _, item := range recent {
+				instanceValue := instanceID
+				content := item.Content
+				var payload map[string]any
+				if err := json.Unmarshal([]byte(content), &payload); err == nil {
+					if value := strings.TrimSpace(valueString(payload, "instance_id")); value != "" {
+						instanceValue = value
+					}
+				}
 				entry := map[string]any{
-					"session_id": session.SessionID,
-					"from":       session.UserID,
-					"task_id":    session.RoomID,
-					"role":       item.Role,
-					"content":    item.Content,
-					"ts":         item.TS,
+					"instance_id": instanceValue,
+					"session_id":  session.SessionID,
+					"from":        session.UserID,
+					"task_id":     session.RoomID,
+					"role":        item.Role,
+					"content":     content,
+					"ts":          item.TS,
 				}
 				messages = append(messages, entry)
 				if len(messages) >= limit {
@@ -610,11 +650,50 @@ func agentMessageInbox(agentsPath, configPath string) Handler {
 			}
 		}
 		return map[string]any{
-			"agent_id": target,
-			"count":    len(messages),
-			"messages": messages,
+			"instance_id": instanceID,
+			"agent_id":    target,
+			"count":       len(messages),
+			"messages":    messages,
 		}, nil
 	}
+}
+
+func resolveAgentMessagingContext(req Request, configPath string) (string, string, instances.InstanceManifest, error) {
+	rootDir := strings.TrimSpace(filepath.Dir(filepath.Dir(resolvePathOrEmpty(req.Workspace, configPath))))
+	if rootDir == "" {
+		return "", "", instances.InstanceManifest{}, errors.New("workspace is required to resolve messaging instance")
+	}
+	instanceID := strings.TrimSpace(req.InstanceID)
+	if instanceID == "" {
+		activeID, err := instances.LoadActiveInstanceID(rootDir)
+		if err == nil {
+			instanceID = activeID
+		}
+	}
+	if instanceID == "" {
+		instanceID = instances.DefaultInstanceID
+	}
+	if _, err := instances.ValidateInstanceID(instanceID); err != nil {
+		return "", "", instances.InstanceManifest{}, err
+	}
+	manifest, err := instances.LoadInstanceManifest(rootDir, instanceID)
+	if err != nil {
+		if _, bootstrapErr := instances.BootstrapDefaultInstance(rootDir); bootstrapErr == nil {
+			manifest, err = instances.LoadInstanceManifest(rootDir, instanceID)
+		}
+		if err != nil {
+			return "", "", instances.InstanceManifest{}, err
+		}
+	}
+	return instanceID, rootDir, manifest, nil
+}
+
+func resolvePathOrEmpty(workspace, configuredPath string) string {
+	resolved, err := resolveOpenClawssyPath(workspace, configuredPath, "config", "config.json")
+	if err != nil {
+		return ""
+	}
+	return resolved
 }
 
 func agentRun(configPath string, runner AgentRunner) Handler {
@@ -651,6 +730,7 @@ func agentRun(configPath string, runner AgentRunner) Handler {
 			return nil, errors.New("message is required")
 		}
 		out, err := runner.ExecuteSubAgent(ctx, AgentRunInput{
+			InstanceID:        strings.TrimSpace(req.InstanceID),
 			CallerAgentID:     caller,
 			TargetAgentID:     targetAgentID,
 			ParentRunID:       strings.TrimSpace(valueString(req.Args, "parent_run_id")),

@@ -228,6 +228,8 @@ Provider API key env defaults:
 - `agents.allow_agent_model_overrides=true` allows `agents.profiles.<agent_id>.model` to override provider/model settings per agent.
 - `agents.profiles.<agent_id>.model.timeout_ms` can override the global provider timeout for one agent; `0` inherits the global value.
 - `agents.allow_inter_agent_messaging` toggles `agent.message.send` and `agent.message.inbox` workflows.
+- Inter-agent messaging is instance-scoped first: sender and recipient must both belong to the active/requested instance unless future cross-instance policy explicitly allows otherwise.
+- Canonical instance messaging policy lives in `instances/<instance>/manifest.json` (`messaging.enabled`, `messaging.allow_inter_agent_messaging`); the legacy `agents.allow_inter_agent_messaging` flag remains a compatibility gate during migration.
 - `agents.self_improvement_enabled` gates prompt file mutation tools (`agent.prompt.update`).
 - `agents.profiles.<agent_id>.self_improvement=true` must also be set for that agent before prompt mutation is allowed.
 
@@ -276,6 +278,8 @@ Subagents inherit a restricted toolset by default (deny-by-default). Configure v
   ```
 
 When `SubAgentRunner` is not configured, execution-dependent delegation modes (`tool_gated`, `auto_execute`) are automatically downgraded to `prompt_only` to prevent runtime errors.
+
+Delegated subagent execution is also instance-scoped: child runs inherit the parent run's `instance_id` instead of resolving against whichever instance is currently active.
 
 ## Output Notes
 - `output.thinking_mode` supports: `never`, `on_error`, `always`.

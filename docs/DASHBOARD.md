@@ -83,6 +83,7 @@ All control-plane routes are hash-based under `/dashboard/#/...`.
 - Primary APIs: `PATCH /api/admin/config` (delegation fields), `GET /v1/runs`, `GET /v1/runs/{id}`, `GET /api/admin/runs/{id}/decisions`
 - Policy editor controls `delegation_mode`, `delegation_threshold`, `delegation_cooldown_iterations`, and `auto_delegate`.
 - Task Graph Preview reads decomposition plans from selected runs; Run Comparison renders decision-ledger timelines side by side.
+- Decision and monitor payloads now surface explicit `instance_id` alongside `agent_id` and `run_id`, matching the RFC identity direction.
 - Verification notes:
   - Save policy changes and confirm success state.
   - Load a run with decomposition data and verify graph nodes/edges render.
@@ -91,7 +92,7 @@ All control-plane routes are hash-based under `/dashboard/#/...`.
 ### Eval Results (`/#/eval`)
 
 - Primary API: `GET /api/admin/eval/results?limit=...&suite=...`
-- Shows suite history table with expandable details: metrics cards, case-level pass/fail table, and baseline regression panel.
+- Shows suite history table with expandable details: metrics cards, case-level pass/fail table, baseline regression panel, and additive normalized eval identity metadata (`instance_id`, `agent_id`, `run_id`, `parent_run_id`) when present.
 - Verification notes:
   - Run `openclawssy eval run --suite basic` first so data exists.
   - Refresh page and expand a row to verify metrics + baseline comparison blocks.
@@ -101,6 +102,7 @@ All control-plane routes are hash-based under `/dashboard/#/...`.
 - Dashboard routing is hash-based (`/#/...`) to stay compatible with embedded SPA serving.
 - Prompt stack history is persisted in `.openclawssy` via the prompt-stack version store; first-load defaults are seeded from agent docs (`SOUL.md`, `RULES.md`, `TOOLS.md`, `SPECPLAN.md`, `DEVPLAN.md`, `HEARTBEAT.md`, `HANDOFF.md`).
 - Delegation run comparison depends on decision records emitted to per-agent audit logs (`.openclawssy/agents/<agent>/audit/events.jsonl`).
+- Canonical instance-scoped audits are progressively taking over under `.openclawssy/instances/<instance>/agents/<agent>/audit/events.jsonl`; dashboard decision and monitor flows now preserve `instance_id` where available while keeping compatibility with legacy audit locations.
 - Eval UI data is read from `.openclawssy/eval/results.db`; baseline comparisons use saved baselines under `.openclawssy/eval/baselines/`.
 - Current validation commands for this control-plane surface:
 

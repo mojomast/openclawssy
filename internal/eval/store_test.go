@@ -41,6 +41,7 @@ func TestStoreCreatesTableAndPersistsRuns(t *testing.T) {
 	secondID, err := store.SaveRun(context.Background(), SuiteRun{
 		Suite:     "basic",
 		Timestamp: secondTS,
+		Identity:  RunIdentity{InstanceID: "lab", AgentID: "default", RunID: "run-2", ParentRunID: "run-1"},
 		Results:   []CaseResult{{Name: "case-1", Result: TestResult{Passed: false, Expected: "hello", Actual: "nope tokens=3", DurationMS: 6, Error: "mismatch"}}},
 		Metrics:   Metrics{CompletionRate: 0, TokenCost: 3, TimeToCompletion: 6},
 	})
@@ -71,6 +72,9 @@ func TestStoreCreatesTableAndPersistsRuns(t *testing.T) {
 	}
 	if latest.ID != secondID {
 		t.Fatalf("latest ID = %d, want %d", latest.ID, secondID)
+	}
+	if latest.Identity.InstanceID != "lab" || latest.Identity.AgentID != "default" || latest.Identity.RunID != "run-2" || latest.Identity.ParentRunID != "run-1" {
+		t.Fatalf("latest identity = %+v, want persisted identity", latest.Identity)
 	}
 	if latest.Results[0].Result.Passed {
 		t.Fatal("latest result should be failing case")

@@ -17,6 +17,7 @@ import (
 	httpchannel "openclawssy/internal/channels/http"
 	"openclawssy/internal/chatstore"
 	"openclawssy/internal/config"
+	"openclawssy/internal/instances"
 	"openclawssy/internal/memory"
 	memorystore "openclawssy/internal/memory/store"
 	"openclawssy/internal/scheduler"
@@ -1314,6 +1315,14 @@ func (s *stubDashboardRunCanceller) IsTracked(runID string) bool {
 	return s.tracked[runID]
 }
 
+func (s *stubDashboardRunCanceller) CancelComposite(instanceID, agentID, runID string) error {
+	return s.Cancel(instanceID + ":" + agentID + ":" + runID)
+}
+
+func (s *stubDashboardRunCanceller) IsTrackedComposite(instanceID, agentID, runID string) bool {
+	return s.IsTracked(instanceID + ":" + agentID + ":" + runID)
+}
+
 func TestMonitorRunControlReconcilesStaleRunningEntryAfterSuccessfulCancel(t *testing.T) {
 	root := t.TempDir()
 	auditDir := filepath.Join(root, ".openclawssy", "agents", "alpha", "audit")
@@ -1355,6 +1364,9 @@ func TestMonitorRunControlReconcilesStaleRunningEntryAfterSuccessfulCancel(t *te
 	}
 	if payload.Runs[0].RunID != "run-stale" {
 		t.Fatalf("expected run-stale record, got %+v", payload.Runs[0])
+	}
+	if payload.Runs[0].InstanceID != instances.DefaultInstanceID {
+		t.Fatalf("expected default instance id, got %+v", payload.Runs[0])
 	}
 	if payload.Runs[0].Status != "canceled" {
 		t.Fatalf("expected canceled status after successful cancel reconciliation, got %+v", payload.Runs[0])
@@ -1415,6 +1427,9 @@ func TestMonitorRunControlReconcilesUntrackedStaleRunAfterCancelFallback(t *test
 	}
 	if payload.Runs[0].RunID != "run-stale-untracked" || payload.Runs[0].Status != "canceled" {
 		t.Fatalf("expected run-stale-untracked canceled after fallback reconciliation, got %+v", payload.Runs[0])
+	}
+	if payload.Runs[0].InstanceID != instances.DefaultInstanceID {
+		t.Fatalf("expected default instance id, got %+v", payload.Runs[0])
 	}
 	if payload.Runs[0].CompletedAt == "" {
 		t.Fatalf("expected completed_at to be populated after fallback reconciliation, got %+v", payload.Runs[0])
@@ -1535,6 +1550,9 @@ func TestMonitorRunsEndpointUsesStoreTerminalStatusForMatchingRunID(t *testing.T
 	if payload.Runs[0].Status != "canceled" {
 		t.Fatalf("expected monitor status to reconcile with store terminal status, got %+v", payload.Runs[0])
 	}
+	if payload.Runs[0].InstanceID != instances.DefaultInstanceID {
+		t.Fatalf("expected default instance id, got %+v", payload.Runs[0])
+	}
 }
 
 func TestMonitorRunsEndpointIncludesStoreRunAfterCancelWhenAuditMissing(t *testing.T) {
@@ -1596,6 +1614,9 @@ func TestMonitorRunsEndpointIncludesStoreRunAfterCancelWhenAuditMissing(t *testi
 	if payload.Runs[0].RunID != "run-chat-queued" || payload.Runs[0].Status != "canceled" {
 		t.Fatalf("expected canceled store-backed monitor run, got %+v", payload.Runs[0])
 	}
+	if payload.Runs[0].InstanceID != instances.DefaultInstanceID {
+		t.Fatalf("expected default instance id, got %+v", payload.Runs[0])
+	}
 }
 
 func TestMonitorRunsEndpointListsMainAndSubagentAuditRuns(t *testing.T) {
@@ -1635,6 +1656,9 @@ func TestMonitorRunsEndpointListsMainAndSubagentAuditRuns(t *testing.T) {
 	}
 	if payload.Runs[0].RunID != "run-sub" || payload.Runs[0].Role != "subagent" || payload.Runs[0].Status != "failed" {
 		t.Fatalf("unexpected subagent run record: %+v", payload.Runs[0])
+	}
+	if payload.Runs[0].InstanceID != instances.DefaultInstanceID {
+		t.Fatalf("expected default instance id, got %+v", payload.Runs[0])
 	}
 	if payload.Runs[0].TaskID != "cdf-diagnose-2" || payload.Runs[0].ModelProvider != "hatz" || payload.Runs[0].ModelName != "hatz-coder" {
 		t.Fatalf("expected task/model metadata on subagent run, got %+v", payload.Runs[0])
@@ -1746,6 +1770,79 @@ func TestMonitorRunsEndpointToleratesOversizedAuditLines(t *testing.T) {
 	}
 	if payload.Runs[0].RunID != "run-good" || payload.Runs[0].Status != "completed" {
 		t.Fatalf("expected completed run-good record, got %+v", payload.Runs[0])
+	}
+}
+
+func TestMonitorRunsEndpointSeparatesSameRunIDAcrossInstances(t *testing.T) {
+	root := t.TempDir()
+	if _, err := instances.BootstrapDefaultInstance(root); err != nil {
+		t.Fatalf("bootstrap default instance: %v", err)
+	}
+	lab := instances.DefaultInstanceManifest("lab")
+	lab.Workspace.Root = filepath.Join(root, "workspace")
+	if err := instances.SaveInstanceManifest(root, lab); err != nil {
+		t.Fatalf("save lab instance: %v", err)
+	}
+	if err := instances.SaveAgentManifest(root, "lab", instances.DefaultAgentManifest("alpha")); err != nil {
+		t.Fatalf("save lab agent: %v", err)
+	}
+	legacyAuditDir := filepath.Join(root, ".openclawssy", "agents", "alpha", "audit")
+	if err := os.MkdirAll(legacyAuditDir, 0o755); err != nil {
+		t.Fatalf("mkdir legacy audit dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyAuditDir, "events.jsonl"), []byte(`{"ts":"2026-03-05T10:00:00Z","type":"run.start","run_id":"run-shared","agent_id":"alpha","payload":{"source":"dashboard","message":"default instance"}}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write legacy audit: %v", err)
+	}
+	labAuditDir := filepath.Join(root, ".openclawssy", "instances", "lab", "agents", "alpha", "audit")
+	if err := os.MkdirAll(labAuditDir, 0o755); err != nil {
+		t.Fatalf("mkdir lab audit dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(labAuditDir, "events.jsonl"), []byte(`{"ts":"2026-03-05T11:00:00Z","type":"run.start","run_id":"run-shared","agent_id":"alpha","payload":{"source":"dashboard","message":"lab instance"}}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write lab audit: %v", err)
+	}
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/monitor/runs", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Runs []monitorRunRecord `json:"runs"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload.Runs) != 2 {
+		t.Fatalf("expected two runs, got %+v", payload.Runs)
+	}
+	seen := map[string]bool{}
+	for _, run := range payload.Runs {
+		seen[run.InstanceID+":"+run.RunID] = true
+	}
+	if !seen[instances.DefaultInstanceID+":run-shared"] || !seen["lab:run-shared"] {
+		t.Fatalf("expected separate run identities across instances, got %+v", payload.Runs)
+	}
+}
+
+func TestMonitorRunControlUsesCompositeIdentityWhenProvided(t *testing.T) {
+	root := t.TempDir()
+	canceller := &stubDashboardRunCanceller{tracked: map[string]bool{"lab:alpha:run-composite": true}}
+	h := NewWithOptions(root, httpchannel.NewInMemoryRunStore(), Options{RunCanceller: canceller})
+	mux := http.NewServeMux()
+	h.Register(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/monitor/runs/control", bytes.NewBufferString(`{"action":"cancel","instance_id":"lab","agent_id":"alpha","run_id":"run-composite"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	if len(canceller.called) == 0 || canceller.called[0] != "lab:alpha:run-composite" {
+		t.Fatalf("expected composite cancel call, got %#v", canceller.called)
 	}
 }
 

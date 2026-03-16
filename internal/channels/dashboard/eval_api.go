@@ -20,6 +20,7 @@ type evalResultsResponse struct {
 type evalRunResponse struct {
 	ID        int64                `json:"id"`
 	Suite     string               `json:"suite"`
+	Identity  eval.RunIdentity     `json:"identity,omitempty"`
 	Timestamp time.Time            `json:"timestamp"`
 	Total     int                  `json:"total"`
 	Passed    int                  `json:"passed"`
@@ -118,6 +119,7 @@ func (h *Handler) handleEvalResults(w http.ResponseWriter, r *http.Request) {
 		responseRuns = append(responseRuns, evalRunResponse{
 			ID:        run.ID,
 			Suite:     run.Suite,
+			Identity:  run.Identity,
 			Timestamp: run.Timestamp.UTC(),
 			Total:     len(run.Results),
 			Passed:    passed,

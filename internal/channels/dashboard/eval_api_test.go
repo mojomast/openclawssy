@@ -54,6 +54,7 @@ func TestEvalResultsEndpointReturnsHistoryMetricsAndRegressions(t *testing.T) {
 	_, err = store.SaveRun(context.Background(), eval.SuiteRun{
 		Suite:     "basic",
 		Timestamp: latestTimestamp,
+		Identity:  eval.RunIdentity{InstanceID: "lab", AgentID: "default", RunID: "eval-run-2", ParentRunID: "eval-run-1"},
 		Results: []eval.CaseResult{
 			{Name: "case-pass", Result: eval.TestResult{Passed: true, Expected: "ok", Actual: "ok", DurationMS: 11}},
 			{Name: "case-regression", Result: eval.TestResult{Passed: false, Expected: "stable", Actual: "changed", DurationMS: 13, Error: "mismatch"}},
@@ -84,12 +85,13 @@ func TestEvalResultsEndpointReturnsHistoryMetricsAndRegressions(t *testing.T) {
 
 	var payload struct {
 		Runs []struct {
-			Suite    string       `json:"suite"`
-			Status   string       `json:"status"`
-			Total    int          `json:"total"`
-			Passed   int          `json:"passed"`
-			Failed   int          `json:"failed"`
-			Metrics  eval.Metrics `json:"metrics"`
+			Suite    string           `json:"suite"`
+			Identity eval.RunIdentity `json:"identity"`
+			Status   string           `json:"status"`
+			Total    int              `json:"total"`
+			Passed   int              `json:"passed"`
+			Failed   int              `json:"failed"`
+			Metrics  eval.Metrics     `json:"metrics"`
 			Baseline struct {
 				Available   bool              `json:"available"`
 				Regressions []eval.Regression `json:"regressions"`
@@ -107,6 +109,9 @@ func TestEvalResultsEndpointReturnsHistoryMetricsAndRegressions(t *testing.T) {
 	run := payload.Runs[0]
 	if run.Suite != "basic" {
 		t.Fatalf("expected suite basic, got %q", run.Suite)
+	}
+	if run.Identity.InstanceID != "lab" || run.Identity.AgentID != "default" || run.Identity.RunID != "eval-run-2" || run.Identity.ParentRunID != "eval-run-1" {
+		t.Fatalf("unexpected identity: %+v", run.Identity)
 	}
 	if run.Total != 2 || run.Passed != 1 || run.Failed != 1 {
 		t.Fatalf("unexpected run summary: total=%d passed=%d failed=%d", run.Total, run.Passed, run.Failed)

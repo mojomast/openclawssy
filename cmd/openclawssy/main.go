@@ -917,6 +917,7 @@ func (c runCancelCoordinator) Cancel(runID string) error {
 
 func (e runtimeExecutor) Execute(ctx context.Context, input httpchannel.ExecutionInput) (httpchannel.ExecutionResult, error) {
 	res, err := e.engine.ExecuteWithInput(ctx, runtime.ExecuteInput{
+		InstanceID:   input.InstanceID,
 		RunID:        input.RunID,
 		AgentID:      input.AgentID,
 		Message:      input.Message,

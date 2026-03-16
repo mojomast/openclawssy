@@ -14,6 +14,7 @@ var ErrRunNotFound = errors.New("run not found")
 
 type Run struct {
 	ID                string                `json:"id"`
+	InstanceID        string                `json:"instance_id,omitempty"`
 	AgentID           string                `json:"agent_id"`
 	Message           string                `json:"message"`
 	ContentParts      []messagecontent.Part `json:"content_parts,omitempty"`

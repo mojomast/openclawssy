@@ -39,10 +39,18 @@ type CaseResult struct {
 	Result      TestResult `json:"result"`
 }
 
+type RunIdentity struct {
+	InstanceID  string `json:"instance_id,omitempty"`
+	AgentID     string `json:"agent_id,omitempty"`
+	RunID       string `json:"run_id,omitempty"`
+	ParentRunID string `json:"parent_run_id,omitempty"`
+}
+
 type SuiteRun struct {
 	ID          int64        `json:"id,omitempty"`
 	Suite       string       `json:"suite"`
 	Description string       `json:"description,omitempty"`
+	Identity    RunIdentity  `json:"identity,omitempty"`
 	Timestamp   time.Time    `json:"timestamp"`
 	Results     []CaseResult `json:"results"`
 	Metrics     Metrics      `json:"metrics"`

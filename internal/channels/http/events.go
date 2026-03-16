@@ -20,11 +20,13 @@ const (
 )
 
 type RunEvent struct {
-	ID        int64          `json:"id"`
-	Type      RunEventType   `json:"type"`
-	RunID     string         `json:"run_id"`
-	Timestamp time.Time      `json:"ts"`
-	Data      map[string]any `json:"data,omitempty"`
+	ID         int64          `json:"id"`
+	Type       RunEventType   `json:"type"`
+	RunID      string         `json:"run_id"`
+	InstanceID string         `json:"instance_id,omitempty"`
+	AgentID    string         `json:"agent_id,omitempty"`
+	Timestamp  time.Time      `json:"ts"`
+	Data       map[string]any `json:"data,omitempty"`
 }
 
 const (
