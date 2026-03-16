@@ -2716,6 +2716,37 @@ func TestSubAgentAdapterTaskThinkingModeOverridesConfig(t *testing.T) {
 	}
 }
 
+func TestSubAgentAdapterMarksContinuationHintAsUnsuccessful(t *testing.T) {
+	mock := &mockAgentRunner{output: tools.AgentRunOutput{
+		RunID:     "run-interrupted",
+		FinalText: "The response stream was interrupted before I could finish. Send `continue` and I will resume from the cutoff point.\n\nLast error: context deadline exceeded",
+	}}
+	adapter := &agentSubAgentRunnerAdapter{
+		runner: mock,
+		subAgentDefaults: config.SubAgentRestrictions{
+			AllowedTools:      []string{"fs.read"},
+			MaxToolIterations: 10,
+			ThinkingMode:      "never",
+		},
+		subAgentOverrides: map[string]config.SubAgentRestrictions{},
+	}
+
+	out, err := adapter.ExecuteSubAgent(context.Background(), agent.DecomposedTask{
+		TaskID:  "task-interrupted",
+		AgentID: "default",
+		Message: "finish the delegated task",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Success {
+		t.Fatalf("expected interruption hint to be marked unsuccessful, got %+v", out)
+	}
+	if !strings.Contains(out.Error, "interrupted") {
+		t.Fatalf("expected interruption error, got %q", out.Error)
+	}
+}
+
 func TestSubAgentAdapterAppliesRoleConstraints(t *testing.T) {
 	mock := &mockAgentRunner{output: tools.AgentRunOutput{RunID: "run-role", FinalText: "ok"}}
 	adapter := &agentSubAgentRunnerAdapter{

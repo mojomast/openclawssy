@@ -20,6 +20,30 @@ interface ActiveSequence {
 
 const SEQUENCE_TIMEOUT_MS = 750
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+
+  if (target.isContentEditable) {
+    return true
+  }
+
+  return Boolean(
+    target.closest(
+      'input, textarea, select, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]'
+    )
+  )
+}
+
+function shouldIgnoreShortcutForTyping(event: KeyboardEvent): boolean {
+  if (event.metaKey || event.ctrlKey || event.altKey) {
+    return false
+  }
+
+  return isEditableTarget(event.target) || isEditableTarget(document.activeElement)
+}
+
 export function useKeyboardShortcuts(shortcuts: ShortcutMap) {
   const activeSequenceRef = useRef<ActiveSequence | null>(null)
 
@@ -50,6 +74,11 @@ export function useKeyboardShortcuts(shortcuts: ShortcutMap) {
       const now = Date.now()
       const key = event.key.toLowerCase()
       const isModifierPressed = event.metaKey || event.ctrlKey
+
+      if (shouldIgnoreShortcutForTyping(event)) {
+        activeSequenceRef.current = null
+        return
+      }
 
       const modifiersMatch = (shortcut: ParsedShortcut) =>
         shortcut.hasModifier === isModifierPressed &&

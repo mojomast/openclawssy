@@ -279,6 +279,30 @@ test("sends a message, streams model_text SSE events, and finalizes on completed
   expect(state.chatPosts[0]?.message).toBe("Explain the migration")
 })
 
+test("slash stays in composer, Shift+Enter adds newline, and Enter sends", async ({ page }) => {
+  const state = await installChatRoutes(page)
+  await page.goto("/dashboard#/chat")
+
+  const composer = page.getByLabel("Message composer")
+  const searchInput = page.locator("[data-search-input]")
+
+  await composer.focus()
+  await composer.press("/")
+  await expect(composer).toBeFocused()
+  await expect(composer).toHaveValue("/")
+  await expect(searchInput).not.toBeFocused()
+
+  await composer.press("Shift+Enter")
+  await composer.type("second line")
+  await expect(composer).toHaveValue("/\nsecond line")
+
+  await composer.press("Enter")
+
+  await expect.poll(() => state.chatPosts.length).toBe(1)
+  expect(state.chatPosts[0]?.message).toBe("/\nsecond line")
+  await expect(page.getByText("Hello world")).toBeVisible()
+})
+
 test("retry always resubmits the last prompt", async ({ page }) => {
   const state = await installChatRoutes(page)
   await page.goto("/dashboard#/chat")

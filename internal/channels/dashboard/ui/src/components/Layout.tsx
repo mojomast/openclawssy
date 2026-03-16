@@ -95,6 +95,14 @@ export function Layout() {
     'f1': () => setHelpOpen(true),
     '?': () => setHelpOpen(true),
     '/': () => {
+      const activeElement = document.activeElement
+      if (
+        activeElement instanceof HTMLElement &&
+        (activeElement.isContentEditable ||
+          ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeElement.tagName))
+      ) {
+        return
+      }
       const searchInput = document.querySelector('[data-search-input]') as HTMLInputElement
       if (searchInput) {
         searchInput.focus()

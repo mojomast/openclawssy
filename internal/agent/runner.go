@@ -564,6 +564,10 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 			if execErr == nil && result.Success {
 				slog.Debug("delegation: subtask completed", "task_id", routedTask.TaskID, "success", result.Success, "output_len", len(result.FinalText))
 				s.completedSubtasks[routedTask.TaskID] = result.FinalText
+				summary := summarizeForArtifact(result.FinalText)
+				if summary != "" {
+					s.delegationArtifacts[routedTask.TaskID] = summary
+				}
 				s.recordDelegationEvent(ctx, DelegationEvent{
 					Timestamp:      time.Now().UTC(),
 					TaskID:         routedTask.TaskID,
@@ -577,7 +581,7 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 
 				// Store produced artifacts
 				for _, artifact := range routedTask.Produces {
-					s.delegationArtifacts[artifact] = summarizeForArtifact(result.FinalText)
+					s.delegationArtifacts[artifact] = summary
 					slog.Debug("delegation: artifact stored", "key", artifact, "task_id", routedTask.TaskID)
 				}
 				success = true
