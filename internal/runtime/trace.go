@@ -15,6 +15,9 @@ import (
 
 type runTraceEnvelope struct {
 	RunID                string                   `json:"run_id"`
+	InstanceID           string                   `json:"instance_id,omitempty"`
+	AgentID              string                   `json:"agent_id,omitempty"`
+	ParentRunID          string                   `json:"parent_run_id,omitempty"`
 	SessionID            string                   `json:"session_id,omitempty"`
 	Channel              string                   `json:"channel,omitempty"`
 	InputMessageHash     string                   `json:"input_message_hash"`
@@ -78,11 +81,14 @@ type runTraceCollector struct {
 	current int
 }
 
-func newRunTraceCollector(runID, sessionID, channel, message string) *runTraceCollector {
+func newRunTraceCollector(instanceID, agentID, runID, parentRunID, sessionID, channel, message string) *runTraceCollector {
 	hash := sha256.Sum256([]byte(message))
 	return &runTraceCollector{
 		env: runTraceEnvelope{
 			RunID:            strings.TrimSpace(runID),
+			InstanceID:       strings.TrimSpace(instanceID),
+			AgentID:          strings.TrimSpace(agentID),
+			ParentRunID:      strings.TrimSpace(parentRunID),
 			SessionID:        strings.TrimSpace(sessionID),
 			Channel:          strings.TrimSpace(channel),
 			InputMessageHash: hex.EncodeToString(hash[:]),

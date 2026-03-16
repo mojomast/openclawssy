@@ -133,12 +133,12 @@ All tools are deny-by-default through capability policy, and all tool inputs are
 ### `agent.message.send`
 - Required: `to_agent_id`, `message`
 - Optional: `task_id`, `subject`, `channel`, `user_id`, `session_id`
-- Notes: writes to inter-agent inbox sessions (`channel=agent-mail`). Messaging is instance-scoped; the current runtime/tool request instance is used implicitly and the response includes `instance_id`. Sender and recipient must both exist in that same instance. Optional source context fields are persisted in payload for proactive/memory traceability.
+- Notes: writes to inter-agent inbox sessions (`channel=agent-mail`). Messaging is instance-scoped; the current runtime/tool request instance is used implicitly and the response includes `instance_id`, stable `message_id`, and lifecycle `status`. Sender and recipient must both exist in that same instance. Agent communication allowlists (`communication.can_message`, `communication.can_receive_from`) are now enforced when present. Optional source context fields are persisted in payload for proactive/memory traceability.
 
 ### `agent.message.inbox`
 - Required: none
 - Optional: `agent_id`, `limit`
-- Notes: reads recent inter-agent inbox payloads for the target agent in the current instance. The response includes top-level `instance_id`, and each message entry includes `instance_id` as well.
+- Notes: reads recent inter-agent inbox payloads for the target agent in the current instance. The response includes top-level `instance_id`, and each message entry includes `instance_id`, `message_id`, lifecycle `status`, sender/recipient/task metadata, and preserved raw `content`. Cross-agent inbox reads now require `policy.admin`.
 
 ## Memory Tools
 

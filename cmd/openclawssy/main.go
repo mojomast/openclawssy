@@ -928,9 +928,9 @@ func (e runtimeExecutor) Execute(ctx context.Context, input httpchannel.Executio
 		OnProgress:   input.OnProgress,
 	})
 	if err != nil {
-		return httpchannel.ExecutionResult{Trace: res.Trace, Provider: res.Provider, Model: res.Model, ToolCalls: res.ToolCalls}, err
+		return httpchannel.ExecutionResult{InstanceID: res.InstanceID, AgentID: res.AgentID, ParentRunID: res.ParentRunID, Trace: res.Trace, Provider: res.Provider, Model: res.Model, ToolCalls: res.ToolCalls}, err
 	}
-	return httpchannel.ExecutionResult{Output: res.FinalText, ArtifactPath: res.ArtifactPath, DurationMS: res.DurationMS, ToolCalls: res.ToolCalls, Provider: res.Provider, Model: res.Model, Trace: res.Trace}, nil
+	return httpchannel.ExecutionResult{InstanceID: res.InstanceID, AgentID: res.AgentID, ParentRunID: res.ParentRunID, Output: res.FinalText, ArtifactPath: res.ArtifactPath, DurationMS: res.DurationMS, ToolCalls: res.ToolCalls, Provider: res.Provider, Model: res.Model, Trace: res.Trace}, nil
 }
 
 func buildSharedChatConnector(cfg config.Config, store httpchannel.RunStore, exec httpchannel.RunExecutor, eventBus *httpchannel.RunEventBus, runTracker *httpchannel.ActiveRunTracker) (*chat.Connector, error) {

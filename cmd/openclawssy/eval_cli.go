@@ -64,7 +64,16 @@ func (s evalService) handleEvalRun(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("eval run", flag.ContinueOnError)
 	fs.SetOutput(s.stderr())
 	var suiteName string
+	var identity eval.RunIdentity
 	fs.StringVar(&suiteName, "suite", "", "suite name or 'all'")
+	fs.StringVar(&identity.InstanceID, "instance-id", "", "optional instance identity metadata")
+	fs.StringVar(&identity.AgentID, "agent-id", "", "optional agent identity metadata")
+	fs.StringVar(&identity.RunID, "run-id", "", "optional run identity metadata")
+	fs.StringVar(&identity.ParentRunID, "parent-run-id", "", "optional parent run identity metadata")
+	fs.StringVar(&identity.RootRunID, "root-run-id", "", "optional root run identity metadata")
+	fs.StringVar(&identity.Source, "source", "", "optional source metadata")
+	fs.StringVar(&identity.TaskID, "task-id", "", "optional task metadata")
+	fs.StringVar(&identity.SessionID, "session-id", "", "optional session metadata")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -104,7 +113,7 @@ func (s evalService) handleEvalRun(ctx context.Context, args []string) int {
 	for idx, suite := range targetSuites {
 		fmt.Fprintf(s.stdout(), "%sRunning suite %d/%d: %s%s\n", ansiCyan, idx+1, len(targetSuites), suite.Name, ansiReset)
 
-		report, runErr := runner.RunSuite(ctx, suite)
+		report, runErr := runner.RunSuiteWithOptions(ctx, suite, eval.RunOptions{Identity: identity})
 		if runErr != nil {
 			fmt.Fprintln(s.stderr(), runErr)
 			return 1
@@ -434,6 +443,25 @@ func printSuiteRunReport(w io.Writer, run eval.SuiteRun) {
 		run.Metrics.TokenCost,
 		run.Metrics.TimeToCompletion,
 	)
+	if strings.TrimSpace(run.Identity.InstanceID) != "" || strings.TrimSpace(run.Identity.AgentID) != "" || strings.TrimSpace(run.Identity.RunID) != "" {
+		fmt.Fprintf(w, "  identity: instance=%s agent=%s run=%s parent=%s root=%s source=%s task=%s session=%s\n",
+			blankDash(run.Identity.InstanceID),
+			blankDash(run.Identity.AgentID),
+			blankDash(run.Identity.RunID),
+			blankDash(run.Identity.ParentRunID),
+			blankDash(run.Identity.RootRunID),
+			blankDash(run.Identity.Source),
+			blankDash(run.Identity.TaskID),
+			blankDash(run.Identity.SessionID),
+		)
+	}
+}
+
+func blankDash(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	return strings.TrimSpace(value)
 }
 
 func printComparisonReport(w io.Writer, comparison eval.BaselineComparison) {

@@ -20,11 +20,12 @@ import (
 )
 
 type runDecisionNode struct {
-	RunID      string                 `json:"run_id"`
-	InstanceID string                 `json:"instance_id,omitempty"`
-	AgentID    string                 `json:"agent_id,omitempty"`
-	Records    []agent.DecisionRecord `json:"records"`
-	Subagents  []runDecisionNode      `json:"subagents,omitempty"`
+	RunID       string                 `json:"run_id"`
+	InstanceID  string                 `json:"instance_id,omitempty"`
+	AgentID     string                 `json:"agent_id,omitempty"`
+	ParentRunID string                 `json:"parent_run_id,omitempty"`
+	Records     []agent.DecisionRecord `json:"records"`
+	Subagents   []runDecisionNode      `json:"subagents,omitempty"`
 }
 
 type decisionAuditEvent struct {
@@ -52,7 +53,7 @@ func (h *Handler) handleRunDecisions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run, err := h.store.Get(r.Context(), runID)
+	run, err := h.resolveHTTPRun(r.Context(), runID, strings.TrimSpace(r.URL.Query().Get("instance_id")), strings.TrimSpace(r.URL.Query().Get("agent_id")))
 	if err != nil {
 		if errors.Is(err, httpchannel.ErrRunNotFound) {
 			http.Error(w, "run not found", http.StatusNotFound)
@@ -246,10 +247,11 @@ func buildRunDecisionTree(rootRunID string, recordsByRun map[string][]agent.Deci
 	build = func(runID string) runDecisionNode {
 		seen[runID] = struct{}{}
 		node := runDecisionNode{
-			RunID:      runID,
-			InstanceID: normalizeDashboardInstanceID(instanceByRun[runID]),
-			AgentID:    strings.TrimSpace(agentByRun[runID]),
-			Records:    append([]agent.DecisionRecord(nil), recordsByRun[runID]...),
+			RunID:       runID,
+			InstanceID:  normalizeDashboardInstanceID(instanceByRun[runID]),
+			AgentID:     strings.TrimSpace(agentByRun[runID]),
+			ParentRunID: strings.TrimSpace(parentByRun[runID]),
+			Records:     append([]agent.DecisionRecord(nil), recordsByRun[runID]...),
 		}
 		for _, childRunID := range childrenByParent[runID] {
 			if _, ok := seen[childRunID]; ok {

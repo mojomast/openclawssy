@@ -41,7 +41,8 @@ func TestStoreCreatesTableAndPersistsRuns(t *testing.T) {
 	secondID, err := store.SaveRun(context.Background(), SuiteRun{
 		Suite:     "basic",
 		Timestamp: secondTS,
-		Identity:  RunIdentity{InstanceID: "lab", AgentID: "default", RunID: "run-2", ParentRunID: "run-1"},
+		Identity:  RunIdentity{InstanceID: "lab", AgentID: "default", RunID: "run-2", ParentRunID: "run-1", RootRunID: "run-root", Source: "eval-cli", TaskID: "task-eval", SessionID: "session-eval"},
+		Metadata:  RunMetadata{ArtifactPath: "artifacts/run-2", CheckpointPath: "checkpoints/run-2", DecompositionPlan: map[string]any{"delegation_mode": "suggest_only"}, DelegationEvents: []map[string]any{{"outcome": "planned"}}, Trace: map[string]any{"instance_id": "lab"}},
 		Results:   []CaseResult{{Name: "case-1", Result: TestResult{Passed: false, Expected: "hello", Actual: "nope tokens=3", DurationMS: 6, Error: "mismatch"}}},
 		Metrics:   Metrics{CompletionRate: 0, TokenCost: 3, TimeToCompletion: 6},
 	})
@@ -73,8 +74,14 @@ func TestStoreCreatesTableAndPersistsRuns(t *testing.T) {
 	if latest.ID != secondID {
 		t.Fatalf("latest ID = %d, want %d", latest.ID, secondID)
 	}
-	if latest.Identity.InstanceID != "lab" || latest.Identity.AgentID != "default" || latest.Identity.RunID != "run-2" || latest.Identity.ParentRunID != "run-1" {
+	if latest.Identity.InstanceID != "lab" || latest.Identity.AgentID != "default" || latest.Identity.RunID != "run-2" || latest.Identity.ParentRunID != "run-1" || latest.Identity.RootRunID != "run-root" || latest.Identity.Source != "eval-cli" || latest.Identity.TaskID != "task-eval" || latest.Identity.SessionID != "session-eval" {
 		t.Fatalf("latest identity = %+v, want persisted identity", latest.Identity)
+	}
+	if latest.Metadata.ArtifactPath != "artifacts/run-2" || latest.Metadata.CheckpointPath != "checkpoints/run-2" {
+		t.Fatalf("latest metadata = %+v, want persisted metadata", latest.Metadata)
+	}
+	if latest.Metadata.DecompositionPlan["delegation_mode"] != "suggest_only" {
+		t.Fatalf("expected decomposition plan in metadata, got %+v", latest.Metadata)
 	}
 	if latest.Results[0].Result.Passed {
 		t.Fatal("latest result should be failing case")

@@ -44,6 +44,18 @@ type RunIdentity struct {
 	AgentID     string `json:"agent_id,omitempty"`
 	RunID       string `json:"run_id,omitempty"`
 	ParentRunID string `json:"parent_run_id,omitempty"`
+	RootRunID   string `json:"root_run_id,omitempty"`
+	Source      string `json:"source,omitempty"`
+	TaskID      string `json:"task_id,omitempty"`
+	SessionID   string `json:"session_id,omitempty"`
+}
+
+type RunMetadata struct {
+	ArtifactPath      string           `json:"artifact_path,omitempty"`
+	CheckpointPath    string           `json:"checkpoint_path,omitempty"`
+	DecompositionPlan map[string]any   `json:"decomposition_plan,omitempty"`
+	DelegationEvents  []map[string]any `json:"delegation_events,omitempty"`
+	Trace             map[string]any   `json:"trace,omitempty"`
 }
 
 type SuiteRun struct {
@@ -51,6 +63,7 @@ type SuiteRun struct {
 	Suite       string       `json:"suite"`
 	Description string       `json:"description,omitempty"`
 	Identity    RunIdentity  `json:"identity,omitempty"`
+	Metadata    RunMetadata  `json:"metadata,omitempty"`
 	Timestamp   time.Time    `json:"timestamp"`
 	Results     []CaseResult `json:"results"`
 	Metrics     Metrics      `json:"metrics"`

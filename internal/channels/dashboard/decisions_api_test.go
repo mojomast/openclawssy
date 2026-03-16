@@ -80,18 +80,20 @@ func TestRunDecisionsEndpointReturnsNestedChronologicalRecords(t *testing.T) {
 	}
 
 	var payload struct {
-		RunID      string `json:"run_id"`
-		InstanceID string `json:"instance_id"`
-		AgentID    string `json:"agent_id"`
-		Records    []struct {
+		RunID       string `json:"run_id"`
+		InstanceID  string `json:"instance_id"`
+		AgentID     string `json:"agent_id"`
+		ParentRunID string `json:"parent_run_id"`
+		Records     []struct {
 			RecordType string         `json:"record_type"`
 			Payload    map[string]any `json:"payload"`
 		} `json:"records"`
 		Subagents []struct {
-			RunID      string `json:"run_id"`
-			InstanceID string `json:"instance_id"`
-			AgentID    string `json:"agent_id"`
-			Records    []struct {
+			RunID       string `json:"run_id"`
+			InstanceID  string `json:"instance_id"`
+			AgentID     string `json:"agent_id"`
+			ParentRunID string `json:"parent_run_id"`
+			Records     []struct {
 				RecordType string         `json:"record_type"`
 				Payload    map[string]any `json:"payload"`
 			} `json:"records"`
@@ -119,6 +121,9 @@ func TestRunDecisionsEndpointReturnsNestedChronologicalRecords(t *testing.T) {
 	}
 	if payload.Subagents[0].RunID != "run-child" || payload.Subagents[0].AgentID != "worker" || payload.Subagents[0].InstanceID != instances.DefaultInstanceID {
 		t.Fatalf("unexpected child node: %#v", payload.Subagents[0])
+	}
+	if payload.Subagents[0].ParentRunID != "run-parent" {
+		t.Fatalf("expected child parent_run_id, got %#v", payload.Subagents[0])
 	}
 	if len(payload.Subagents[0].Records) != 1 {
 		t.Fatalf("expected one child record, got %#v", payload.Subagents[0].Records)

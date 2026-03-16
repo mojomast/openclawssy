@@ -488,7 +488,7 @@ func (s *Server) handleRunByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run, err := s.store.Get(r.Context(), id)
+	run, err := s.store.GetByIdentity(r.Context(), strings.TrimSpace(r.URL.Query().Get("instance_id")), strings.TrimSpace(r.URL.Query().Get("agent_id")), id)
 	if err != nil {
 		if errors.Is(err, ErrRunNotFound) {
 			http.Error(w, "run not found", http.StatusNotFound)
@@ -503,7 +503,7 @@ func (s *Server) handleRunByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request, runID string) {
-	run, err := s.store.Get(r.Context(), runID)
+	run, err := s.store.GetByIdentity(r.Context(), strings.TrimSpace(r.URL.Query().Get("instance_id")), strings.TrimSpace(r.URL.Query().Get("agent_id")), runID)
 	if err != nil {
 		if errors.Is(err, ErrRunNotFound) {
 			http.Error(w, "run not found", http.StatusNotFound)

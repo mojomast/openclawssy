@@ -47,6 +47,8 @@ What works now:
 - **Composite run identity progress**: runtime and HTTP queued-run tracking now preserve `(instance_id, agent_id, run_id)` while keeping bare `run_id` compatibility where needed
 - **Dashboard identity normalization**: monitor, trace, and decision APIs now include `instance_id` for store-backed and instance-scoped audit-backed runs
 - **Eval metadata normalization started**: eval storage and dashboard eval APIs now support additive identity metadata (`instance_id`, `agent_id`, `run_id`, `parent_run_id`)
+- **Messaging lifecycle foundation**: `agent.message.send` / `agent.message.inbox` now emit stable `message_id`, lifecycle status metadata, inbox authorization checks, and communication allowlist enforcement hooks
+- **Deeper run/eval lineage**: trace, audit, stored runs, dashboard traces, and eval storage now carry additive `parent_run_id` / root/source/task/session lineage metadata
 - **Skills ingestion pipeline** (`skill.list`, `skill.read`): workspace skill discovery with path safety, byte limits, secret detection, and `.git`/`node_modules` exclusion
 - **Agent monitor + self-repair visibility**: dashboard monitor for main/subagent runs with task/model/checkpoint metadata, plus `clawdefuckifier*` bootstrap and automatic run checkpoints
 - **Hatz provider support**: API key ingestion via secrets or env, OpenAI-style model use, and provider model discovery in dashboard settings
@@ -56,7 +58,7 @@ What is not production-ready:
 - full authn/authz model for multi-tenant use
 - external security review
 - complete observability and disaster recovery
-- final RFC slices: first-class inbox lifecycle, full eval/delegation identity adoption, dashboard UI completion, and end-to-end feature flag enforcement
+- final RFC slices: richer message execution lifecycle wiring across all producers/consumers, full eval/delegation identity adoption, dashboard UI completion, and end-to-end feature flag enforcement
 
 Current test status:
 - `go test ./...` passes.

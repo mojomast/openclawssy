@@ -25,12 +25,14 @@ const (
 )
 
 type Event struct {
-	Timestamp time.Time      `json:"ts"`
-	Type      string         `json:"type"`
-	RunID     string         `json:"run_id,omitempty"`
-	AgentID   string         `json:"agent_id,omitempty"`
-	Tool      string         `json:"tool,omitempty"`
-	Payload   map[string]any `json:"payload,omitempty"`
+	Timestamp   time.Time      `json:"ts"`
+	Type        string         `json:"type"`
+	RunID       string         `json:"run_id,omitempty"`
+	InstanceID  string         `json:"instance_id,omitempty"`
+	AgentID     string         `json:"agent_id,omitempty"`
+	ParentRunID string         `json:"parent_run_id,omitempty"`
+	Tool        string         `json:"tool,omitempty"`
+	Payload     map[string]any `json:"payload,omitempty"`
 }
 
 type Logger struct {
@@ -83,12 +85,18 @@ func (l *Logger) LogEvent(ctx context.Context, eventType string, fields map[stri
 		if agentID, ok := fields["agent_id"].(string); ok {
 			e.AgentID = agentID
 		}
+		if instanceID, ok := fields["instance_id"].(string); ok {
+			e.InstanceID = instanceID
+		}
+		if parentRunID, ok := fields["parent_run_id"].(string); ok {
+			e.ParentRunID = parentRunID
+		}
 		if tool, ok := fields["tool"].(string); ok {
 			e.Tool = tool
 		}
 		payload := make(map[string]any)
 		for k, v := range fields {
-			if k == "run_id" || k == "agent_id" || k == "tool" {
+			if k == "run_id" || k == "instance_id" || k == "agent_id" || k == "parent_run_id" || k == "tool" {
 				continue
 			}
 			payload[k] = v

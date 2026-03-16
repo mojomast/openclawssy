@@ -181,6 +181,8 @@ Completed or substantially landed:
   - inter-agent messaging is explicitly same-instance and persists `instance_id`
   - dashboard monitor/status/trace/decision surfaces now emit `instance_id`
   - dashboard monitor reconciliation no longer collides on duplicate `run_id` across instances
+  - `agent.message.send` / `agent.message.inbox` now mint stable `message_id` values and surface lifecycle metadata
+  - inbox authorization and per-agent communication allowlists are now enforced when configured
 
 Still open:
 
@@ -260,7 +262,7 @@ Progress update:
 - same-instance messaging compatibility layer is landed
 - composite tracker identity is landed in runtime and HTTP queued runs
 - dashboard run/decision surfaces now consume and emit instance-aware identity more consistently
-- inbox lifecycle and canonical message store are still open
+- inbox lifecycle foundation is landed (`message_id`, `queued`, `acknowledged`), but broader runtime/UI wiring and canonical storage cleanup are still open
 
 ## Milestone 6: Wizard
 
@@ -289,8 +291,8 @@ Progress update:
 
 Progress update:
 
-- eval storage and API now carry additive `identity { instance_id, agent_id, run_id, parent_run_id }`
-- dashboard/eval consumers have partial composite identity adoption, but delegation and broader consumers still need follow-through
+- eval storage and API now carry richer additive identity/runtime metadata (`instance_id`, `agent_id`, `run_id`, `parent_run_id`, `root_run_id`, `source`, `task_id`, `session_id`, artifact/checkpoint/delegation metadata)
+- dashboard/eval consumers have stronger composite identity and lineage adoption, but delegation producers and broader consumers still need follow-through
 
 ## 7. Detailed task list by agent
 

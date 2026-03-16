@@ -24,7 +24,7 @@ func TestSummarizeToolExecutionError(t *testing.T) {
 }
 
 func TestRecordToolExecutionAddsSummaryToTrace(t *testing.T) {
-	collector := newRunTraceCollector("run_1", "session_1", "dashboard", "write file")
+	collector := newRunTraceCollector("default", "agent-a", "run_1", "", "session_1", "dashboard", "write file")
 	collector.RecordToolExecution([]agent.ToolCallRecord{{
 		Request: agent.ToolCallRequest{ID: "tool-json-1", Name: "fs.write"},
 		Result:  agent.ToolCallResult{ID: "tool-json-1", Output: `{"path":"Dockerfile","bytes":320,"lines":12}`},
@@ -45,7 +45,7 @@ func TestRecordToolExecutionAddsSummaryToTrace(t *testing.T) {
 }
 
 func TestRecordToolExecutionIncludesCallbackErrorInTrace(t *testing.T) {
-	collector := newRunTraceCollector("run_2", "session_2", "dashboard", "list files")
+	collector := newRunTraceCollector("default", "agent-a", "run_2", "", "session_2", "dashboard", "list files")
 	collector.RecordToolExecution([]agent.ToolCallRecord{{
 		Request:     agent.ToolCallRequest{ID: "tool-json-2", Name: "fs.list", Arguments: []byte(`{"path":"."}`)},
 		Result:      agent.ToolCallResult{ID: "tool-json-2", Output: `{"entries":["README.md"]}`},
@@ -67,7 +67,7 @@ func TestRecordToolExecutionIncludesCallbackErrorInTrace(t *testing.T) {
 }
 
 func TestRecordToolExecutionIncludesDurationInTrace(t *testing.T) {
-	collector := newRunTraceCollector("run_d", "session_d", "dashboard", "work")
+	collector := newRunTraceCollector("default", "agent-a", "run_d", "", "session_d", "dashboard", "work")
 	start := time.Now().Add(-125 * time.Millisecond)
 	end := time.Now()
 	collector.RecordToolExecution([]agent.ToolCallRecord{{
@@ -106,7 +106,7 @@ func TestSummarizeToolExecutionShellJSONOutput(t *testing.T) {
 }
 
 func TestRecordThinkingPersistsThinkingFields(t *testing.T) {
-	collector := newRunTraceCollector("run_3", "session_3", "dashboard", "hello")
+	collector := newRunTraceCollector("default", "agent-a", "run_3", "", "session_3", "dashboard", "hello")
 	collector.RecordThinking("redacted notes", true)
 
 	snapshot := collector.Snapshot()
@@ -118,8 +118,16 @@ func TestRecordThinkingPersistsThinkingFields(t *testing.T) {
 	}
 }
 
+func TestTraceCollectorPersistsIdentityFields(t *testing.T) {
+	collector := newRunTraceCollector("lab", "worker", "run-trace", "run-parent", "session-trace", "dashboard", "hello")
+	snapshot := collector.Snapshot()
+	if snapshot["instance_id"] != "lab" || snapshot["agent_id"] != "worker" || snapshot["parent_run_id"] != "run-parent" {
+		t.Fatalf("expected identity fields in trace snapshot, got %#v", snapshot)
+	}
+}
+
 func TestRecordModelUsagePersistsCachedTokenStats(t *testing.T) {
-	collector := newRunTraceCollector("run_usage", "session_usage", "dashboard", "hello")
+	collector := newRunTraceCollector("default", "agent-a", "run_usage", "", "session_usage", "dashboard", "hello")
 	collector.RecordModelInput("hello", 1234, false, `{"model":"glm-4.7"}`)
 	collector.RecordModelUsage(1200, 800, 300, 1500)
 
@@ -181,7 +189,7 @@ func TestTruncateSummaryAndContextHelpers(t *testing.T) {
 		t.Fatalf("expected ellipsis truncation, got %q", got)
 	}
 
-	collector := newRunTraceCollector("run_ctx", "", "", "")
+	collector := newRunTraceCollector("default", "agent-a", "run_ctx", "", "", "", "")
 	ctx := withRunTraceCollector(context.Background(), collector)
 	if got := runTraceCollectorFromContext(ctx); got != collector {
 		t.Fatalf("expected collector from context, got %+v", got)
@@ -218,7 +226,7 @@ func TestIntValueSupportsAdditionalNumericTypes(t *testing.T) {
 }
 
 func TestRecordDecompositionPlanPersistsPlanInTrace(t *testing.T) {
-	collector := newRunTraceCollector("run_plan", "session_plan", "dashboard", "delegate")
+	collector := newRunTraceCollector("default", "agent-a", "run_plan", "run-root", "session_plan", "dashboard", "delegate")
 	planner := agent.DecompositionPlan{
 		DelegationMode: "suggest_only",
 		TriggerReason:  "high complexity",
@@ -249,7 +257,7 @@ func TestRecordDecompositionPlanPersistsPlanInTrace(t *testing.T) {
 }
 
 func TestRecordDelegationEventsPersistsEventsInTrace(t *testing.T) {
-	collector := newRunTraceCollector("run_events", "session_events", "dashboard", "delegate")
+	collector := newRunTraceCollector("default", "agent-a", "run_events", "run-root", "session_events", "dashboard", "delegate")
 	events := []agent.DelegationEvent{
 		{
 			TriggerReason:  "failure loop",

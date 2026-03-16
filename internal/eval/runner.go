@@ -21,6 +21,11 @@ type Runner struct {
 	nowFn func() time.Time
 }
 
+type RunOptions struct {
+	Identity RunIdentity
+	Metadata RunMetadata
+}
+
 func NewRunner(store *Store) *Runner {
 	return &Runner{
 		store: store,
@@ -29,6 +34,10 @@ func NewRunner(store *Store) *Runner {
 }
 
 func (r *Runner) RunSuite(ctx context.Context, suite Suite) (SuiteRun, error) {
+	return r.RunSuiteWithOptions(ctx, suite, RunOptions{})
+}
+
+func (r *Runner) RunSuiteWithOptions(ctx context.Context, suite Suite, opts RunOptions) (SuiteRun, error) {
 	suiteName := strings.TrimSpace(suite.Name)
 	if suiteName == "" {
 		return SuiteRun{}, ErrInvalidSuiteName
@@ -37,6 +46,8 @@ func (r *Runner) RunSuite(ctx context.Context, suite Suite) (SuiteRun, error) {
 	report := SuiteRun{
 		Suite:       suiteName,
 		Description: suite.Description,
+		Identity:    opts.Identity,
+		Metadata:    opts.Metadata,
 		Timestamp:   r.nowFn().UTC(),
 		Results:     make([]CaseResult, 0, len(suite.TestCases)),
 	}

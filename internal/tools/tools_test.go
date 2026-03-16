@@ -2408,6 +2408,9 @@ func TestAgentMessageSendPersistsSourceContextFields(t *testing.T) {
 	if res["instance_id"] != "default" {
 		t.Fatalf("expected send result instance_id=default, got %#v", res)
 	}
+	if strings.TrimSpace(fmt.Sprint(res["message_id"])) == "" || res["status"] != agentMessageStatusQueued {
+		t.Fatalf("expected message_id and queued status, got %#v", res)
+	}
 
 	inbox, err := reg.Execute(ctx, "receiver", "agent.message.inbox", ws, map[string]any{"agent_id": "receiver", "limit": 5})
 	if err != nil {
@@ -2449,6 +2452,12 @@ func TestAgentMessageSendPersistsSourceContextFields(t *testing.T) {
 	}
 	if msgs[0]["instance_id"] != "default" {
 		t.Fatalf("expected envelope instance_id=default, got %#v", msgs[0])
+	}
+	if strings.TrimSpace(fmt.Sprint(msgs[0]["message_id"])) == "" {
+		t.Fatalf("expected message_id in inbox entry, got %#v", msgs[0])
+	}
+	if msgs[0]["status"] != agentMessageStatusAcknowledged {
+		t.Fatalf("expected acknowledged inbox status, got %#v", msgs[0])
 	}
 	if payload["instance_id"] != "default" || payload["channel"] != "dashboard" || payload["user_id"] != "u-123" || payload["session_id"] != "sess-xyz" {
 		t.Fatalf("expected source context fields in payload, got %#v", payload)
@@ -2507,6 +2516,52 @@ func TestAgentMessageSendRejectsRecipientOutsideCurrentInstance(t *testing.T) {
 	_, err := reg.Execute(ctx, "sender", "agent.message.send", ws, map[string]any{"to_agent_id": "receiver", "message": "hello"})
 	if err == nil {
 		t.Fatal("expected missing recipient in current instance to fail")
+	}
+}
+
+func TestAgentMessageSendHonorsCommunicationAllowlists(t *testing.T) {
+	ws, root, _, _, reg := setupAgentToolRegistry(t, fakePolicy{})
+	if _, err := instances.BootstrapDefaultInstance(root); err != nil {
+		t.Fatalf("bootstrap default instance: %v", err)
+	}
+	sender := instances.DefaultAgentManifest("sender")
+	sender.Communication.CanMessage = []string{"receiver"}
+	if err := instances.SaveAgentManifest(root, "default", sender); err != nil {
+		t.Fatalf("save sender agent manifest: %v", err)
+	}
+	receiver := instances.DefaultAgentManifest("receiver")
+	receiver.Communication.CanReceiveFrom = []string{"sender"}
+	if err := instances.SaveAgentManifest(root, "default", receiver); err != nil {
+		t.Fatalf("save receiver agent manifest: %v", err)
+	}
+	other := instances.DefaultAgentManifest("other")
+	if err := instances.SaveAgentManifest(root, "default", other); err != nil {
+		t.Fatalf("save other agent manifest: %v", err)
+	}
+
+	ctx := WithRequestContext(context.Background(), RequestContext{InstanceID: "default"})
+	if _, err := reg.Execute(ctx, "sender", "agent.message.send", ws, map[string]any{"to_agent_id": "receiver", "message": "hello"}); err != nil {
+		t.Fatalf("expected allowed route to succeed, got %v", err)
+	}
+	if _, err := reg.Execute(ctx, "sender", "agent.message.send", ws, map[string]any{"to_agent_id": "other", "message": "hello"}); err == nil {
+		t.Fatal("expected disallowed route to fail")
+	}
+}
+
+func TestAgentMessageInboxRejectsCrossAgentReadWithoutPolicyAdmin(t *testing.T) {
+	ws, root, _, _, reg := setupAgentToolRegistry(t, fakePolicy{})
+	if _, err := instances.BootstrapDefaultInstance(root); err != nil {
+		t.Fatalf("bootstrap default instance: %v", err)
+	}
+	if err := instances.SaveAgentManifest(root, "default", instances.DefaultAgentManifest("sender")); err != nil {
+		t.Fatalf("save sender agent manifest: %v", err)
+	}
+	if err := instances.SaveAgentManifest(root, "default", instances.DefaultAgentManifest("receiver")); err != nil {
+		t.Fatalf("save receiver agent manifest: %v", err)
+	}
+	ctx := WithRequestContext(context.Background(), RequestContext{InstanceID: "default"})
+	if _, err := reg.Execute(ctx, "sender", "agent.message.inbox", ws, map[string]any{"agent_id": "receiver", "limit": 5}); err == nil {
+		t.Fatal("expected cross-agent inbox read to require policy.admin")
 	}
 }
 

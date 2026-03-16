@@ -90,6 +90,7 @@ Event minimum fields:
 - `event_id`, `event_type`, `ts`
 - `run_id`, `agent_id`
 - `instance_id` when the caller or runtime resolved an instance-scoped run
+- `parent_run_id` when the run is delegated or otherwise linked to a parent run
 - `seq` (strictly increasing per run)
 - `payload` (event-specific object)
 
@@ -234,6 +235,7 @@ Notes:
 - `trace` is optional but typically present for completed/failed runs.
 - `tool_execution_results[].summary` is a short display-friendly summary when available.
 - External route compatibility still centers on bare `run_id`, but runtime and HTTP tracking are converging on `(instance_id, agent_id, run_id)` internally.
+- `parent_run_id` is now carried in stored run/trace surfaces when runtime lineage is known.
 
 Queue-overload response for `POST /v1/runs`:
 
