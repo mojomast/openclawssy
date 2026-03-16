@@ -16,6 +16,7 @@ import (
 	httpchannel "openclawssy/internal/channels/http"
 	"openclawssy/internal/chatstore"
 	"openclawssy/internal/config"
+	"openclawssy/internal/instances"
 	"openclawssy/internal/memory"
 	"openclawssy/internal/policy"
 	"openclawssy/internal/scheduler"
@@ -2378,9 +2379,19 @@ func TestAgentToolsRejectInvalidAgentID(t *testing.T) {
 }
 
 func TestAgentMessageSendPersistsSourceContextFields(t *testing.T) {
-	ws, _, _, _, reg := setupAgentToolRegistry(t, fakePolicy{})
+	ws, root, _, _, reg := setupAgentToolRegistry(t, fakePolicy{})
+	if _, err := instances.BootstrapDefaultInstance(root); err != nil {
+		t.Fatalf("bootstrap default instance: %v", err)
+	}
+	if err := instances.SaveAgentManifest(root, "default", instances.DefaultAgentManifest("sender")); err != nil {
+		t.Fatalf("save sender agent manifest: %v", err)
+	}
+	if err := instances.SaveAgentManifest(root, "default", instances.DefaultAgentManifest("receiver")); err != nil {
+		t.Fatalf("save receiver agent manifest: %v", err)
+	}
 
-	res, err := reg.Execute(context.Background(), "sender", "agent.message.send", ws, map[string]any{
+	ctx := WithRequestContext(context.Background(), RequestContext{InstanceID: "default"})
+	res, err := reg.Execute(ctx, "sender", "agent.message.send", ws, map[string]any{
 		"to_agent_id": "receiver",
 		"message":     "please remind user tomorrow",
 		"task_id":     "task-1",
@@ -2394,10 +2405,16 @@ func TestAgentMessageSendPersistsSourceContextFields(t *testing.T) {
 	if sent, _ := res["sent"].(bool); !sent {
 		t.Fatalf("expected sent=true, got %#v", res)
 	}
+	if res["instance_id"] != "default" {
+		t.Fatalf("expected send result instance_id=default, got %#v", res)
+	}
 
-	inbox, err := reg.Execute(context.Background(), "receiver", "agent.message.inbox", ws, map[string]any{"agent_id": "receiver", "limit": 5})
+	inbox, err := reg.Execute(ctx, "receiver", "agent.message.inbox", ws, map[string]any{"agent_id": "receiver", "limit": 5})
 	if err != nil {
 		t.Fatalf("agent.message.inbox: %v", err)
+	}
+	if inbox["instance_id"] != "default" {
+		t.Fatalf("expected inbox instance_id=default, got %#v", inbox)
 	}
 	msgs, ok := inbox["messages"].([]map[string]any)
 	if !ok {
@@ -2414,7 +2431,10 @@ func TestAgentMessageSendPersistsSourceContextFields(t *testing.T) {
 		if err := json.Unmarshal([]byte(content), &payload); err != nil {
 			t.Fatalf("decode inbox payload: %v", err)
 		}
-		if payload["channel"] != "dashboard" || payload["user_id"] != "u-123" || payload["session_id"] != "sess-xyz" {
+		if msg["instance_id"] != "default" {
+			t.Fatalf("expected envelope instance_id=default, got %#v", msg)
+		}
+		if payload["instance_id"] != "default" || payload["channel"] != "dashboard" || payload["user_id"] != "u-123" || payload["session_id"] != "sess-xyz" {
 			t.Fatalf("expected source context fields in payload, got %#v", payload)
 		}
 		return
@@ -2427,8 +2447,66 @@ func TestAgentMessageSendPersistsSourceContextFields(t *testing.T) {
 	if err := json.Unmarshal([]byte(content), &payload); err != nil {
 		t.Fatalf("decode inbox payload: %v", err)
 	}
-	if payload["channel"] != "dashboard" || payload["user_id"] != "u-123" || payload["session_id"] != "sess-xyz" {
+	if msgs[0]["instance_id"] != "default" {
+		t.Fatalf("expected envelope instance_id=default, got %#v", msgs[0])
+	}
+	if payload["instance_id"] != "default" || payload["channel"] != "dashboard" || payload["user_id"] != "u-123" || payload["session_id"] != "sess-xyz" {
 		t.Fatalf("expected source context fields in payload, got %#v", payload)
+	}
+}
+
+func TestAgentMessageSendUsesRequestContextInstance(t *testing.T) {
+	ws, root, _, _, reg := setupAgentToolRegistry(t, fakePolicy{})
+	if _, err := instances.BootstrapDefaultInstance(root); err != nil {
+		t.Fatalf("bootstrap default instance: %v", err)
+	}
+	lab := instances.DefaultInstanceManifest("lab")
+	lab.Workspace.Root = filepath.Join(root, "workspace")
+	if err := instances.SaveInstanceManifest(root, lab); err != nil {
+		t.Fatalf("save lab instance: %v", err)
+	}
+	if err := instances.SaveAgentManifest(root, "lab", instances.DefaultAgentManifest("sender")); err != nil {
+		t.Fatalf("save sender agent manifest: %v", err)
+	}
+	if err := instances.SaveAgentManifest(root, "lab", instances.DefaultAgentManifest("receiver")); err != nil {
+		t.Fatalf("save receiver agent manifest: %v", err)
+	}
+
+	ctx := WithRequestContext(context.Background(), RequestContext{InstanceID: "lab"})
+	res, err := reg.Execute(ctx, "sender", "agent.message.send", ws, map[string]any{"to_agent_id": "receiver", "message": "hello from lab"})
+	if err != nil {
+		t.Fatalf("agent.message.send: %v", err)
+	}
+	if res["instance_id"] != "lab" {
+		t.Fatalf("expected send result instance_id=lab, got %#v", res)
+	}
+	inbox, err := reg.Execute(ctx, "receiver", "agent.message.inbox", ws, map[string]any{"agent_id": "receiver", "limit": 5})
+	if err != nil {
+		t.Fatalf("agent.message.inbox: %v", err)
+	}
+	if inbox["instance_id"] != "lab" {
+		t.Fatalf("expected inbox instance_id=lab, got %#v", inbox)
+	}
+}
+
+func TestAgentMessageSendRejectsRecipientOutsideCurrentInstance(t *testing.T) {
+	ws, root, _, _, reg := setupAgentToolRegistry(t, fakePolicy{})
+	if _, err := instances.BootstrapDefaultInstance(root); err != nil {
+		t.Fatalf("bootstrap default instance: %v", err)
+	}
+	lab := instances.DefaultInstanceManifest("lab")
+	lab.Workspace.Root = filepath.Join(root, "workspace")
+	if err := instances.SaveInstanceManifest(root, lab); err != nil {
+		t.Fatalf("save lab instance: %v", err)
+	}
+	if err := instances.SaveAgentManifest(root, "lab", instances.DefaultAgentManifest("sender")); err != nil {
+		t.Fatalf("save sender agent manifest: %v", err)
+	}
+
+	ctx := WithRequestContext(context.Background(), RequestContext{InstanceID: "lab"})
+	_, err := reg.Execute(ctx, "sender", "agent.message.send", ws, map[string]any{"to_agent_id": "receiver", "message": "hello"})
+	if err == nil {
+		t.Fatal("expected missing recipient in current instance to fail")
 	}
 }
 
@@ -2474,6 +2552,34 @@ func TestAgentRunUsesConfiguredRunner(t *testing.T) {
 	}
 	if runner.lastInput.TargetAgentID != "agent" || runner.lastInput.Message != "hello" {
 		t.Fatalf("unexpected runner input: %#v", runner.lastInput)
+	}
+}
+
+func TestAgentRunPropagatesInstanceIDFromRequestContext(t *testing.T) {
+	root := t.TempDir()
+	ws := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	cfgPath := filepath.Join(root, ".openclawssy", "config.json")
+	cfg := config.Default()
+	cfg.Workspace.Root = ws
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save config fixture: %v", err)
+	}
+	runner := &fakeAgentRunner{result: AgentRunOutput{RunID: "run_sub", FinalText: "done"}}
+	enforcer := policy.NewEnforcer(ws, map[string][]string{"agent": {"agent.run"}})
+	reg := NewRegistry(enforcer, nil)
+	if err := RegisterCoreWithOptions(reg, CoreOptions{EnableShellExec: true, ConfigPath: cfgPath, AgentsPath: filepath.Join(root, ".openclawssy", "agents"), AgentRunner: runner}); err != nil {
+		t.Fatalf("register core: %v", err)
+	}
+	ctx := WithRequestContext(context.Background(), RequestContext{InstanceID: "instance-x"})
+	_, err := reg.Execute(ctx, "agent", "agent.run", ws, map[string]any{"agent_id": "agent", "message": "hello"})
+	if err != nil {
+		t.Fatalf("agent.run: %v", err)
+	}
+	if runner.lastInput.InstanceID != "instance-x" {
+		t.Fatalf("expected runner InstanceID instance-x, got %#v", runner.lastInput)
 	}
 }
 

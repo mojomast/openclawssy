@@ -133,12 +133,12 @@ All tools are deny-by-default through capability policy, and all tool inputs are
 ### `agent.message.send`
 - Required: `to_agent_id`, `message`
 - Optional: `task_id`, `subject`, `channel`, `user_id`, `session_id`
-- Notes: writes to inter-agent inbox sessions (`channel=agent-mail`). Optional source context fields are persisted in payload for proactive/memory traceability.
+- Notes: writes to inter-agent inbox sessions (`channel=agent-mail`). Messaging is instance-scoped; the current runtime/tool request instance is used implicitly and the response includes `instance_id`. Sender and recipient must both exist in that same instance. Optional source context fields are persisted in payload for proactive/memory traceability.
 
 ### `agent.message.inbox`
 - Required: none
 - Optional: `agent_id`, `limit`
-- Notes: reads recent inter-agent inbox payloads for the target agent.
+- Notes: reads recent inter-agent inbox payloads for the target agent in the current instance. The response includes top-level `instance_id`, and each message entry includes `instance_id` as well.
 
 ## Memory Tools
 
@@ -187,7 +187,7 @@ All tools are deny-by-default through capability policy, and all tool inputs are
 ### `agent.run`
 - Required: `agent_id`, `message`
 - Optional: `task_id`, `thinking_mode`, `allowed_tools`, `max_tool_iterations`, `timeout_ms`
-- Notes: runs a bounded subagent task and returns structured output. Use descriptive `task_id` values for iterative workflows so Agent Monitor can distinguish phases.
+- Notes: runs a bounded subagent task and returns structured output. Delegated subagent runs inherit the parent `instance_id` automatically so instance boundaries stay stable across orchestration. Use descriptive `task_id` values for iterative workflows so Agent Monitor can distinguish phases.
 
 ### `run.get`
 - Required: `run_id`

@@ -16,13 +16,15 @@ import (
 	"openclawssy/internal/agent"
 	"openclawssy/internal/audit"
 	httpchannel "openclawssy/internal/channels/http"
+	"openclawssy/internal/instances"
 )
 
 type runDecisionNode struct {
-	RunID     string                 `json:"run_id"`
-	AgentID   string                 `json:"agent_id,omitempty"`
-	Records   []agent.DecisionRecord `json:"records"`
-	Subagents []runDecisionNode      `json:"subagents,omitempty"`
+	RunID      string                 `json:"run_id"`
+	InstanceID string                 `json:"instance_id,omitempty"`
+	AgentID    string                 `json:"agent_id,omitempty"`
+	Records    []agent.DecisionRecord `json:"records"`
+	Subagents  []runDecisionNode      `json:"subagents,omitempty"`
 }
 
 type decisionAuditEvent struct {
@@ -60,7 +62,8 @@ func (h *Handler) handleRunDecisions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	recordsByRun, parentByRun, agentByRun, err := h.loadDecisionRecords()
+	instanceID := normalizeDashboardInstanceID(run.InstanceID)
+	recordsByRun, parentByRun, agentByRun, instanceByRun, err := h.loadDecisionRecords(instanceID)
 	if err != nil {
 		http.Error(w, "failed to load decision records", http.StatusInternalServerError)
 		return
@@ -68,23 +71,53 @@ func (h *Handler) handleRunDecisions(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(agentByRun[runID]) == "" {
 		agentByRun[runID] = strings.TrimSpace(run.AgentID)
 	}
+	if strings.TrimSpace(instanceByRun[runID]) == "" {
+		instanceByRun[runID] = instanceID
+	}
 
-	node := buildRunDecisionTree(runID, recordsByRun, parentByRun, agentByRun)
+	node := buildRunDecisionTree(runID, recordsByRun, parentByRun, agentByRun, instanceByRun)
 	writeJSON(w, node)
 }
 
-func (h *Handler) loadDecisionRecords() (map[string][]agent.DecisionRecord, map[string]string, map[string]string, error) {
+func (h *Handler) loadDecisionRecords(instanceID string) (map[string][]agent.DecisionRecord, map[string]string, map[string]string, map[string]string, error) {
 	recordsByRun := make(map[string][]agent.DecisionRecord)
 	parentByRun := make(map[string]string)
 	agentByRun := make(map[string]string)
+	instanceByRun := make(map[string]string)
 
-	agentsRoot := filepath.Join(h.rootDir, ".openclawssy", "agents")
+	agentsRoot, err := instances.AgentsDir(h.rootDir, instanceID)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
 	entries, err := os.ReadDir(agentsRoot)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return recordsByRun, parentByRun, agentByRun, nil
+			if instanceID == instances.DefaultInstanceID {
+				legacyAgentsRoot := filepath.Join(h.rootDir, ".openclawssy", "agents")
+				legacyEntries, legacyErr := os.ReadDir(legacyAgentsRoot)
+				if legacyErr != nil {
+					if errors.Is(legacyErr, os.ErrNotExist) {
+						return recordsByRun, parentByRun, agentByRun, instanceByRun, nil
+					}
+					return nil, nil, nil, nil, legacyErr
+				}
+				for _, entry := range legacyEntries {
+					if !entry.IsDir() {
+						continue
+					}
+					auditPath := filepath.Join(legacyAgentsRoot, entry.Name(), "audit", "events.jsonl")
+					if err := readDecisionAuditFile(instanceID, auditPath, recordsByRun, parentByRun, agentByRun, instanceByRun); err != nil {
+						if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
+							continue
+						}
+						return nil, nil, nil, nil, err
+					}
+				}
+				return recordsByRun, parentByRun, agentByRun, instanceByRun, nil
+			}
+			return recordsByRun, parentByRun, agentByRun, instanceByRun, nil
 		}
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	for _, entry := range entries {
@@ -92,11 +125,11 @@ func (h *Handler) loadDecisionRecords() (map[string][]agent.DecisionRecord, map[
 			continue
 		}
 		auditPath := filepath.Join(agentsRoot, entry.Name(), "audit", "events.jsonl")
-		if err := readDecisionAuditFile(auditPath, recordsByRun, parentByRun, agentByRun); err != nil {
+		if err := readDecisionAuditFile(instanceID, auditPath, recordsByRun, parentByRun, agentByRun, instanceByRun); err != nil {
 			if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
 				continue
 			}
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 	}
 
@@ -114,10 +147,10 @@ func (h *Handler) loadDecisionRecords() (map[string][]agent.DecisionRecord, map[
 		})
 	}
 
-	return recordsByRun, parentByRun, agentByRun, nil
+	return recordsByRun, parentByRun, agentByRun, instanceByRun, nil
 }
 
-func readDecisionAuditFile(path string, recordsByRun map[string][]agent.DecisionRecord, parentByRun map[string]string, agentByRun map[string]string) error {
+func readDecisionAuditFile(instanceID string, path string, recordsByRun map[string][]agent.DecisionRecord, parentByRun map[string]string, agentByRun map[string]string, instanceByRun map[string]string) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return err
@@ -168,8 +201,12 @@ func readDecisionAuditFile(path string, recordsByRun map[string][]agent.Decision
 			}
 		}
 
+		timestamp := event.Timestamp
+		if timestamp.IsZero() {
+			timestamp = time.Now().UTC()
+		}
 		record := agent.DecisionRecord{
-			Timestamp:    event.Timestamp.UTC(),
+			Timestamp:    timestamp.UTC(),
 			RunID:        runID,
 			AgentID:      agentID,
 			RecordType:   recordType,
@@ -179,6 +216,7 @@ func readDecisionAuditFile(path string, recordsByRun map[string][]agent.Decision
 		recordsByRun[runID] = append(recordsByRun[runID], record)
 		if runID != "" && agentID != "" {
 			agentByRun[runID] = agentID
+			instanceByRun[runID] = normalizeDashboardInstanceID(instanceID)
 		}
 
 		if errors.Is(readErr, io.EOF) {
@@ -189,7 +227,7 @@ func readDecisionAuditFile(path string, recordsByRun map[string][]agent.Decision
 	return nil
 }
 
-func buildRunDecisionTree(rootRunID string, recordsByRun map[string][]agent.DecisionRecord, parentByRun map[string]string, agentByRun map[string]string) runDecisionNode {
+func buildRunDecisionTree(rootRunID string, recordsByRun map[string][]agent.DecisionRecord, parentByRun map[string]string, agentByRun map[string]string, instanceByRun map[string]string) runDecisionNode {
 	childrenByParent := make(map[string][]string)
 	for runID, parentRunID := range parentByRun {
 		runID = strings.TrimSpace(runID)
@@ -208,9 +246,10 @@ func buildRunDecisionTree(rootRunID string, recordsByRun map[string][]agent.Deci
 	build = func(runID string) runDecisionNode {
 		seen[runID] = struct{}{}
 		node := runDecisionNode{
-			RunID:   runID,
-			AgentID: strings.TrimSpace(agentByRun[runID]),
-			Records: append([]agent.DecisionRecord(nil), recordsByRun[runID]...),
+			RunID:      runID,
+			InstanceID: normalizeDashboardInstanceID(instanceByRun[runID]),
+			AgentID:    strings.TrimSpace(agentByRun[runID]),
+			Records:    append([]agent.DecisionRecord(nil), recordsByRun[runID]...),
 		}
 		for _, childRunID := range childrenByParent[runID] {
 			if _, ok := seen[childRunID]; ok {

@@ -31,8 +31,9 @@ const defaultQueuedRunMaxInFlight = 64
 var ErrQueueFull = errors.New("httpchannel: run queue is full")
 
 type QueueRunOptions struct {
-	EventBus *RunEventBus
-	Tracker  *ActiveRunTracker
+	InstanceID string
+	EventBus   *RunEventBus
+	Tracker    *ActiveRunTracker
 }
 
 func QueueRun(ctx context.Context, store RunStore, executor RunExecutor, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (Run, error) {
@@ -43,6 +44,7 @@ func QueueRunWithOptions(ctx context.Context, store RunStore, executor RunExecut
 	now := time.Now().UTC()
 	run := Run{
 		ID:           newRunID(),
+		InstanceID:   strings.TrimSpace(opts.InstanceID),
 		AgentID:      agentID,
 		Message:      message,
 		ContentParts: messagecontent.Normalize(contentParts),
@@ -64,6 +66,7 @@ func QueueRunWithOptions(ctx context.Context, store RunStore, executor RunExecut
 	runCtx, cancel := context.WithCancel(context.Background())
 	if opts.Tracker != nil {
 		opts.Tracker.Track(created.ID, cancel)
+		opts.Tracker.TrackComposite(created.InstanceID, created.AgentID, created.ID, cancel)
 	}
 	go executeQueuedRun(runCtx, store, executor, created, cancel, opts)
 	return created, nil
@@ -74,6 +77,7 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 	defer cancel()
 	if opts.Tracker != nil {
 		defer opts.Tracker.Remove(run.ID)
+		defer opts.Tracker.RemoveComposite(run.InstanceID, run.AgentID, run.ID)
 	}
 	if opts.EventBus != nil {
 		defer opts.EventBus.Close(run.ID)
@@ -82,9 +86,10 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 	run.Status = "running"
 	run.UpdatedAt = time.Now().UTC()
 	_ = store.Update(ctx, run)
-	publishQueueRunEvent(opts.EventBus, run.ID, RunEventStatus, map[string]any{"status": "running"})
+	publishQueueRunEvent(opts.EventBus, run, RunEventStatus, map[string]any{"status": "running"})
 
 	input := ExecutionInput{
+		InstanceID:   run.InstanceID,
 		RunID:        run.ID,
 		AgentID:      run.AgentID,
 		Message:      run.Message,
@@ -99,7 +104,7 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 			if !ok {
 				return
 			}
-			publishQueueRunEvent(opts.EventBus, run.ID, eventKind, cloneProgressData(data))
+			publishQueueRunEvent(opts.EventBus, run, eventKind, cloneProgressData(data))
 		}
 	}
 
@@ -113,7 +118,7 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 			run.Provider = result.Provider
 			run.Model = result.Model
 			run.ToolCalls = result.ToolCalls
-			publishQueueRunEvent(opts.EventBus, run.ID, RunEventCanceled, map[string]any{
+			publishQueueRunEvent(opts.EventBus, run, RunEventCanceled, map[string]any{
 				"status":     "canceled",
 				"error":      run.Error,
 				"provider":   run.Provider,
@@ -127,7 +132,7 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 			run.Provider = result.Provider
 			run.Model = result.Model
 			run.ToolCalls = result.ToolCalls
-			publishQueueRunEvent(opts.EventBus, run.ID, RunEventFailed, map[string]any{
+			publishQueueRunEvent(opts.EventBus, run, RunEventFailed, map[string]any{
 				"status":     "failed",
 				"error":      run.Error,
 				"provider":   run.Provider,
@@ -148,7 +153,7 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 		run.Provider = result.Provider
 		run.Model = result.Model
 		run.Trace = result.Trace
-		publishQueueRunEvent(opts.EventBus, run.ID, RunEventCompleted, map[string]any{
+		publishQueueRunEvent(opts.EventBus, run, RunEventCompleted, map[string]any{
 			"status":        "completed",
 			"output":        run.Output,
 			"artifact_path": run.ArtifactPath,
@@ -189,11 +194,11 @@ func isContextCanceledExecutionError(err error) bool {
 	return strings.Contains(lower, "context canceled") || strings.Contains(lower, "context cancelled")
 }
 
-func publishQueueRunEvent(bus *RunEventBus, runID string, eventType RunEventType, data map[string]any) {
+func publishQueueRunEvent(bus *RunEventBus, run Run, eventType RunEventType, data map[string]any) {
 	if bus == nil {
 		return
 	}
-	bus.Publish(runID, RunEvent{Type: eventType, Data: data})
+	bus.Publish(run.ID, RunEvent{Type: eventType, InstanceID: run.InstanceID, AgentID: run.AgentID, Data: data})
 }
 
 func progressEventType(eventType string) (RunEventType, bool) {

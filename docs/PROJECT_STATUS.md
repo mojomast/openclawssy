@@ -43,6 +43,10 @@ What works now:
 - **Sandbox Manager dashboard page** (`/sandbox` route): UI for container status, create/stop/reset actions, image pull, volume management with confirmation dialogs
 - **Auto-delegation system** with complexity scoring, task decomposition, cycle detection, cooldown, and configurable delegation modes (`prompt_only`, `tool_gated`, `auto_execute`)
 - **Subagent capability restrictions**: deny-by-default tool allowlists, per-subagent config overrides, iteration/timeout limits, context token tracking from model responses
+- **Canonical instance architecture in progress**: runtime, dashboard backend, HTTP run execution, and messaging now carry explicit `instance_id` in key paths
+- **Composite run identity progress**: runtime and HTTP queued-run tracking now preserve `(instance_id, agent_id, run_id)` while keeping bare `run_id` compatibility where needed
+- **Dashboard identity normalization**: monitor, trace, and decision APIs now include `instance_id` for store-backed and instance-scoped audit-backed runs
+- **Eval metadata normalization started**: eval storage and dashboard eval APIs now support additive identity metadata (`instance_id`, `agent_id`, `run_id`, `parent_run_id`)
 - **Skills ingestion pipeline** (`skill.list`, `skill.read`): workspace skill discovery with path safety, byte limits, secret detection, and `.git`/`node_modules` exclusion
 - **Agent monitor + self-repair visibility**: dashboard monitor for main/subagent runs with task/model/checkpoint metadata, plus `clawdefuckifier*` bootstrap and automatic run checkpoints
 - **Hatz provider support**: API key ingestion via secrets or env, OpenAI-style model use, and provider model discovery in dashboard settings
@@ -52,6 +56,7 @@ What is not production-ready:
 - full authn/authz model for multi-tenant use
 - external security review
 - complete observability and disaster recovery
+- final RFC slices: first-class inbox lifecycle, full eval/delegation identity adoption, dashboard UI completion, and end-to-end feature flag enforcement
 
 Current test status:
 - `go test ./...` passes.

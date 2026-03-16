@@ -24,6 +24,7 @@ func TestBaselineManagerSaveAndCompareLatestDetectsRegressions(t *testing.T) {
 	if _, err := store.SaveRun(context.Background(), SuiteRun{
 		Suite:     "basic",
 		Timestamp: baselineTS,
+		Identity:  RunIdentity{InstanceID: "lab", AgentID: "default", RunID: "baseline-run"},
 		Results: []CaseResult{
 			{Name: "case-a", Result: TestResult{Passed: true, Expected: "hello", Actual: "hello tokens=3", DurationMS: 5}},
 			{Name: "case-b", Result: TestResult{Passed: true, Expected: "delegate:no", Actual: "delegate:no tokens=2", DurationMS: 6}},
@@ -66,6 +67,9 @@ func TestBaselineManagerSaveAndCompareLatestDetectsRegressions(t *testing.T) {
 	}
 	if comparison.Baseline.Timestamp != baselineTS {
 		t.Fatalf("baseline timestamp = %s, want %s", comparison.Baseline.Timestamp, baselineTS)
+	}
+	if comparison.Baseline.Identity.RunID != "baseline-run" {
+		t.Fatalf("expected baseline identity preserved, got %+v", comparison.Baseline.Identity)
 	}
 	if comparison.Latest.Timestamp != latestTS {
 		t.Fatalf("latest timestamp = %s, want %s", comparison.Latest.Timestamp, latestTS)

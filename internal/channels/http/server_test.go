@@ -199,6 +199,107 @@ func TestServer_ListRunsSupportsPaginationAndStatusFilter(t *testing.T) {
 	}
 }
 
+func TestServer_PostRunAcceptsInstanceIDAndPersistsIt(t *testing.T) {
+	store := NewInMemoryRunStore()
+	s := NewServer(Config{BearerToken: "secret", Store: store, Executor: NopExecutor{}})
+
+	body := bytes.NewBufferString(`{"instance_id":"instance-a","agent_id":"agent-1","message":"hello"}`)
+	postReq := httptest.NewRequest(http.MethodPost, "/v1/runs", body)
+	postReq.Header.Set("Authorization", "Bearer secret")
+	postRR := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(postRR, postReq)
+	if postRR.Code != http.StatusAccepted {
+		t.Fatalf("expected %d, got %d body=%s", http.StatusAccepted, postRR.Code, postRR.Body.String())
+	}
+
+	var postRes postRunResponse
+	if err := json.Unmarshal(postRR.Body.Bytes(), &postRes); err != nil {
+		t.Fatalf("decode post response: %v", err)
+	}
+	if postRes.InstanceID != "instance-a" {
+		t.Fatalf("expected response instance_id instance-a, got %q", postRes.InstanceID)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		run, err := store.Get(context.Background(), postRes.ID)
+		if err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+		if run.Status == "completed" {
+			if run.InstanceID != "instance-a" {
+				t.Fatalf("expected persisted instance_id instance-a, got %q", run.InstanceID)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run did not complete in time: status=%q", run.Status)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestServer_PostRunRejectsInvalidInstanceID(t *testing.T) {
+	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore(), Executor: NopExecutor{}})
+
+	body := bytes.NewBufferString(`{"instance_id":"../bad","agent_id":"agent-1","message":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	rr := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d", http.StatusBadRequest, rr.Code)
+	}
+	var resp errorResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if resp.Error.Code != "request.invalid_instance_id" {
+		t.Fatalf("unexpected error code: %#v", resp)
+	}
+}
+
+func TestServer_ListRunsSupportsInstanceFilter(t *testing.T) {
+	store := NewInMemoryRunStore()
+	now := time.Now().UTC()
+	for _, run := range []Run{
+		{ID: "run-1", InstanceID: "instance-a", AgentID: "agent-1", Message: "m1", Status: "queued", CreatedAt: now, UpdatedAt: now},
+		{ID: "run-2", InstanceID: "instance-b", AgentID: "agent-1", Message: "m2", Status: "completed", CreatedAt: now.Add(time.Second), UpdatedAt: now.Add(time.Second)},
+		{ID: "run-3", InstanceID: "instance-a", AgentID: "agent-2", Message: "m3", Status: "completed", CreatedAt: now.Add(2 * time.Second), UpdatedAt: now.Add(2 * time.Second)},
+	} {
+		if _, err := store.Create(context.Background(), run); err != nil {
+			t.Fatalf("create run %s: %v", run.ID, err)
+		}
+	}
+
+	s := NewServer(Config{BearerToken: "secret", Store: store, Executor: NopExecutor{}})
+	req := httptest.NewRequest(http.MethodGet, "/v1/runs?instance_id=instance-a", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rr := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rr.Code)
+	}
+
+	var payload struct {
+		Runs []Run `json:"runs"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.Runs) != 2 {
+		t.Fatalf("expected 2 runs, got %d", len(payload.Runs))
+	}
+	for _, run := range payload.Runs {
+		if run.InstanceID != "instance-a" {
+			t.Fatalf("expected instance-a only, got %+v", run)
+		}
+	}
+}
+
 func TestServer_GetRunIncludesDerivedDecompositionPlanFromTrace(t *testing.T) {
 	store := NewInMemoryRunStore()
 	now := time.Now().UTC()
@@ -377,6 +478,57 @@ func TestServer_CancelRunEndpointCancelsTrackedRun(t *testing.T) {
 	var run Run
 	if err := json.Unmarshal(getRR.Body.Bytes(), &run); err != nil {
 		t.Fatalf("decode run response: %v", err)
+	}
+	if run.Status != "canceled" {
+		t.Fatalf("expected run status canceled, got %+v", run)
+	}
+}
+
+func TestServer_CancelRunEndpointFallsBackToCompositeTrackerIdentity(t *testing.T) {
+	tracker := NewActiveRunTracker()
+	executor := cancelBlockingExecutor{started: make(chan struct{})}
+	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore(), Executor: executor, RunTracker: tracker})
+
+	body := bytes.NewBufferString(`{"instance_id":"instance-a","agent_id":"agent-1","message":"long task"}`)
+	postReq := httptest.NewRequest(http.MethodPost, "/v1/runs", body)
+	postReq.Header.Set("Authorization", "Bearer secret")
+	postRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(postRR, postReq)
+	if postRR.Code != http.StatusAccepted {
+		t.Fatalf("expected %d, got %d", http.StatusAccepted, postRR.Code)
+	}
+	var postRes postRunResponse
+	if err := json.Unmarshal(postRR.Body.Bytes(), &postRes); err != nil {
+		t.Fatalf("decode post response: %v", err)
+	}
+	select {
+	case <-executor.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for run to start")
+	}
+
+	tracker.Remove(postRes.ID)
+	if !tracker.IsTrackedComposite("instance-a", "agent-1", postRes.ID) {
+		t.Fatalf("expected composite tracker entry for %q", postRes.ID)
+	}
+
+	cancelReq := httptest.NewRequest(http.MethodPost, "/v1/runs/"+postRes.ID+"/cancel", bytes.NewBufferString(`{}`))
+	cancelReq.Header.Set("Authorization", "Bearer secret")
+	cancelRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(cancelRR, cancelReq)
+	if cancelRR.Code != http.StatusOK {
+		t.Fatalf("expected cancel status 200, got %d (%s)", cancelRR.Code, cancelRR.Body.String())
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := WaitForQueuedRuns(ctx); err != nil {
+		t.Fatalf("wait for queued runs: %v", err)
+	}
+
+	run, err := s.store.Get(context.Background(), postRes.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
 	}
 	if run.Status != "canceled" {
 		t.Fatalf("expected run status canceled, got %+v", run)

@@ -9,6 +9,7 @@ import (
 	"openclawssy/internal/agent"
 	"openclawssy/internal/chatstore"
 	"openclawssy/internal/config"
+	"openclawssy/internal/instances"
 	"openclawssy/internal/policy"
 	"openclawssy/internal/tools"
 )
@@ -41,6 +42,9 @@ func TestMaybeTriggerProactiveMemoryHookDispatchesAgentMessage(t *testing.T) {
 	if err := e.Init("default", false); err != nil {
 		t.Fatalf("init engine: %v", err)
 	}
+	if _, err := instances.BootstrapDefaultInstance(root); err != nil {
+		t.Fatalf("bootstrap default instance: %v", err)
+	}
 
 	cfgPath := filepath.Join(root, ".openclawssy", "config.json")
 	cfg := config.Default()
@@ -61,14 +65,18 @@ func TestMaybeTriggerProactiveMemoryHookDispatchesAgentMessage(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 
-	e.maybeTriggerProactiveMemoryHook(context.Background(), cfg, reg, "default", session.SessionID, "run_123", agent.ToolCallRecord{
+	e.maybeTriggerProactiveMemoryHook(context.Background(), cfg, reg, "default", "default", session.SessionID, "run_123", agent.ToolCallRecord{
 		Request: agent.ToolCallRequest{Name: "memory.maintenance"},
 		Result:  agent.ToolCallResult{Output: `{"archived_stale_count":1}`},
 	})
 
-	inbox, err := reg.Execute(context.Background(), "default", "agent.message.inbox", e.workspaceDir, map[string]any{"agent_id": "default", "limit": 5})
+	ctx := tools.WithRequestContext(context.Background(), tools.RequestContext{InstanceID: "default"})
+	inbox, err := reg.Execute(ctx, "default", "agent.message.inbox", e.workspaceDir, map[string]any{"agent_id": "default", "limit": 5})
 	if err != nil {
 		t.Fatalf("agent.message.inbox: %v", err)
+	}
+	if inbox["instance_id"] != "default" {
+		t.Fatalf("expected inbox instance_id=default, got %#v", inbox)
 	}
 	var entry map[string]any
 	if typed, ok := inbox["messages"].([]map[string]any); ok {
@@ -91,6 +99,12 @@ func TestMaybeTriggerProactiveMemoryHookDispatchesAgentMessage(t *testing.T) {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(content), &payload); err != nil {
 		t.Fatalf("decode proactive payload: %v", err)
+	}
+	if entry["instance_id"] != "default" {
+		t.Fatalf("expected proactive envelope instance_id=default, got %#v", entry)
+	}
+	if payload["instance_id"] != "default" {
+		t.Fatalf("expected proactive payload instance_id=default, got %#v", payload)
 	}
 	if payload["session_id"] != session.SessionID {
 		t.Fatalf("expected proactive payload session id %q, got %#v", session.SessionID, payload["session_id"])
@@ -125,12 +139,12 @@ func TestProactiveHookSkipsWhenSessionIDEmpty(t *testing.T) {
 	}
 
 	// Call with empty session ID — should not panic or send message.
-	e.maybeTriggerProactiveMemoryHook(context.Background(), cfg, reg, "default", "", "run_123", agent.ToolCallRecord{
+	e.maybeTriggerProactiveMemoryHook(context.Background(), cfg, reg, "default", "default", "", "run_123", agent.ToolCallRecord{
 		Request: agent.ToolCallRequest{Name: "memory.maintenance"},
 		Result:  agent.ToolCallResult{Output: `{"archived_stale_count":1}`},
 	})
 
-	inbox, err := reg.Execute(context.Background(), "default", "agent.message.inbox", e.workspaceDir, map[string]any{"agent_id": "default", "limit": 5})
+	inbox, err := reg.Execute(tools.WithRequestContext(context.Background(), tools.RequestContext{InstanceID: "default"}), "default", "agent.message.inbox", e.workspaceDir, map[string]any{"agent_id": "default", "limit": 5})
 	if err != nil {
 		t.Fatalf("agent.message.inbox: %v", err)
 	}
@@ -154,7 +168,7 @@ func TestProactiveHookSkipsWhenMemoryDisabled(t *testing.T) {
 	cfg.Memory.ProactiveEnabled = true
 
 	// Should not panic when called with memory disabled.
-	e.maybeTriggerProactiveMemoryHook(context.Background(), cfg, nil, "default", "sess_1", "run_1", agent.ToolCallRecord{
+	e.maybeTriggerProactiveMemoryHook(context.Background(), cfg, nil, "default", "default", "sess_1", "run_1", agent.ToolCallRecord{
 		Request: agent.ToolCallRequest{Name: "memory.maintenance"},
 		Result:  agent.ToolCallResult{Output: `{"archived_stale_count":1}`},
 	})
@@ -173,7 +187,7 @@ func TestProactiveHookSkipsWhenProactiveDisabled(t *testing.T) {
 	cfg.Memory.ProactiveEnabled = false
 
 	// Should not panic when proactive is disabled.
-	e.maybeTriggerProactiveMemoryHook(context.Background(), cfg, nil, "default", "sess_1", "run_1", agent.ToolCallRecord{
+	e.maybeTriggerProactiveMemoryHook(context.Background(), cfg, nil, "default", "default", "sess_1", "run_1", agent.ToolCallRecord{
 		Request: agent.ToolCallRequest{Name: "memory.maintenance"},
 		Result:  agent.ToolCallResult{Output: `{"archived_stale_count":1}`},
 	})

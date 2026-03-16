@@ -33,6 +33,31 @@ func TestFileRunStorePersistsRuns(t *testing.T) {
 	}
 }
 
+func TestFileRunStorePersistsInstanceID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runs.json")
+	store, err := NewFileRunStore(path)
+	if err != nil {
+		t.Fatalf("new file store: %v", err)
+	}
+
+	run := Run{ID: "run-instance", InstanceID: "instance-a", AgentID: "a", Message: "m", Status: "queued", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+	if _, err := store.Create(context.Background(), run); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	reloaded, err := NewFileRunStore(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	got, err := reloaded.Get(context.Background(), "run-instance")
+	if err != nil {
+		t.Fatalf("get reloaded run: %v", err)
+	}
+	if got.InstanceID != "instance-a" {
+		t.Fatalf("expected persisted instance_id instance-a, got %+v", got)
+	}
+}
+
 func TestFileRunStoreDerivesDecompositionPlanFromTrace(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "runs.json")
 	store, err := NewFileRunStore(path)

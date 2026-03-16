@@ -1,385 +1,519 @@
-🔥 Openclawssy Memory System — DevPlan v0.1
-Implementation Progress
 
-- [x] Phase 1: Event stream package created (`internal/memory`) with non-blocking queued JSONL ingestion.
-- [x] Phase 1: Runtime integration added after run execution to ingest redacted user/assistant/tool/error/scheduler events.
-- [x] Phase 1: Config surface added (`memory.enabled`, `memory.max_working_items`, `memory.max_prompt_tokens`, `memory.auto_checkpoint`) with defaults/validation.
-- [x] Phase 1: Tests added for memory manager, config memory defaults/validation, and runtime memory event ingestion.
-- [x] Phase 2: Working memory SQLite store + memory tools (`memory.search`, `memory.write`, `memory.update`, `memory.forget`, `memory.health`).
-- [x] Phase 2 follow-up: `decision.log` tool.
-- [x] Phase 3: `memory.checkpoint` now performs model-driven distillation with strict JSON validation and deterministic fallback safety path.
-- [x] Observability: memory admin endpoint added (`GET /api/admin/memory/<agent>`).
-- [x] Phase 3 follow-up: scheduler default checkpoint job wiring (`@every 6h`) and strict model JSON distillation.
-- [x] Phase 3: Checkpoint distillation.
-- [x] Phase 4: Recall integration into prompt assembly (relevant memory block injected pre-turn with importance/status filtering, recency boost, and size caps).
-- [x] Phase 5: Weekly maintenance workflow (`memory.maintenance` tool with dedupe/archive/verification report + auto weekly scheduler wiring via `@every 168h`).
-- [x] Phase 6: Proactive memory-driven behavior hooks (checkpoint/maintenance triggers invoke `agent.message.send` with required `channel`, `user_id`, and `session_id` context).
-- [x] Optional Phase 7: Embeddings support added (pluggable `Embedder` interface, vector storage, cosine retrieval, and OpenRouter-compatible embeddings API path).
+---
 
-Guiding Principles
+## `DEVPLAN.md`
 
-Security-first (same posture as the runtime)
+```md
+# Dev Plan: Operator-Grade Instance/Agent Architecture
 
-Audit-friendly (memory derivations are traceable to runs)
+Owner: Platform / Runtime / Dashboard  
+Date: 2026-03-16  
+Status: In progress
 
-Workspace-bound (no cross-boundary writes)
+## 1. Intent
+
+Implement the instance-centric architecture in a way that preserves the current runtime path while eliminating prompt split-brain and making agents/instances first-class packaged environments.
 
-Deterministic where possible
+This plan is written for parallel execution by multiple agents.
 
-Optional and configurable
+## 2. Success Criteria
 
-Small working memory, structured long-term memory
+We are done when:
 
-🧠 Memory Architecture for Openclawssy
+- runtime resolves effective state via instance + agent
+- prompt stack is runtime-authoritative
+- legacy docs are compatibility mirrors only
+- instances can be created, activated, cloned, and run in parallel
+- agents can be created inside instances and run in parallel
+- inter-agent communication is permissioned, auditable, and same-instance by default
+- wizard flows preview and create valid manifests
+- feature flags gate UI, API, and runtime consistently
+- eval, delegation, roles, and dashboard all reference the same stable instance/agent/run metadata model
 
-We will implement a 3-layer architecture:
+## 3. Workstreams
 
-Layer	Purpose	Storage
-Event Stream	Raw events (chat/tool/decisions)	JSONL
-Working Memory	High-signal distilled memory	SQLite
-Archive	Long-term searchable memory	SQLite + optional embeddings
-📁 Proposed Filesystem Layout
+Run these as parallel workstreams with one orchestrator and several workers.
 
-Inside the existing .openclawssy/agents/<agent>/:
+### Workstream A: Storage + schema foundation
+Owner archetype: backend platform
 
-.openclawssy/
-└── agents/<agent>/
-    ├── runs/                  (existing)
-    ├── audit/                 (existing)
-    ├── sessions/              (existing)
-    ├── memory/
-    │   ├── events/
-    │   │   └── YYYY-MM-DD.jsonl
-    │   ├── memory.db
-    │   ├── checkpoints/
-    │   │   └── checkpoint-<timestamp>.json
-    │   └── reports/
-    │       └── weekly-<date>.md
+Deliverables:
+- instance manifest structs
+- agent manifest structs
+- control-plane feature structs
+- storage paths under `.openclawssy/instances/...`
+- bootstrap migration for `default` instance
+- active instance pointer support
 
+### Workstream B: Effective runtime resolver
+Owner archetype: runtime/backend
 
-This keeps memory scoped per-agent.
+Deliverables:
+- `ResolveEffectiveRuntime(instanceID, agentID)`
+- engine input expansion with `InstanceID`
+- runtime workspace resolution using instance/agent
+- model/tool/delegation resolution from effective runtime
+- stable run tracker keys `(instance_id, agent_id, run_id)`
 
-🧱 Phase 1 — Event Stream (PR #1)
-Goal
+### Workstream C: Prompt-source unification
+Owner archetype: prompt/runtime
 
-Capture memory-relevant events without changing runtime behavior.
+Deliverables:
+- prompt stack becomes runtime source
+- migration seeding from legacy docs when stack empty
+- materialized docs compatibility/export layer
+- preview parity tests between prompt stack output and runtime prompt
 
-Integration Point
+### Workstream D: Instances + agents API
+Owner archetype: backend/api
 
-Inside the runtime loop (after execution completes, where run bundle is persisted).
+Deliverables:
+- instance CRUD endpoints
+- agent CRUD endpoints under instance scope
+- activate/clone/bootstrap endpoints
+- validation layer for manifests
 
-Add:
+### Workstream E: Messaging + parallel ops
+Owner archetype: runtime/messaging
 
-memoryManager.IngestEvent(ctx, MemoryEvent{...})
+Deliverables:
+- instance-scoped message model
+- inbox store
+- send/ack/run APIs
+- agent comm permission checks
+- concurrency guardrails
 
-Capture:
+### Workstream F: Wizard backend + dashboard UI
+Owner archetype: full-stack/dashboard
 
-user message
+Deliverables:
+- template catalog
+- wizard plan/create APIs
+- wizard review screens
+- feature-gated navigation and forms
+- instance/agent management screens
 
-assistant output
+### Workstream G: Feature flag enforcement
+Owner archetype: backend + UI
 
-tool calls
+Deliverables:
+- route guards
+- runtime guards
+- nav/page gating
+- read-only enforcement
+- error shape standardization
 
-tool results
+### Workstream H: Eval + metadata normalization
+Owner archetype: eval/observability
 
-errors
+Deliverables:
+- stable metadata model for instance/agent/run
+- delegation ledger cleanup
+- eval ingestion/path updates
+- dashboard summaries aligned to new model
+
+## 4. Recommended Parallel Agent Topology
 
-scheduler-triggered runs
+Use these agents:
+
+1. **orchestrator**
+   - owns global sequencing
+   - assigns tasks
+   - reconciles schema and interfaces
+   - blocks conflicting changes
 
-Redaction
+2. **storage-architect**
+   - owns manifests, storage layout, migration bootstrap
+
+3. **runtime-integrator**
+   - owns engine wiring, effective runtime resolution, workspace changes
+
+4. **prompt-unifier**
+   - owns runtime prompt-source migration and doc materialization
 
-Reuse existing redaction logic before writing to memory logs.
+5. **api-builder**
+   - owns instance/agent/wizard/feature endpoints
 
-Storage
+6. **dashboard-builder**
+   - owns UI flows and feature gating
+
+7. **messaging-concurrency**
+   - owns inter-agent comms, inbox, run tracker, parallel caps
+
+8. **qa-eval**
+   - owns integration tests, migration tests, eval metadata alignment
 
-Append-only JSONL:
+## 5. Dependency graph
 
-{
-  "id": "evt_01H...",
-  "type": "user_message",
-  "text": "...",
-  "session_id": "...",
-  "run_id": "...",
-  "timestamp": "...",
-  "metadata": {...}
-}
+### Minimal sequencing
 
+1. Storage/schema foundation starts first
+2. Effective runtime resolver can begin once manifest interfaces are stable
+3. Prompt-source unification depends on resolver scaffolding
+4. API work can begin after storage contracts are defined
+5. Messaging can begin after instance/agent IDs and run metadata shapes are stable
+6. Wizard backend depends on API/storage contracts
+7. Dashboard depends on wizard/API contracts
+8. QA/eval runs alongside all streams but finalizes after interfaces stabilize
+
+### Hard dependencies
 
-Non-blocking write.
+- prompt-source runtime switch must not merge before migration seeding exists
+- instance activation must not merge before effective runtime resolution is in place
+- wizard create must use the same validation/manifest builder as direct APIs
+- eval metadata normalization must use the same instance/agent/run IDs as runtime
 
-🧠 Phase 2 — Working Memory Store (PR #2)
+## 6. Milestones
 
-Introduce:
+## Current progress snapshot
 
-internal/memory/
-    manager.go
-    models.go
-    store/sqlite.go
-    retrieve.go
+Completed or substantially landed:
+
+- Milestone 1: foundation
+- Milestone 2: effective runtime
+- Milestone 3: prompt unification core
+- Milestone 4: canonical dashboard/backend instance and agent APIs (backend layer; UI still incomplete)
+- Milestone 5 partial:
+  - HTTP run creation persists `instance_id`
+  - HTTP SSE events emit `instance_id` and `agent_id`
+  - HTTP tracker/cancel path stores both bare and composite run keys
+  - delegated subagent runs inherit parent `instance_id`
+  - inter-agent messaging is explicitly same-instance and persists `instance_id`
+  - dashboard monitor/status/trace/decision surfaces now emit `instance_id`
+  - dashboard monitor reconciliation no longer collides on duplicate `run_id` across instances
+
+Still open:
+
+- first-class inbox/message lifecycle model
+- dashboard/UI instance wiring completion
+- deeper eval/delegation metadata normalization
+- end-to-end feature flag enforcement polish
+- broader validation and migration cleanup
 
-SQLite Schema
-CREATE TABLE memory_items (
-  id TEXT PRIMARY KEY,
-  agent_id TEXT,
-  kind TEXT,
-  title TEXT,
-  content TEXT,
-  importance INTEGER,
-  confidence REAL,
-  status TEXT,
-  created_at DATETIME,
-  updated_at DATETIME
-);
+## Milestone 1: Foundation
+
+### Tasks
+- define config additions
+- add Go structs for feature flags, instance manifest, agent manifest
+- add storage readers/writers
+- implement bootstrap-from-current migration
+- persist `default` instance
 
-CREATE VIRTUAL TABLE memory_fts USING fts5(content, title);
+### Exit criteria
+- repo can load/create instance and agent manifests
+- active instance can be resolved
+- bootstrap command/path works on current world
 
+## Milestone 2: Effective runtime
 
-On insert/update:
+### Tasks
+- add `InstanceID` to execute input
+- implement `ResolveEffectiveRuntime`
+- route workspace/model/tools/delegation through resolver
+- add concurrency metadata to run tracker
 
-sync to FTS table
-
-Add Tools
-
-Expose to agent:
-
-memory.search
-memory.write
-memory.update
-memory.forget
-memory.health
-decision.log
-
-
-These will integrate through the existing tool registry.
-
-🧪 Phase 3 — Checkpoint Distillation (PR #3)
-
-This is where the 2.0 concept becomes real.
-
-Add Scheduler Job
-
-Use existing cron framework:
-
-openclawssy cron add \
-  --agent default \
-  --schedule "@every 6h" \
-  --message "/tool memory.checkpoint {}"
-
-
-Add tool:
-
-memory.checkpoint
-
-Behavior
-
-Read last N events since last checkpoint.
-
-Construct summarization prompt.
-
-Call model.
-
-Parse structured JSON result.
-
-Upsert memory items.
-
-Structured Prompt Example
-
-We DO NOT let the model freestyle.
-
-We require:
-
-{
-  "new_items": [
-    {
-      "kind": "preference",
-      "title": "...",
-      "content": "...",
-      "importance": 4,
-      "confidence": 0.92
-    }
-  ],
-  "updates": [
-    {
-      "id": "...",
-      "new_content": "...",
-      "confidence": 0.88
-    }
-  ]
-}
-
-
-Strict JSON schema validation.
-
-🗂 Phase 4 — Recall Integration (PR #4)
-
-This is critical.
-
-Inside prompt assembly (Architecture doc step 14–15 flow):
-
-Before model turn:
-
-build prompt + session context
-
-
-Modify to:
-
-build prompt
-+ retrieve memory context
-+ inject memory block
-
-Retrieval Logic
-
-FTS search on query
-
-filter by:
-
-status = active
-
-importance ≥ 3
-
-recency boost
-
-Return top N (configurable).
-
-Injected Prompt Block
---- RELEVANT MEMORY ---
-[MEM-12] User prefers proactive notifications.
-[MEM-44] User is debugging skill loading issues.
-------------------------
-
-
-Hard size cap.
-
-🔄 Phase 5 — Weekly Maintenance (PR #5)
-
-Add tool:
-
-memory.maintenance
-
-
-Scheduled:
-
-cron 30 2 * * 0
-
-
-Maintenance tasks:
-
-Deduplicate similar items
-
-Archive stale items
-
-Mark items needing verification
-
-Compact DB
-
-Generate weekly report file
-
-Optional: proactive message to user.
-
-📊 Phase 6 — Proactive Memory-Driven Behavior (PR #6)
-
-Integrate with scheduler + delivery system.
-
-When:
-
-checkpoint creates high-importance memory
-
-maintenance finds stale item
-
-user preference indicates reminders
-
-Trigger:
-
-agent.message.send
-
-
-BUT must include:
-
-userID
-
-sessionID
-
-channel
-
-This will fix your current proactive messaging problem if implemented correctly.
-
-🔐 Security Considerations
-
-Never store raw secrets.
-
-Redact before memory ingestion.
-
-Memory DB stored inside agent directory.
-
-Enforce path guard.
-
-Add config:
-
-memory.enabled
-memory.max_working_items
-memory.max_prompt_tokens
-memory.auto_checkpoint
-
-🧪 Observability
-
-Add:
-
-memory debug endpoint:
-
-GET /api/admin/memory/<agent>
-
-memory health metrics
-
-memory stats in dashboard
-
-🧩 Optional Phase 7 — Embeddings
-
-Add interface:
-
-type Embedder interface {
-  Embed(text string) ([]float32, error)
-}
-
-
-Store embeddings.
-
-Add cosine search.
-
-Make pluggable.
-
-🗓 Implementation Timeline
-PR	Feature	Risk
-1	Event capture	Low
-2	SQLite memory store + tools	Medium
-3	Checkpoint summarizer	Medium
-4	Prompt injection	Medium
-5	Maintenance job	Low
-6	Proactive hooks	Medium
-7	Embeddings	Optional
-⚙ Integration Points Summary
-Area	Change
-Runtime loop	IngestEvent hook
-Prompt builder	Memory injection
-Tool registry	Add memory tools
-Scheduler	Add checkpoint + maintenance
-Dashboard	Memory admin surface
-Config	Add memory config section
-🎯 End Result
-
-Openclawssy gains:
-
-Automatic memory extraction
-
-Structured long-term knowledge
-
-Scheduled maintenance
-
-Decision logging
-
-Memory-aware responses
-
-Proactive behavior capability
-
-No silent failures
-
-Fully auditable derivation chain
+### Exit criteria
+- runtime behavior varies correctly by instance/agent
+- active instance switching changes resolved state without workspace bleed
+
+## Milestone 3: Prompt unification
+
+### Tasks
+- runtime prompt assembly reads prompt stack
+- seed prompt stack from docs if empty
+- tag migrated agents with `migrated_from_docs`
+- add materialized doc export/update path
+- make dashboard doc editor clearly stack-backed or mirror-backed
+
+### Exit criteria
+- prompt preview matches runtime system prompt
+- legacy agent migration preserves behavior
+
+## Milestone 4: CRUD APIs
+
+### Tasks
+- add instance endpoints
+- add agent endpoints
+- add activate/clone/bootstrap endpoints
+- add validation errors and feature guard hooks
+
+### Exit criteria
+- instance and agent lifecycle manageable via API
+- new resources persist correctly under instance tree
+
+## Milestone 5: Messaging + parallel ops
+
+### Tasks
+- define message model
+- add inbox storage
+- implement send/list/ack/run APIs
+- add permission checks
+- enforce same-instance default
+- add global/instance/agent concurrency caps
+
+### Exit criteria
+- same-instance agents can communicate
+- parallel runs are isolated and auditable
+
+Progress update:
+
+- same-instance messaging compatibility layer is landed
+- composite tracker identity is landed in runtime and HTTP queued runs
+- dashboard run/decision surfaces now consume and emit instance-aware identity more consistently
+- inbox lifecycle and canonical message store are still open
+
+## Milestone 6: Wizard
+
+### Tasks
+- implement template catalog
+- implement plan/create endpoints
+- build New Instance Wizard UI
+- build New Agent Wizard UI
+- ensure preview == create output
+
+### Exit criteria
+- operators can create instances and agents from guided flows
+- preview output matches persisted manifests
+
+## Milestone 7: Feature flags + eval cleanup
+
+### Tasks
+- add full feature guards to UI/API/runtime
+- normalize eval metadata
+- align delegation ledger format
+- update dashboard summaries and filters
+
+### Exit criteria
+- disabling a feature behaves deterministically everywhere
+- eval and dashboard consume stable metadata
+
+Progress update:
+
+- eval storage and API now carry additive `identity { instance_id, agent_id, run_id, parent_run_id }`
+- dashboard/eval consumers have partial composite identity adoption, but delegation and broader consumers still need follow-through
+
+## 7. Detailed task list by agent
+
+## 7.1 orchestrator
+
+### Responsibilities
+- define cross-workstream interfaces
+- maintain task graph
+- review merge order
+- resolve conflicts on schema names and endpoint semantics
+
+### Concrete tasks
+- publish canonical structs and endpoint contracts
+- publish run metadata contract
+- maintain migration invariants doc
+- review all workstream PRs for coherence
+
+## 7.2 storage-architect
+
+### Concrete tasks
+- add:
+  - `ControlPlaneFeatureState`
+  - `InstanceManifest`
+  - `AgentManifest`
+  - `MessagingPolicy`
+  - `DelegationPolicy`
+- implement store helpers:
+  - `LoadInstanceManifest`
+  - `SaveInstanceManifest`
+  - `ListInstances`
+  - `LoadAgentManifest`
+  - `SaveAgentManifest`
+  - `ListAgents`
+- implement bootstrap migration:
+  - `BootstrapDefaultInstanceFromCurrent()`
+
+### Must preserve
+- current system still boots without manual migration steps
+- default instance synthesized from current config/docs/roles/channels
+
+## 7.3 runtime-integrator
+
+### Concrete tasks
+- extend `ExecuteInput`
+- implement active/default instance resolution
+- integrate `ResolveEffectiveRuntime`
+- route workspace root through instance
+- support agent overlay path
+- update run tracker key schema
+- add concurrency checks:
+  - global
+  - instance
+  - optional agent
+
+### Risks
+- hidden global workspace assumptions
+- old code paths bypassing resolver
+
+### Required guard
+- no runtime path should compute tools/model/delegation independently after resolver exists
+
+## 7.4 prompt-unifier
+
+### Concrete tasks
+- define canonical prompt stack assembly contract
+- implement migration seeding from legacy docs
+- add source marker `migrated_from_docs`
+- add doc materialization/export
+- add parity tests:
+  - legacy docs → seeded prompt stack → runtime prompt equals previous behavior
+
+### Risks
+- subtle ordering mismatch in legacy prompt assembly
+- dashboard editing semantics becoming ambiguous
+
+### Required guard
+- once migrated, runtime must not silently read legacy docs directly
+
+## 7.5 api-builder
+
+### Concrete tasks
+- implement endpoints:
+  - instances CRUD
+  - agents CRUD
+  - activate/clone/bootstrap
+  - wizard plan/create
+  - control-plane features get/patch
+  - prompt-stack scoped instance/agent APIs
+  - messaging APIs
+- add feature guard middleware
+- standardize validation and error response shapes
+
+### Required guard
+- wizard create must call the same internal manifest builder/validator as direct APIs
+
+## 7.6 dashboard-builder
+
+### Concrete tasks
+- add Instances nav and management view
+- add Agent management under selected instance
+- add New Instance Wizard
+- add New Agent Wizard
+- add feature gating:
+  - hidden
+  - disabled
+  - read-only
+- clarify prompt editor mode:
+  - stack-backed
+  - materialized-doc mirror
+
+### UX requirement
+Operators must always be able to answer:
+- which instance is active?
+- which agent is selected?
+- what is the real prompt source?
+- what features are disabled/read-only?
+
+## 7.7 messaging-concurrency
+
+### Concrete tasks
+- add instance-scoped inbox store
+- add message lifecycle:
+  - queued
+  - acknowledged
+  - running
+  - completed
+  - failed
+- implement permission checks from agent manifests
+- add thread/task linkage fields
+- add run coordination for parallel execution
+
+### Required guard
+- default policy is same-instance only
+- no hidden auto-execution unless explicitly allowed
+
+## 7.8 qa-eval
+
+### Concrete tasks
+- add migration tests
+- add runtime isolation tests
+- add prompt parity tests
+- add feature flag enforcement tests
+- add wizard preview/create equality tests
+- update eval metadata ingestion to `(instance_id, agent_id, run_id)`
+
+## 8. Test Matrix
+
+## 8.1 Migration
+
+- bootstrap default instance from current config
+- bootstrap preserves current default agent
+- bootstrap preserves role templates and channel defaults
+- bootstrap seeds prompt stack from legacy docs when empty
+- migrated runtime behavior matches prior behavior
+
+## 8.2 Runtime
+
+- active instance switching changes workspace root
+- active instance switching changes default agent
+- per-agent model override works
+- per-agent tool allowlist works
+- instance workspace isolation prevents bleed
+
+## 8.3 Parallelism
+
+- two instances run in parallel without workspace bleed
+- two agents in one instance run in parallel safely
+- global concurrency cap enforced
+- instance concurrency cap enforced
+- agent cap enforced if configured
+
+## 8.4 Messaging
+
+- allowed message routes succeed
+- forbidden message routes fail
+- same-instance default enforced
+- cross-instance denied by default
+- inbox run path respects permissions
+
+## 8.5 Prompt
+
+- preview equals runtime prompt
+- prompt stack disabled blocks API
+- prompt stack disabled changes runtime deterministically
+- materialized docs do not become hidden runtime truth
+
+## 8.6 Features
+
+- UI hides invisible features
+- UI disables read-only features
+- API blocks disabled features
+- runtime blocks disabled features
+
+## 8.7 Wizard
+
+- plan output validates
+- create output equals plan
+- template derivations generate expected agents/roles/settings
+
+## 9. Merge Strategy
+
+### Rule 1
+Do not land UI flows before storage and API contracts stabilize.
+
+### Rule 2
+Do not land runtime prompt switch before migration seeding and parity tests exist.
+
+### Rule 3
+Land feature guard middleware early so new endpoints don’t bypass control-plane rules.
+
+### Rule 4
+Keep compatibility reads until all callers are instance-aware.
+
+## 10. Definition of Done
+
+This effort is done when:
+
+- instance is the packaged runtime boundary
+- agent is a first-class child of instance
+- prompt stack is runtime truth
+- legacy docs are mirrors only
+- runtime and dashboard resolve the same effective behavior
+- instances/agents can be created through wizard and API
+- agents can run in parallel and communicate safely
+- feature flags are enforced at UI/API/runtime
+- eval/delegation/dashboard all use stable instance/agent/run metadata

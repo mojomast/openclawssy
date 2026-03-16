@@ -12,6 +12,7 @@ import (
 
 	"openclawssy/internal/config"
 	agentcontract "openclawssy/internal/contract"
+	"openclawssy/internal/instances"
 	"openclawssy/internal/promptstack"
 	"openclawssy/internal/roles"
 )
@@ -50,7 +51,12 @@ func (h *Handler) handleAgentContractAPI(w http.ResponseWriter, r *http.Request)
 	}
 
 	if actions[0] == "prompt-stack" {
-		h.handlePromptStackAPI(w, r, agentID, actions[1:])
+		activeInstanceID, err := instances.LoadActiveInstanceID(h.rootDir)
+		if err != nil {
+			writeDashboardError(w, http.StatusInternalServerError, "instances.load_failed", err.Error(), nil)
+			return
+		}
+		h.handlePromptStackAPI(w, r, activeInstanceID, agentID, actions[1:])
 		return
 	}
 
@@ -241,11 +247,15 @@ func (h *Handler) resolveAgentContractWithIntegrations(cfg config.Config, agentI
 }
 
 func (h *Handler) applyPromptStackToContract(agentID string, resolved *agentcontract.AgentContract) error {
-	store, err := h.promptStackStore()
+	activeInstanceID, err := instances.LoadActiveInstanceID(h.rootDir)
 	if err != nil {
 		return err
 	}
-	stack, err := h.ensurePromptStackInitialized(agentID, store)
+	store, err := h.promptStackStore(activeInstanceID)
+	if err != nil {
+		return err
+	}
+	stack, err := h.ensurePromptStackInitialized(activeInstanceID, agentID, store)
 	if err != nil {
 		return err
 	}

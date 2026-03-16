@@ -26,6 +26,7 @@ import (
 	httpchannel "openclawssy/internal/channels/http"
 	"openclawssy/internal/chatstore"
 	"openclawssy/internal/config"
+	"openclawssy/internal/instances"
 	"openclawssy/internal/memory"
 	memorystore "openclawssy/internal/memory/store"
 	"openclawssy/internal/promptstack"
@@ -36,22 +37,28 @@ import (
 )
 
 type Handler struct {
-	rootDir         string
-	store           httpchannel.RunStore
-	schedulerStore  *scheduler.Store
-	runCanceller    dashboardRunCanceller
-	effectiveConfig *config.Config
-	monitorRunMu    sync.Mutex
-	monitorRuns     map[string]monitorRunState
-	promptStackMu   sync.Mutex
-	promptStack     *promptstack.VersionStore
-	rollbackMu      sync.Mutex
-	rollbackByAgent map[string][]agentRollbackSnapshot
+	rootDir               string
+	store                 httpchannel.RunStore
+	schedulerStore        *scheduler.Store
+	runCanceller          dashboardRunCanceller
+	effectiveConfig       *config.Config
+	monitorRunMu          sync.Mutex
+	monitorRuns           map[string]monitorRunState
+	promptStackMu         sync.Mutex
+	promptStack           *promptstack.VersionStore
+	promptStackByInstance map[string]*promptstack.VersionStore
+	rollbackMu            sync.Mutex
+	rollbackByAgent       map[string][]agentRollbackSnapshot
 }
 
 type dashboardRunCanceller interface {
 	Cancel(runID string) error
 	IsTracked(runID string) bool
+}
+
+type dashboardCompositeRunCanceller interface {
+	CancelComposite(instanceID, agentID, runID string) error
+	IsTrackedComposite(instanceID, agentID, runID string) bool
 }
 
 type Options struct {
@@ -62,6 +69,7 @@ type Options struct {
 
 type monitorRunRecord struct {
 	RunID          string `json:"run_id"`
+	InstanceID     string `json:"instance_id,omitempty"`
 	AgentID        string `json:"agent_id"`
 	TaskID         string `json:"task_id,omitempty"`
 	Source         string `json:"source,omitempty"`
@@ -80,8 +88,10 @@ type monitorRunRecord struct {
 }
 
 type monitorRunState struct {
-	Status    string
-	UpdatedAt time.Time
+	InstanceID string
+	AgentID    string
+	Status     string
+	UpdatedAt  time.Time
 }
 
 const (
@@ -161,13 +171,14 @@ func NewWithOptions(rootDir string, store httpchannel.RunStore, opts Options) *H
 		effectiveConfig = &cloned
 	}
 	return &Handler{
-		rootDir:         rootDir,
-		store:           store,
-		schedulerStore:  opts.SchedulerStore,
-		runCanceller:    opts.RunCanceller,
-		effectiveConfig: effectiveConfig,
-		monitorRuns:     make(map[string]monitorRunState),
-		rollbackByAgent: make(map[string][]agentRollbackSnapshot),
+		rootDir:               rootDir,
+		store:                 store,
+		schedulerStore:        opts.SchedulerStore,
+		runCanceller:          opts.RunCanceller,
+		effectiveConfig:       effectiveConfig,
+		monitorRuns:           make(map[string]monitorRunState),
+		promptStackByInstance: make(map[string]*promptstack.VersionStore),
+		rollbackByAgent:       make(map[string][]agentRollbackSnapshot),
 	}
 }
 
@@ -195,6 +206,16 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/runs/", h.handleRunDecisions)
 	mux.HandleFunc("/api/admin/roles", h.handleRoles)
 	mux.HandleFunc("/api/admin/roles/", h.handleRoleByName)
+	mux.HandleFunc("/api/admin/control-plane/features", h.handleControlPlaneFeatures)
+	mux.HandleFunc("/api/admin/instances", h.handleInstances)
+	mux.HandleFunc("/api/admin/instances/active", h.handleActiveInstance)
+	mux.HandleFunc("/api/admin/instances/bootstrap-from-current", h.handleBootstrapInstanceFromCurrent)
+	mux.HandleFunc("/api/admin/instances/", h.handleInstanceByID)
+	mux.HandleFunc("/api/admin/wizard/templates", h.handleWizardTemplates)
+	mux.HandleFunc("/api/admin/wizard/instances/plan", h.handleWizardInstancePlan)
+	mux.HandleFunc("/api/admin/wizard/instances/create", h.handleWizardInstanceCreate)
+	mux.HandleFunc("/api/admin/wizard/agents/plan", h.handleWizardAgentPlan)
+	mux.HandleFunc("/api/admin/wizard/agents/create", h.handleWizardAgentCreate)
 	mux.HandleFunc("/api/admin/agents", h.handleAgents)
 	mux.HandleFunc("/api/admin/agents/", h.handleAgentContractAPI)
 	mux.HandleFunc("/api/admin/agent/docs", h.handleAgentDocs)
@@ -446,7 +467,7 @@ func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	out := map[string]any{
 		"run_count": len(runs),
-		"runs":      runs,
+		"runs":      normalizeDashboardRuns(runs),
 		"model": map[string]any{
 			"provider": cfg.Model.Provider,
 			"name":     cfg.Model.Name,
@@ -1195,8 +1216,10 @@ func (h *Handler) getRunTrace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]any{
-		"run_id": run.ID,
-		"trace":  run.Trace,
+		"instance_id": normalizeDashboardInstanceID(run.InstanceID),
+		"agent_id":    strings.TrimSpace(run.AgentID),
+		"run_id":      run.ID,
+		"trace":       run.Trace,
 	})
 }
 
@@ -1569,7 +1592,8 @@ func (h *Handler) handleMonitorRuns(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 	agentFilter := strings.TrimSpace(r.URL.Query().Get("agent_id"))
-	runs, err := h.collectMonitorRuns(r.Context(), limit, agentFilter)
+	instanceFilter := strings.TrimSpace(r.URL.Query().Get("instance_id"))
+	runs, err := h.collectMonitorRuns(r.Context(), limit, agentFilter, instanceFilter)
 	if err != nil {
 		http.Error(w, "failed to load monitor runs", http.StatusInternalServerError)
 		return
@@ -1586,8 +1610,10 @@ func (h *Handler) handleMonitorRunControl(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req struct {
-		Action string `json:"action"`
-		RunID  string `json:"run_id"`
+		Action     string `json:"action"`
+		RunID      string `json:"run_id"`
+		InstanceID string `json:"instance_id,omitempty"`
+		AgentID    string `json:"agent_id,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json body", http.StatusBadRequest)
@@ -1606,53 +1632,50 @@ func (h *Handler) handleMonitorRunControl(w http.ResponseWriter, r *http.Request
 		http.Error(w, "run canceller not configured", http.StatusNotImplemented)
 		return
 	}
-	tracked := h.runCanceller.IsTracked(runID)
+	instanceID, agentID := h.resolveDashboardRunIdentity(r.Context(), runID, req.InstanceID, req.AgentID)
+	tracked := h.isDashboardRunTracked(instanceID, agentID, runID)
+	canceled := false
+	if compositeCanceller, ok := h.runCanceller.(dashboardCompositeRunCanceller); ok && instanceID != "" && agentID != "" {
+		if compositeCanceller.IsTrackedComposite(instanceID, agentID, runID) {
+			tracked = true
+		}
+		if err := compositeCanceller.CancelComposite(instanceID, agentID, runID); err == nil {
+			canceled = true
+		}
+	}
+	if canceled {
+		h.noteMonitorRunState(instanceID, agentID, runID, "canceled")
+		writeJSON(w, map[string]any{"run_id": runID, "instance_id": instanceID, "agent_id": agentID, "cancelled": true, "tracked": tracked})
+		return
+	}
 	if err := h.runCanceller.Cancel(runID); err != nil {
 		if status, ok := h.monitorRunStatusFromStore(r.Context(), runID); ok && isTerminalMonitorRunStatus(status) {
-			h.noteMonitorRunState(runID, status)
-			writeJSON(w, map[string]any{"run_id": runID, "cancelled": false, "tracked": tracked})
+			h.noteMonitorRunState(instanceID, agentID, runID, status)
+			writeJSON(w, map[string]any{"run_id": runID, "instance_id": instanceID, "agent_id": agentID, "cancelled": false, "tracked": tracked})
 			return
 		}
 		if !tracked {
-			h.noteMonitorRunState(runID, "canceled")
-			writeJSON(w, map[string]any{"run_id": runID, "cancelled": true, "tracked": false})
+			h.noteMonitorRunState(instanceID, agentID, runID, "canceled")
+			writeJSON(w, map[string]any{"run_id": runID, "instance_id": instanceID, "agent_id": agentID, "cancelled": true, "tracked": false})
 			return
 		}
-		writeJSON(w, map[string]any{"run_id": runID, "cancelled": false, "tracked": tracked})
+		writeJSON(w, map[string]any{"run_id": runID, "instance_id": instanceID, "agent_id": agentID, "cancelled": false, "tracked": tracked})
 		return
 	}
-	h.noteMonitorRunState(runID, "canceled")
-	writeJSON(w, map[string]any{"run_id": runID, "cancelled": true, "tracked": tracked})
+	h.noteMonitorRunState(instanceID, agentID, runID, "canceled")
+	writeJSON(w, map[string]any{"run_id": runID, "instance_id": instanceID, "agent_id": agentID, "cancelled": true, "tracked": tracked})
 }
 
-func (h *Handler) collectMonitorRuns(ctx context.Context, limit int, agentFilter string) ([]monitorRunRecord, error) {
-	agentsDir := filepath.Join(h.rootDir, ".openclawssy", "agents")
-	entries, err := os.ReadDir(agentsDir)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return nil, err
-		}
-		entries = nil
-	}
-	byRunID := map[string]monitorRunRecord{}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		agentID, err := normalizeDashboardAgentID(entry.Name())
-		if err != nil {
-			continue
-		}
-		if agentFilter != "" && agentFilter != agentID {
-			continue
-		}
-		if err := h.collectMonitorRunsForAgent(filepath.Join(agentsDir, agentID, "audit", "events.jsonl"), byRunID); err != nil {
+func (h *Handler) collectMonitorRuns(ctx context.Context, limit int, agentFilter string, instanceFilter string) ([]monitorRunRecord, error) {
+	byRunKey := map[string]monitorRunRecord{}
+	for _, auditTarget := range h.listMonitorAuditTargets(agentFilter, instanceFilter) {
+		if err := h.collectMonitorRunsForAgent(auditTarget.instanceID, auditTarget.path, byRunKey); err != nil {
 			continue
 		}
 	}
-	h.reconcileMonitorRunRecords(ctx, byRunID)
-	runs := make([]monitorRunRecord, 0, len(byRunID))
-	for _, record := range byRunID {
+	h.reconcileMonitorRunRecords(ctx, byRunKey)
+	runs := make([]monitorRunRecord, 0, len(byRunKey))
+	for _, record := range byRunKey {
 		runs = append(runs, record)
 	}
 	sort.Slice(runs, func(i, j int) bool {
@@ -1669,7 +1692,71 @@ func (h *Handler) collectMonitorRuns(ctx context.Context, limit int, agentFilter
 	return runs, nil
 }
 
-func (h *Handler) collectMonitorRunsForAgent(auditPath string, byRunID map[string]monitorRunRecord) error {
+type monitorAuditTarget struct {
+	instanceID string
+	path       string
+}
+
+func (h *Handler) listMonitorAuditTargets(agentFilter string, instanceFilter string) []monitorAuditTarget {
+	targets := make([]monitorAuditTarget, 0)
+	legacyAgentsDir := filepath.Join(h.rootDir, ".openclawssy", "agents")
+	legacyEntries, err := os.ReadDir(legacyAgentsDir)
+	if err == nil {
+		for _, entry := range legacyEntries {
+			if !entry.IsDir() {
+				continue
+			}
+			agentID, agentErr := normalizeDashboardAgentID(entry.Name())
+			if agentErr != nil || (agentFilter != "" && agentFilter != agentID) || (instanceFilter != "" && instanceFilter != instances.DefaultInstanceID) {
+				continue
+			}
+			targets = append(targets, monitorAuditTarget{instanceID: instances.DefaultInstanceID, path: filepath.Join(legacyAgentsDir, agentID, "audit", "events.jsonl")})
+		}
+	}
+	instancesDir := filepath.Join(h.rootDir, ".openclawssy", "instances")
+	instanceEntries, err := os.ReadDir(instancesDir)
+	if err != nil {
+		return targets
+	}
+	legacySeen := map[string]bool{}
+	for _, target := range targets {
+		legacySeen[target.path] = true
+	}
+	for _, instanceEntry := range instanceEntries {
+		if !instanceEntry.IsDir() {
+			continue
+		}
+		instanceID := normalizeDashboardInstanceID(instanceEntry.Name())
+		if instanceFilter != "" && instanceFilter != instanceID {
+			continue
+		}
+		agentsDir := filepath.Join(instancesDir, instanceID, "agents")
+		agentEntries, agentErr := os.ReadDir(agentsDir)
+		if agentErr != nil {
+			continue
+		}
+		for _, agentEntry := range agentEntries {
+			if !agentEntry.IsDir() {
+				continue
+			}
+			agentID, normErr := normalizeDashboardAgentID(agentEntry.Name())
+			if normErr != nil || (agentFilter != "" && agentFilter != agentID) {
+				continue
+			}
+			auditPath := filepath.Join(agentsDir, agentID, "audit", "events.jsonl")
+			if instanceID == instances.DefaultInstanceID {
+				legacyPath := filepath.Join(legacyAgentsDir, agentID, "audit", "events.jsonl")
+				if legacySeen[legacyPath] {
+					continue
+				}
+			}
+			targets = append(targets, monitorAuditTarget{instanceID: instanceID, path: auditPath})
+		}
+	}
+	return targets
+}
+
+func (h *Handler) collectMonitorRunsForAgent(instanceID string, auditPath string, byRunKey map[string]monitorRunRecord) error {
 	file, err := os.Open(auditPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
@@ -1696,10 +1783,12 @@ func (h *Handler) collectMonitorRunsForAgent(auditPath string, byRunID map[strin
 				runID := strings.TrimSpace(event.RunID)
 				agentID := strings.TrimSpace(event.AgentID)
 				if runID != "" && agentID != "" {
-					record := byRunID[runID]
+					runKey := dashboardRunKey(instanceID, agentID, runID)
+					record := byRunKey[runKey]
 					record.RunID = runID
+					record.InstanceID = normalizeDashboardInstanceID(instanceID)
 					record.AgentID = agentID
-					if h.runCanceller != nil && h.runCanceller.IsTracked(runID) {
+					if h.isDashboardRunTracked(record.InstanceID, agentID, runID) {
 						record.Tracked = true
 					}
 					switch strings.TrimSpace(event.Type) {
@@ -1733,7 +1822,7 @@ func (h *Handler) collectMonitorRunsForAgent(auditPath string, byRunID map[strin
 					if record.Status == "" {
 						record.Status = "running"
 					}
-					byRunID[runID] = record
+					byRunKey[runKey] = record
 				}
 			}
 		}
@@ -1747,34 +1836,35 @@ func (h *Handler) collectMonitorRunsForAgent(auditPath string, byRunID map[strin
 	return nil
 }
 
-func (h *Handler) reconcileMonitorRunRecords(ctx context.Context, byRunID map[string]monitorRunRecord) {
-	if len(byRunID) == 0 && h.store == nil {
+func (h *Handler) reconcileMonitorRunRecords(ctx context.Context, byRunKey map[string]monitorRunRecord) {
+	if len(byRunKey) == 0 && h.store == nil {
 		return
 	}
 	now := time.Now().UTC()
 	storedRuns := h.listMonitorStoreRuns(ctx)
-	storedByID := make(map[string]httpchannel.Run, len(storedRuns))
+	storedByKey := make(map[string]httpchannel.Run, len(storedRuns))
 	for _, run := range storedRuns {
 		runID := strings.TrimSpace(run.ID)
 		if runID == "" {
 			continue
 		}
-		storedByID[runID] = run
-		if record, ok := byRunID[runID]; ok {
-			byRunID[runID] = mergeStoredRunIntoMonitorRecord(record, run)
+		runKey := dashboardRunKey(run.InstanceID, run.AgentID, runID)
+		storedByKey[runKey] = run
+		if record, ok := byRunKey[runKey]; ok {
+			byRunKey[runKey] = mergeStoredRunIntoMonitorRecord(record, run)
 		}
 	}
 
 	states := h.snapshotMonitorRunStates(now)
-	for runID, state := range states {
+	for runKey, state := range states {
 		overrideStatus := normalizeMonitorRunStatus(state.Status)
 		if overrideStatus == "" {
-			h.clearMonitorRunState(runID)
+			h.clearMonitorRunState(runKey)
 			continue
 		}
-		if record, ok := byRunID[runID]; ok {
+		if record, ok := byRunKey[runKey]; ok {
 			if isTerminalMonitorRunStatus(record.Status) {
-				h.clearMonitorRunState(runID)
+				h.clearMonitorRunState(runKey)
 				continue
 			}
 			record.Status = overrideStatus
@@ -1785,10 +1875,10 @@ func (h *Handler) reconcileMonitorRunRecords(ctx context.Context, byRunID map[st
 			if record.Error == "" && overrideStatus == "canceled" {
 				record.Error = "run canceled"
 			}
-			byRunID[runID] = record
+			byRunKey[runKey] = record
 			continue
 		}
-		run, ok := storedByID[runID]
+		run, ok := storedByKey[runKey]
 		if !ok {
 			continue
 		}
@@ -1801,11 +1891,11 @@ func (h *Handler) reconcileMonitorRunRecords(ctx context.Context, byRunID map[st
 		if record.Error == "" && overrideStatus == "canceled" {
 			record.Error = "run canceled"
 		}
-		byRunID[runID] = record
+		byRunKey[runKey] = record
 	}
 
-	for runID, record := range byRunID {
-		if shouldRetireStaleUntrackedMonitorRun(record, storedByID, now) {
+	for runKey, record := range byRunKey {
+		if shouldRetireStaleUntrackedMonitorRun(record, storedByKey, now) {
 			record.Status = "failed"
 			record.Tracked = false
 			if record.CompletedAt == "" {
@@ -1814,10 +1904,10 @@ func (h *Handler) reconcileMonitorRunRecords(ctx context.Context, byRunID map[st
 			if record.Error == "" {
 				record.Error = monitorStaleUntrackedRunError
 			}
-			byRunID[runID] = record
+			byRunKey[runKey] = record
 		}
 		if isTerminalMonitorRunStatus(record.Status) {
-			h.clearMonitorRunState(runID)
+			h.clearMonitorRunState(runKey)
 		}
 	}
 }
@@ -1849,6 +1939,7 @@ func (h *Handler) monitorRunStatusFromStore(ctx context.Context, runID string) (
 }
 
 func mergeStoredRunIntoMonitorRecord(record monitorRunRecord, run httpchannel.Run) monitorRunRecord {
+	record.InstanceID = normalizeDashboardInstanceID(firstNonEmptyString(record.InstanceID, run.InstanceID))
 	if strings.TrimSpace(record.Source) == "" {
 		record.Source = strings.TrimSpace(run.Source)
 	}
@@ -1889,6 +1980,7 @@ func mergeStoredRunIntoMonitorRecord(record monitorRunRecord, run httpchannel.Ru
 func monitorRecordFromStoredRun(run httpchannel.Run) monitorRunRecord {
 	record := monitorRunRecord{
 		RunID:         strings.TrimSpace(run.ID),
+		InstanceID:    normalizeDashboardInstanceID(run.InstanceID),
 		AgentID:       strings.TrimSpace(run.AgentID),
 		Source:        strings.TrimSpace(run.Source),
 		Role:          classifyMonitorRunRole(run.Source),
@@ -1934,7 +2026,7 @@ func isTerminalMonitorRunStatus(status string) bool {
 	}
 }
 
-func shouldRetireStaleUntrackedMonitorRun(record monitorRunRecord, storedByID map[string]httpchannel.Run, now time.Time) bool {
+func shouldRetireStaleUntrackedMonitorRun(record monitorRunRecord, storedByKey map[string]httpchannel.Run, now time.Time) bool {
 	if normalizeMonitorRunStatus(record.Status) != "running" {
 		return false
 	}
@@ -1945,7 +2037,7 @@ func shouldRetireStaleUntrackedMonitorRun(record monitorRunRecord, storedByID ma
 	if runID == "" {
 		return false
 	}
-	if _, ok := storedByID[runID]; ok {
+	if _, ok := storedByKey[dashboardRunKey(record.InstanceID, record.AgentID, runID)]; ok {
 		return false
 	}
 	startedAt, ok := parseMonitorRunTimestamp(record.StartedAt)
@@ -1989,13 +2081,13 @@ func isCanceledMonitorError(message string) bool {
 	return false
 }
 
-func (h *Handler) noteMonitorRunState(runID, status string) {
+func (h *Handler) noteMonitorRunState(instanceID, agentID, runID, status string) {
 	if h == nil {
 		return
 	}
-	runID = strings.TrimSpace(runID)
+	runKey := dashboardRunKey(instanceID, agentID, runID)
 	status = normalizeMonitorRunStatus(status)
-	if runID == "" || status == "" {
+	if runKey == "" || status == "" {
 		return
 	}
 	h.monitorRunMu.Lock()
@@ -2003,20 +2095,20 @@ func (h *Handler) noteMonitorRunState(runID, status string) {
 	if h.monitorRuns == nil {
 		h.monitorRuns = make(map[string]monitorRunState)
 	}
-	h.monitorRuns[runID] = monitorRunState{Status: status, UpdatedAt: time.Now().UTC()}
+	h.monitorRuns[runKey] = monitorRunState{InstanceID: normalizeDashboardInstanceID(instanceID), AgentID: strings.TrimSpace(agentID), Status: status, UpdatedAt: time.Now().UTC()}
 }
 
-func (h *Handler) clearMonitorRunState(runID string) {
+func (h *Handler) clearMonitorRunState(runKey string) {
 	if h == nil {
 		return
 	}
-	runID = strings.TrimSpace(runID)
-	if runID == "" {
+	runKey = strings.TrimSpace(runKey)
+	if runKey == "" {
 		return
 	}
 	h.monitorRunMu.Lock()
 	defer h.monitorRunMu.Unlock()
-	delete(h.monitorRuns, runID)
+	delete(h.monitorRuns, runKey)
 }
 
 func (h *Handler) snapshotMonitorRunStates(now time.Time) map[string]monitorRunState {
@@ -2037,6 +2129,84 @@ func (h *Handler) snapshotMonitorRunStates(now time.Time) map[string]monitorRunS
 		out[runID] = state
 	}
 	return out
+}
+
+func normalizeDashboardRuns(runs []httpchannel.Run) []httpchannel.Run {
+	out := make([]httpchannel.Run, 0, len(runs))
+	for _, run := range runs {
+		run.InstanceID = normalizeDashboardInstanceID(run.InstanceID)
+		out = append(out, run)
+	}
+	return out
+}
+
+func normalizeDashboardInstanceID(instanceID string) string {
+	trimmed := strings.TrimSpace(instanceID)
+	if trimmed == "" {
+		return instances.DefaultInstanceID
+	}
+	return trimmed
+}
+
+func dashboardRunKey(instanceID, agentID, runID string) string {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return ""
+	}
+	return normalizeDashboardInstanceID(instanceID) + ":" + strings.TrimSpace(agentID) + ":" + runID
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func (h *Handler) isDashboardRunTracked(instanceID, agentID, runID string) bool {
+	if h == nil || h.runCanceller == nil {
+		return false
+	}
+	if composite, ok := h.runCanceller.(dashboardCompositeRunCanceller); ok && instanceID != "" && agentID != "" {
+		if composite.IsTrackedComposite(instanceID, agentID, runID) {
+			return true
+		}
+	}
+	return h.runCanceller.IsTracked(runID)
+}
+
+func (h *Handler) resolveDashboardRunIdentity(ctx context.Context, runID, instanceID, agentID string) (string, string) {
+	resolvedInstanceID := strings.TrimSpace(instanceID)
+	resolvedAgentID := strings.TrimSpace(agentID)
+	if h != nil && h.store != nil {
+		if run, err := h.store.Get(ctx, strings.TrimSpace(runID)); err == nil {
+			if resolvedInstanceID == "" {
+				resolvedInstanceID = strings.TrimSpace(run.InstanceID)
+			}
+			if resolvedAgentID == "" {
+				resolvedAgentID = strings.TrimSpace(run.AgentID)
+			}
+		}
+	}
+	if resolvedAgentID == "" && h != nil {
+		if runs, err := h.collectMonitorRuns(ctx, 500, "", ""); err == nil {
+			for _, run := range runs {
+				if strings.TrimSpace(run.RunID) != strings.TrimSpace(runID) {
+					continue
+				}
+				if resolvedAgentID == "" {
+					resolvedAgentID = strings.TrimSpace(run.AgentID)
+				}
+				if resolvedInstanceID == "" {
+					resolvedInstanceID = strings.TrimSpace(run.InstanceID)
+				}
+				break
+			}
+		}
+	}
+	return normalizeDashboardInstanceID(resolvedInstanceID), resolvedAgentID
 }
 
 func firstStringFromMap(values map[string]any, keys ...string) string {
@@ -2647,6 +2817,25 @@ func (h *Handler) readAgentDoc(agentID, name string) (agentDocPayload, error) {
 		return agentDocPayload{}, errors.New("unsupported document name")
 	}
 	docPath := filepath.Join(h.rootDir, ".openclawssy", "agents", agentID, resolvedName)
+	raw, err := os.ReadFile(docPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return agentDocPayload{Name: displayName, ResolvedName: resolvedName, AliasFor: aliasFor, Exists: false}, nil
+		}
+		return agentDocPayload{}, errors.New("failed to read agent document")
+	}
+	return agentDocPayload{Name: displayName, ResolvedName: resolvedName, AliasFor: aliasFor, Content: string(raw), Exists: true}, nil
+}
+
+func (h *Handler) readAgentDocInInstance(instanceID, agentID, name string) (agentDocPayload, error) {
+	displayName, resolvedName, aliasFor, ok := resolveDashboardDocNames(name)
+	if !ok {
+		return agentDocPayload{}, errors.New("unsupported document name")
+	}
+	docPath, err := instances.AgentDocPath(h.rootDir, instanceID, agentID, resolvedName)
+	if err != nil {
+		return agentDocPayload{}, errors.New("failed to resolve agent document path")
+	}
 	raw, err := os.ReadFile(docPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

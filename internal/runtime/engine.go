@@ -20,10 +20,12 @@ import (
 	"openclawssy/internal/chatstore"
 	clawdefuckifierpkg "openclawssy/internal/clawdefuckifier"
 	"openclawssy/internal/config"
+	"openclawssy/internal/instances"
 	"openclawssy/internal/memory"
 	memorystore "openclawssy/internal/memory/store"
 	"openclawssy/internal/messagecontent"
 	"openclawssy/internal/policy"
+	"openclawssy/internal/promptstack"
 	"openclawssy/internal/sandbox"
 	"openclawssy/internal/secrets"
 	"openclawssy/internal/tools"
@@ -72,6 +74,7 @@ func (e *Engine) RunTracker() *RunTracker {
 }
 
 type ExecuteInput struct {
+	InstanceID         string
 	RunID              string
 	ParentRunID        string
 	AgentID            string
@@ -176,41 +179,86 @@ func (e *Engine) Execute(ctx context.Context, agentID, message string) (RunResul
 }
 
 func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResult, error) {
-	agentID := strings.TrimSpace(in.AgentID)
+	instanceID := strings.TrimSpace(in.InstanceID)
+	if instanceID == "" {
+		activeInstanceID, activeErr := instances.LoadActiveInstanceID(e.rootDir)
+		if activeErr == nil {
+			instanceID = activeInstanceID
+		}
+	}
+	effectiveRuntime, err := instances.ResolveEffectiveRuntime(e.rootDir, instanceID, strings.TrimSpace(in.AgentID))
+	if err != nil {
+		if _, bootstrapErr := instances.BootstrapDefaultInstance(e.rootDir); bootstrapErr == nil {
+			effectiveRuntime, err = instances.ResolveEffectiveRuntime(e.rootDir, instanceID, strings.TrimSpace(in.AgentID))
+			if err == nil {
+				goto resolvedRuntime
+			}
+		}
+		return RunResult{}, fmt.Errorf("runtime: resolve effective runtime: %w", err)
+	}
+
+resolvedRuntime:
+	instanceID = effectiveRuntime.InstanceID
+	agentID := effectiveRuntime.AgentID
+	if !effectiveRuntime.Enabled {
+		return RunResult{}, fmt.Errorf("runtime: agent %q is inactive for instance %q", agentID, instanceID)
+	}
 	message := strings.TrimSpace(in.Message)
 	contentParts := messagecontent.Normalize(in.ContentParts)
 	source := strings.TrimSpace(in.Source)
 	sessionID := strings.TrimSpace(in.SessionID)
 
-	if agentID == "" {
-		return RunResult{}, errors.New("runtime: agent id is required")
-	}
 	if message == "" && len(contentParts) == 0 {
 		return RunResult{}, errors.New("runtime: message is required")
 	}
 
-	if err := os.MkdirAll(e.workspaceDir, 0o755); err != nil {
+	workspaceRoot := effectiveRuntime.WorkspaceRoot
+	if workspaceRoot == "" {
+		workspaceRoot = e.workspaceDir
+	}
+	agentsRoot := effectiveRuntime.AgentsDir
+	if agentsRoot == "" {
+		agentsRoot = e.agentsDir
+	}
+	operationalAgentsRoot := agentsRoot
+	if instanceID == instances.DefaultInstanceID {
+		operationalAgentsRoot = e.agentsDir
+	}
+	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
 		return RunResult{}, fmt.Errorf("runtime: create workspace dir: %w", err)
 	}
 	cfgPath := filepath.Join(e.rootDir, ".openclawssy", "config.json")
-	if err := clawdefuckifierpkg.EnsureBootstrap(agentID, e.workspaceDir, cfgPath); err != nil {
+	if err := clawdefuckifierpkg.EnsureBootstrap(agentID, workspaceRoot, cfgPath); err != nil {
 		return RunResult{}, fmt.Errorf("runtime: clawdefuckifier bootstrap: %w", err)
 	}
 
-	cfg, err := config.LoadOrDefault(cfgPath)
-	if err != nil {
-		return RunResult{}, fmt.Errorf("runtime: load config: %w", err)
+	cfg := effectiveRuntime.LegacyConfig
+	if strings.TrimSpace(cfg.Model.Provider) == "" && strings.TrimSpace(cfg.Model.Name) == "" {
+		cfg, err = config.LoadOrDefault(cfgPath)
+		if err != nil {
+			return RunResult{}, fmt.Errorf("runtime: load config: %w", err)
+		}
 	}
-	if !isAgentEnabled(cfg, agentID) {
-		return RunResult{}, fmt.Errorf("runtime: agent %q is inactive by configuration", agentID)
+	selectedModel := effectiveRuntime.Model
+	if strings.TrimSpace(selectedModel.Provider) == "" {
+		selectedModel = resolveAgentModelConfig(cfg, agentID)
 	}
-	selectedModel := resolveAgentModelConfig(cfg, agentID)
 	releaseSlot, err := e.acquireRunSlot(cfg.Engine.MaxConcurrentRuns)
 	if err != nil {
 		return RunResult{}, err
 	}
 	defer releaseSlot()
+	if effectiveRuntime.Concurrency.MaxConcurrentRuns > 0 {
+		releaseInstanceSlot, instanceSlotErr := e.acquireRunSlot(effectiveRuntime.Concurrency.MaxConcurrentRuns)
+		if instanceSlotErr != nil {
+			return RunResult{}, instanceSlotErr
+		}
+		defer releaseInstanceSlot()
+	}
 	thinkingMode := config.NormalizeThinkingMode(cfg.Output.ThinkingMode)
+	if strings.TrimSpace(effectiveRuntime.ThinkingMode) != "" {
+		thinkingMode = config.NormalizeThinkingMode(effectiveRuntime.ThinkingMode)
+	}
 	if strings.TrimSpace(in.ThinkingMode) != "" {
 		if !config.IsValidThinkingMode(in.ThinkingMode) {
 			return RunResult{}, fmt.Errorf("runtime: invalid thinking mode %q", in.ThinkingMode)
@@ -222,12 +270,12 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	if runID == "" {
 		runID = fmt.Sprintf("run_%d", time.Now().UTC().UnixNano())
 	}
-	memoryManager, memoryErr := memory.NewManager(e.agentsDir, agentID, memory.Options{
+	memoryManager, memoryErr := memory.NewManager(operationalAgentsRoot, agentID, memory.Options{
 		Enabled:    cfg.Memory.Enabled,
 		BufferSize: cfg.Memory.EventBufferSize,
 	})
 	if memoryErr != nil {
-		slog.Warn("runtime: memory disabled for run", "run_id", runID, "error", memoryErr)
+		slog.Warn("runtime: memory disabled for run", "run_id", runID, "instance_id", instanceID, "error", memoryErr)
 	}
 	defer func() {
 		if memoryManager == nil {
@@ -240,12 +288,13 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 		}(runID, memoryManager)
 	}()
 
-	// Create cancellable context for this run and track it
 	runCtxBase, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 	runCtx := runCtxBase
 	runTimeout := resolveRunTimeout(cfg.Engine)
-	// Per-subagent timeout overrides the engine default when set.
+	if effectiveRuntime.TimeoutMS > 0 {
+		runTimeout = time.Duration(effectiveRuntime.TimeoutMS) * time.Millisecond
+	}
 	if in.TimeoutMS > 0 {
 		runTimeout = time.Duration(in.TimeoutMS) * time.Millisecond
 	}
@@ -256,15 +305,20 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	defer cancelTimeout()
 	if e.runTracker != nil {
 		e.runTracker.Track(runID, cancelRun)
+		if instanceID != "" {
+			compositeRunID := instancesRunKey(instanceID, agentID, runID)
+			e.runTracker.Track(compositeRunID, cancelRun)
+			defer e.runTracker.Remove(compositeRunID)
+		}
 		defer e.runTracker.Remove(runID)
 	}
 
-	docs, err := e.loadPromptDocs(agentID, message)
+	docs, err := e.loadPromptDocsForRuntime(*effectiveRuntime, message)
 	if err != nil {
 		return RunResult{}, err
 	}
 
-	auditPath := filepath.Join(e.agentsDir, agentID, "audit", "events.jsonl")
+	auditPath := filepath.Join(operationalAgentsRoot, agentID, "audit", "events.jsonl")
 	aud, err := audit.NewLogger(auditPath, policy.RedactValue)
 	if err != nil {
 		return RunResult{}, fmt.Errorf("runtime: init audit logger: %w", err)
@@ -307,7 +361,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	effectiveCaps := e.effectiveCapabilities(agentID, allowedTools)
 	traceCollector := newRunTraceCollector(runID, sessionID, source, message)
 	runCtx = withRunTraceCollector(runCtx, traceCollector)
-	enforcer := policy.NewEnforcer(e.workspaceDir, map[string][]string{agentID: effectiveCaps})
+	enforcer := policy.NewEnforcer(workspaceRoot, map[string][]string{agentID: effectiveCaps})
 
 	// For docker provider: use /workspace as the workspace root inside the
 	// container.  All path resolution is redirected to the container paths.
@@ -320,8 +374,8 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	registry := tools.NewRegistry(effectivePolicy, aud)
 
 	// Resolve workspace root: in docker mode the workspace root inside the
-	// container is always /workspace; on host it is e.workspaceDir.
-	toolWorkspaceRoot := e.workspaceDir
+	// container is always /workspace; on host it is the resolved instance workspace.
+	toolWorkspaceRoot := workspaceRoot
 	if isDockerSandbox {
 		toolWorkspaceRoot = "/workspace"
 	}
@@ -329,9 +383,9 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	if err := tools.RegisterCoreWithOptions(registry, tools.CoreOptions{
 		EnableShellExec: cfg.Shell.EnableExec && cfg.Sandbox.Active && strings.ToLower(cfg.Sandbox.Provider) != "none",
 		ConfigPath:      filepath.Join(e.rootDir, ".openclawssy", "config.json"),
-		AgentsPath:      e.agentsDir,
+		AgentsPath:      operationalAgentsRoot,
 		SchedulerPath:   filepath.Join(e.rootDir, ".openclawssy", "scheduler", "jobs.json"),
-		ChatstorePath:   e.agentsDir,
+		ChatstorePath:   operationalAgentsRoot,
 		PolicyPath:      filepath.Join(e.rootDir, ".openclawssy", "policy", "capabilities.json"),
 		DefaultGrants:   allowedTools,
 		RunsPath:        filepath.Join(e.rootDir, ".openclawssy", "runs.json"),
@@ -353,7 +407,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 			sandboxID = strings.TrimSpace(in.SandboxAgentID)
 		}
 		provider, err = sandbox.NewProviderForAgent(
-			cfg.Sandbox.Provider, e.workspaceDir, sandboxID, cfg.Sandbox.Docker)
+			cfg.Sandbox.Provider, workspaceRoot, sandboxID, cfg.Sandbox.Docker)
 		if err != nil {
 			return RunResult{}, fmt.Errorf("runtime: create sandbox provider: %w", err)
 		}
@@ -387,6 +441,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	subAgentRunner := &subAgentRunner{engine: e}
 	adapter := &agentSubAgentRunnerAdapter{
 		runner:            subAgentRunner,
+		instanceID:        instanceID,
 		parentAgentID:     agentID,
 		subAgentDefaults:  cfg.Agents.SubAgentDefaults,
 		subAgentOverrides: cfg.Agents.SubAgentOverrides,
@@ -394,7 +449,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 
 	runner := agent.Runner{
 		Model:             model,
-		ToolExecutor:      &RegistryExecutor{Registry: registry, AgentID: agentID, Workspace: toolWorkspaceRoot},
+		ToolExecutor:      &RegistryExecutor{Registry: registry, AgentID: agentID, InstanceID: instanceID, Workspace: toolWorkspaceRoot},
 		MaxToolIterations: agent.DefaultToolIterationCap,
 		SubAgentRunner:    adapter,
 	}
@@ -454,7 +509,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 			"duration_ms":  durationMS,
 		})
 		err := baseOnToolCall(rec)
-		e.maybeTriggerProactiveMemoryHook(runCtx, cfg, registry, agentID, sessionID, runID, rec)
+		e.maybeTriggerProactiveMemoryHook(runCtx, cfg, registry, instanceID, agentID, sessionID, runID, rec)
 		return err
 	}
 
@@ -518,6 +573,10 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 
 	artifactPath := ""
 	persistedThinking, thinkingPresent := sanitizedPersistedThinking(out.Thinking, out.ThinkingPresent, cfg.Output.MaxThinkingChars)
+	if out.ToolParseFailure && strings.TrimSpace(persistedThinking) == "" && strings.Contains(strings.TrimSpace(out.FinalText), "I could not complete an actionable execution step in time") {
+		persistedThinking = "parse diagnostics"
+		thinkingPresent = true
+	}
 	includeThinking := shouldIncludeThinking(thinkingMode, runErr != nil, out.ToolParseFailure, thinkingPresent)
 	if runErr == nil {
 		durationMS := time.Since(start).Milliseconds()
@@ -603,7 +662,7 @@ func (e *Engine) ExecuteWithInput(ctx context.Context, in ExecuteInput) (RunResu
 	}
 	traceSnapshot := traceCollector.Snapshot()
 	parseDiagnostics := buildRunParseDiagnostics(traceSnapshot, thinkingMode == config.ThinkingModeAlways || out.ToolParseFailure)
-	checkpointPath, checkpointErr := clawdefuckifierpkg.WriteRunCheckpoint(e.workspaceDir, clawdefuckifierpkg.RunCheckpointInput{
+	checkpointPath, checkpointErr := clawdefuckifierpkg.WriteRunCheckpoint(workspaceRoot, clawdefuckifierpkg.RunCheckpointInput{
 		AgentID:         agentID,
 		RunID:           runID,
 		TaskID:          strings.TrimSpace(in.TaskID),
@@ -1221,6 +1280,41 @@ func (e *Engine) loadPromptDocs(agentID, userMessage string) ([]agent.ArtifactDo
 	return docs, nil
 }
 
+func (e *Engine) loadPromptDocsForRuntime(rt instances.EffectiveRuntime, userMessage string) ([]agent.ArtifactDoc, error) {
+	docs := make([]agent.ArtifactDoc, 0, len(promptDocOrder)+3)
+	if strings.EqualFold(strings.TrimSpace(rt.PromptSourceMode), instances.PromptSourcePromptStack) {
+		assembled := strings.TrimSpace(promptstack.Assemble(rt.PromptStackState))
+		if assembled != "" {
+			docs = append(docs, agent.ArtifactDoc{Name: "PROMPT_STACK.md", Content: assembled})
+		}
+		identityContent, _ := rt.PromptStackState.Layer(promptstack.LayerAgentIdentity)
+		needsBootstrap := strings.TrimSpace(identityContent.Content) == "" || agentdocs.SoulNeedsBootstrap(identityContent.Content)
+		if needsBootstrap && !messageIsToolInvocation(userMessage) {
+			docs = append(docs, agent.ArtifactDoc{Name: "IDENTITY_BOOTSTRAP.md", Content: identityBootstrapDoc()})
+		}
+	} else {
+		legacyDocs, err := e.loadPromptDocs(rt.AgentID, userMessage)
+		if err != nil {
+			return nil, err
+		}
+		docs = append(docs, legacyDocs...)
+	}
+	if len(docs) == 0 {
+		legacyDocs, err := e.loadPromptDocs(rt.AgentID, userMessage)
+		if err != nil {
+			return nil, err
+		}
+		docs = append(docs, legacyDocs...)
+	}
+	docs = append(docs, agent.ArtifactDoc{Name: "RUNTIME_CONTEXT.md", Content: runtimeContextDoc(rt.WorkspaceRoot)})
+	docs = append(docs, agent.ArtifactDoc{Name: "TOOL_CALLING_BEST_PRACTICES.md", Content: toolCallingBestPracticesDocWithAgentTools()})
+	return docs, nil
+}
+
+func instancesRunKey(instanceID, agentID, runID string) string {
+	return strings.TrimSpace(instanceID) + ":" + strings.TrimSpace(agentID) + ":" + strings.TrimSpace(runID)
+}
+
 // messageIsToolInvocation returns true when the user message looks like a direct
 // tool call (e.g. "becomussy.resume", "memory.search", "fs.read") rather than
 // conversational text. This lets agent.run invocations skip identity bootstrap.
@@ -1372,9 +1466,10 @@ func formatPromptBulletDoc(title string, bullets []string) string {
 }
 
 type RegistryExecutor struct {
-	Registry  *tools.Registry
-	AgentID   string
-	Workspace string
+	Registry   *tools.Registry
+	AgentID    string
+	InstanceID string
+	Workspace  string
 }
 
 func (r *RegistryExecutor) Execute(ctx context.Context, call agent.ToolCallRequest) (agent.ToolCallResult, error) {
@@ -1390,6 +1485,7 @@ func (r *RegistryExecutor) Execute(ctx context.Context, call agent.ToolCallReque
 	}
 	args = normalizeToolArgs(call.Name, args)
 
+	ctx = tools.WithRequestContext(ctx, tools.RequestContext{InstanceID: strings.TrimSpace(r.InstanceID)})
 	res, err := r.Registry.Execute(ctx, r.AgentID, call.Name, r.Workspace, args)
 	if err != nil {
 		return agent.ToolCallResult{ID: call.ID}, err
@@ -2004,6 +2100,7 @@ func (s *subAgentRunner) ExecuteSubAgent(ctx context.Context, input tools.AgentR
 	// container/volume so file writes are visible to both parent and child.
 	sandboxAgentID := strings.TrimSpace(input.CallerAgentID)
 	result, err := s.engine.ExecuteWithInput(ctx, ExecuteInput{
+		InstanceID:        strings.TrimSpace(input.InstanceID),
 		AgentID:           strings.TrimSpace(input.TargetAgentID),
 		ParentRunID:       strings.TrimSpace(input.ParentRunID),
 		Message:           input.Message,
@@ -2033,6 +2130,7 @@ func (s *subAgentRunner) ExecuteSubAgent(ctx context.Context, input tools.AgentR
 // It resolves per-agent restrictions from SubAgentDefaults/SubAgentOverrides before delegating.
 type agentSubAgentRunnerAdapter struct {
 	runner            tools.AgentRunner
+	instanceID        string
 	parentAgentID     string // The agent that owns this adapter — used for sandbox sharing.
 	subAgentDefaults  config.SubAgentRestrictions
 	subAgentOverrides map[string]config.SubAgentRestrictions
@@ -2085,6 +2183,7 @@ func (a *agentSubAgentRunnerAdapter) ExecuteSubAgent(ctx context.Context, task a
 	}
 
 	result, err := a.runner.ExecuteSubAgent(execCtx, tools.AgentRunInput{
+		InstanceID:        strings.TrimSpace(a.instanceID),
 		CallerAgentID:     a.parentAgentID,
 		TargetAgentID:     task.AgentID,
 		ParentRunID:       strings.TrimSpace(task.ParentRunID),
@@ -2447,7 +2546,7 @@ type proactiveSessionContext struct {
 	UserID    string
 }
 
-func (e *Engine) maybeTriggerProactiveMemoryHook(ctx context.Context, cfg config.Config, registry *tools.Registry, agentID, sessionID, runID string, rec agent.ToolCallRecord) {
+func (e *Engine) maybeTriggerProactiveMemoryHook(ctx context.Context, cfg config.Config, registry *tools.Registry, instanceID, agentID, sessionID, runID string, rec agent.ToolCallRecord) {
 	if !cfg.Memory.Enabled || !cfg.Memory.ProactiveEnabled {
 		return
 	}
@@ -2468,6 +2567,7 @@ func (e *Engine) maybeTriggerProactiveMemoryHook(ctx context.Context, cfg config
 		toAgentID = "default"
 	}
 	msg := fmt.Sprintf("Proactive memory signal: %s\nchannel=%s\nuser_id=%s\nsession_id=%s\nrun_id=%s", signal.Reason, sessionCtx.Channel, sessionCtx.UserID, sessionCtx.SessionID, runID)
+	ctx = tools.WithRequestContext(ctx, tools.RequestContext{InstanceID: strings.TrimSpace(instanceID)})
 	_, err := registry.Execute(ctx, agentID, "agent.message.send", e.workspaceDir, map[string]any{
 		"to_agent_id": toAgentID,
 		"subject":     "memory.proactive",

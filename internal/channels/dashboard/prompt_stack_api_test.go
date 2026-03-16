@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	httpchannel "openclawssy/internal/channels/http"
+	"openclawssy/internal/config"
+	"openclawssy/internal/instances"
 	"openclawssy/internal/promptstack"
 )
 
@@ -234,11 +236,11 @@ func TestPromptStackLintAndTestEndpoints(t *testing.T) {
 func TestPromptStackStoreReusesSharedVersionStore(t *testing.T) {
 	h := New(t.TempDir(), httpchannel.NewInMemoryRunStore())
 
-	first, err := h.promptStackStore()
+	first, err := h.promptStackStore(instances.DefaultInstanceID)
 	if err != nil {
 		t.Fatalf("first promptStackStore() error = %v", err)
 	}
-	second, err := h.promptStackStore()
+	second, err := h.promptStackStore(instances.DefaultInstanceID)
 	if err != nil {
 		t.Fatalf("second promptStackStore() error = %v", err)
 	}
@@ -335,6 +337,88 @@ func TestPromptStackConcurrentUpdateAndRollbackMaintainMonotonicHistory(t *testi
 			t.Fatalf("expected monotonic version %d at index %d, got %d", wantVersion, i, layer.Version)
 		}
 	}
+}
+
+func TestInstanceScopedPromptStackRoutesIsolateSameAgentID(t *testing.T) {
+	root := t.TempDir()
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	for _, instanceID := range []string{"alpha", "beta"} {
+		instance := buildDashboardInstanceOrPanic(t, instanceBuildInput{ID: instanceID, Name: strings.ToUpper(instanceID), Config: config.Default()})
+		if err := h.saveProjectedInstance(instance); err != nil {
+			t.Fatalf("save projected instance %s: %v", instanceID, err)
+		}
+	}
+
+	alphaReq := httptest.NewRequest(http.MethodPut, "/api/admin/instances/alpha/agents/default/prompt-stack/agent_identity", bytes.NewBufferString(`{"content":"alpha identity"}`))
+	alphaReq.Header.Set("Content-Type", "application/json")
+	alphaRR := httptest.NewRecorder()
+	mux.ServeHTTP(alphaRR, alphaReq)
+	if alphaRR.Code != http.StatusOK {
+		t.Fatalf("expected alpha PUT status 200, got %d (%s)", alphaRR.Code, alphaRR.Body.String())
+	}
+
+	betaReq := httptest.NewRequest(http.MethodPut, "/api/admin/instances/beta/agents/default/prompt-stack/agent_identity", bytes.NewBufferString(`{"content":"beta identity"}`))
+	betaReq.Header.Set("Content-Type", "application/json")
+	betaRR := httptest.NewRecorder()
+	mux.ServeHTTP(betaRR, betaReq)
+	if betaRR.Code != http.StatusOK {
+		t.Fatalf("expected beta PUT status 200, got %d (%s)", betaRR.Code, betaRR.Body.String())
+	}
+
+	alphaGet := httptest.NewRecorder()
+	mux.ServeHTTP(alphaGet, httptest.NewRequest(http.MethodGet, "/api/admin/instances/alpha/agents/default/prompt-stack", nil))
+	if alphaGet.Code != http.StatusOK {
+		t.Fatalf("expected alpha GET status 200, got %d (%s)", alphaGet.Code, alphaGet.Body.String())
+	}
+	betaGet := httptest.NewRecorder()
+	mux.ServeHTTP(betaGet, httptest.NewRequest(http.MethodGet, "/api/admin/instances/beta/agents/default/prompt-stack", nil))
+	if betaGet.Code != http.StatusOK {
+		t.Fatalf("expected beta GET status 200, got %d (%s)", betaGet.Code, betaGet.Body.String())
+	}
+
+	var alphaPayload struct {
+		InstanceID string                    `json:"instance_id"`
+		Layers     []promptstack.PromptLayer `json:"layers"`
+	}
+	if err := json.Unmarshal(alphaGet.Body.Bytes(), &alphaPayload); err != nil {
+		t.Fatalf("decode alpha response: %v", err)
+	}
+	var betaPayload struct {
+		InstanceID string                    `json:"instance_id"`
+		Layers     []promptstack.PromptLayer `json:"layers"`
+	}
+	if err := json.Unmarshal(betaGet.Body.Bytes(), &betaPayload); err != nil {
+		t.Fatalf("decode beta response: %v", err)
+	}
+	if alphaPayload.InstanceID != "alpha" || betaPayload.InstanceID != "beta" {
+		t.Fatalf("unexpected instance ids: alpha=%q beta=%q", alphaPayload.InstanceID, betaPayload.InstanceID)
+	}
+	alphaLayers := map[string]promptstack.PromptLayer{}
+	for _, layer := range alphaPayload.Layers {
+		alphaLayers[layer.LayerID] = layer
+	}
+	betaLayers := map[string]promptstack.PromptLayer{}
+	for _, layer := range betaPayload.Layers {
+		betaLayers[layer.LayerID] = layer
+	}
+	if alphaLayers[promptstack.LayerAgentIdentity].Content != "alpha identity" {
+		t.Fatalf("expected alpha identity isolation, got %q", alphaLayers[promptstack.LayerAgentIdentity].Content)
+	}
+	if betaLayers[promptstack.LayerAgentIdentity].Content != "beta identity" {
+		t.Fatalf("expected beta identity isolation, got %q", betaLayers[promptstack.LayerAgentIdentity].Content)
+	}
+}
+
+func buildDashboardInstanceOrPanic(t *testing.T, input instanceBuildInput) dashboardInstance {
+	t.Helper()
+	instance, err := buildDashboardInstance(input)
+	if err != nil {
+		t.Fatalf("build dashboard instance: %v", err)
+	}
+	return instance
 }
 
 func strconvQuote(value string) string {

@@ -21,6 +21,7 @@ var (
 
 type VersionStore struct {
 	controlPlaneDir string
+	instanceID      string
 	nowFn           func() time.Time
 	mu              sync.Mutex
 }
@@ -30,13 +31,18 @@ type storedLayerHistory struct {
 	History []PromptLayer `json:"history"`
 }
 
-func NewVersionStore(controlPlaneDir string) (*VersionStore, error) {
+func NewVersionStore(controlPlaneDir string, instanceID ...string) (*VersionStore, error) {
 	trimmed := strings.TrimSpace(controlPlaneDir)
 	if trimmed == "" {
 		return nil, errors.New("promptstack: control plane directory is required")
 	}
+	resolvedInstanceID := ""
+	if len(instanceID) > 0 {
+		resolvedInstanceID = strings.TrimSpace(instanceID[0])
+	}
 	return &VersionStore{
 		controlPlaneDir: trimmed,
+		instanceID:      resolvedInstanceID,
 		nowFn:           time.Now,
 	}, nil
 }
@@ -278,6 +284,9 @@ func (s *VersionStore) writeLayerHistoryLocked(agentID, layerID string, history 
 }
 
 func (s *VersionStore) layerPath(agentID, layerID string) string {
+	if strings.TrimSpace(s.instanceID) != "" {
+		return filepath.Join(s.controlPlaneDir, "instances", s.instanceID, "agents", agentID, "promptstack", layerID+".json")
+	}
 	return filepath.Join(s.controlPlaneDir, "agents", agentID, "promptstack", layerID+".json")
 }
 

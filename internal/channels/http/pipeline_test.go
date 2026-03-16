@@ -628,3 +628,188 @@ func TestQueueRunPassesCreatedRunIDToExecutorInput(t *testing.T) {
 		t.Fatalf("expected executor input run id %q, got %q", queued.ID, exec.lastInput.RunID)
 	}
 }
+
+func TestQueueRunPersistsAndPassesInstanceID(t *testing.T) {
+	store := NewInMemoryRunStore()
+	exec := &captureInputExecutor{}
+
+	queued, err := QueueRunWithOptions(
+		context.Background(),
+		store,
+		exec,
+		"agent-1",
+		"hello",
+		nil,
+		"dashboard",
+		"chat_123",
+		"",
+		QueueRunOptions{InstanceID: "instance-a"},
+	)
+	if err != nil {
+		t.Fatalf("queue run: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		run, getErr := store.Get(context.Background(), queued.ID)
+		if getErr != nil {
+			t.Fatalf("get run: %v", getErr)
+		}
+		if run.Status == "completed" {
+			if run.InstanceID != "instance-a" {
+				t.Fatalf("expected persisted instance_id instance-a, got %q", run.InstanceID)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run did not complete in time, last status=%q", run.Status)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	exec.mu.Lock()
+	defer exec.mu.Unlock()
+	if exec.lastInput.InstanceID != "instance-a" {
+		t.Fatalf("expected executor input instance_id instance-a, got %q", exec.lastInput.InstanceID)
+	}
+}
+
+func TestQueueRunTracksCompositeIdentity(t *testing.T) {
+	store := NewInMemoryRunStore()
+	release := make(chan struct{})
+	tracker := NewActiveRunTracker()
+
+	queued, err := QueueRunWithOptions(
+		context.Background(),
+		store,
+		blockingExecutor{release: release},
+		"agent-1",
+		"hello",
+		nil,
+		"dashboard",
+		"chat_123",
+		"",
+		QueueRunOptions{InstanceID: "instance-a", Tracker: tracker},
+	)
+	if err != nil {
+		t.Fatalf("queue run: %v", err)
+	}
+	if !tracker.IsTracked(queued.ID) {
+		t.Fatalf("expected bare run tracking for %q", queued.ID)
+	}
+	if !tracker.IsTrackedComposite("instance-a", "agent-1", queued.ID) {
+		t.Fatalf("expected composite run tracking for instance-a:agent-1:%s", queued.ID)
+	}
+
+	close(release)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := WaitForQueuedRuns(ctx); err != nil {
+		t.Fatalf("wait for queued runs: %v", err)
+	}
+	if tracker.IsTracked(queued.ID) {
+		t.Fatalf("expected bare tracking removed for %q", queued.ID)
+	}
+	if tracker.IsTrackedComposite("instance-a", "agent-1", queued.ID) {
+		t.Fatalf("expected composite tracking removed for instance-a:agent-1:%s", queued.ID)
+	}
+}
+
+func TestQueueRunCanCancelViaCompositeIdentity(t *testing.T) {
+	store := NewInMemoryRunStore()
+	eventBus := NewRunEventBus(16)
+	tracker := NewActiveRunTracker()
+	exec := cancelFallbackExecutor{started: make(chan struct{})}
+
+	queued, err := QueueRunWithOptions(
+		context.Background(),
+		store,
+		exec,
+		"agent-1",
+		"cancel me",
+		nil,
+		"dashboard",
+		"chat_123",
+		"",
+		QueueRunOptions{InstanceID: "instance-a", EventBus: eventBus, Tracker: tracker},
+	)
+	if err != nil {
+		t.Fatalf("queue run: %v", err)
+	}
+
+	select {
+	case <-exec.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for executor to start")
+	}
+
+	if err := tracker.CancelComposite("instance-a", "agent-1", queued.ID); err != nil {
+		t.Fatalf("cancel composite run: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := WaitForQueuedRuns(ctx); err != nil {
+		t.Fatalf("wait for queued runs: %v", err)
+	}
+
+	run, err := store.Get(context.Background(), queued.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if run.Status != "canceled" {
+		t.Fatalf("expected canceled status, got %+v", run)
+	}
+}
+
+func TestQueueRunPublishesInstanceAwareEvents(t *testing.T) {
+	store := NewInMemoryRunStore()
+	eventBus := NewRunEventBus(16)
+
+	queued, err := QueueRunWithOptions(
+		context.Background(),
+		store,
+		traceExecutor{result: ExecutionResult{Output: "ok"}},
+		"agent-7",
+		"hello",
+		nil,
+		"dashboard",
+		"chat_123",
+		"",
+		QueueRunOptions{InstanceID: "instance-z", EventBus: eventBus},
+	)
+	if err != nil {
+		t.Fatalf("queue run: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		run, getErr := store.Get(context.Background(), queued.ID)
+		if getErr != nil {
+			t.Fatalf("get run: %v", getErr)
+		}
+		if run.Status == "completed" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	ch, unsubscribe := eventBus.Subscribe(queued.ID, 0)
+	defer unsubscribe()
+	seen := false
+	for event := range ch {
+		if event.Type != RunEventCompleted {
+			continue
+		}
+		seen = true
+		if event.InstanceID != "instance-z" {
+			t.Fatalf("expected event instance_id instance-z, got %q", event.InstanceID)
+		}
+		if event.AgentID != "agent-7" {
+			t.Fatalf("expected event agent_id agent-7, got %q", event.AgentID)
+		}
+	}
+	if !seen {
+		t.Fatal("expected completed event")
+	}
+}

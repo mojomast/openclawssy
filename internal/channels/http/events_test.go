@@ -22,6 +22,9 @@ func TestRunEventBusSubscribePublishAndUnsubscribe(t *testing.T) {
 		if event.RunID != "run_stream_1" {
 			t.Fatalf("expected run id run_stream_1, got %q", event.RunID)
 		}
+		if event.InstanceID != "" || event.AgentID != "" {
+			t.Fatalf("expected empty identity metadata by default, got %+v", event)
+		}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("timed out waiting for published event")
 	}
@@ -34,6 +37,26 @@ func TestRunEventBusSubscribePublishAndUnsubscribe(t *testing.T) {
 		}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("timed out waiting for unsubscribe close")
+	}
+}
+
+func TestRunEventBusCarriesInstanceAndAgentIdentity(t *testing.T) {
+	bus := NewRunEventBus(16)
+	ch, unsubscribe := bus.Subscribe("run_stream_identity", 0)
+	defer unsubscribe()
+
+	bus.Publish("run_stream_identity", RunEvent{Type: RunEventStatus, InstanceID: "instance-a", AgentID: "agent-7", Data: map[string]any{"status": "running"}})
+
+	select {
+	case event := <-ch:
+		if event.InstanceID != "instance-a" {
+			t.Fatalf("expected instance_id instance-a, got %q", event.InstanceID)
+		}
+		if event.AgentID != "agent-7" {
+			t.Fatalf("expected agent_id agent-7, got %q", event.AgentID)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for published identity event")
 	}
 }
 
