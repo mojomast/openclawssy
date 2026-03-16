@@ -187,6 +187,99 @@ func TestDelegationModeAutoTrustedOnlyExecutesForTrustedPlan(t *testing.T) {
 	}
 }
 
+func TestDelegationModeFullAutoKeepsPromptOnlyTriggerAdvisory(t *testing.T) {
+	// Use different paths so per-path repetition stays at 1 (LoopScore=0).
+	// Two consecutive failures still give FailureScore=2 → TotalScore=2
+	// → Moderate → PromptOnly trigger, which should stay advisory.
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.read", Arguments: []byte(`{"path":"notes.txt"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.read", Arguments: []byte(`{"path":"todo.txt"}`)}}},
+		{FinalText: "finished without planner takeover"},
+	}}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Error: "tool_execution_failed (fs.read): open notes.txt: no such file or directory"},
+		"2": {ID: "2", Error: "tool_execution_failed (fs.read): open todo.txt: no such file or directory"},
+	}}
+	subRunner := &mockSubAgentRunner{result: SubAgentOutput{RunID: "sub-1", FinalText: "should not run", Success: true}}
+
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 20, SubAgentRunner: subRunner}
+	out, err := runner.Run(context.Background(), RunInput{
+		Message:        "check the missing notes file",
+		DelegationMode: string(DelegationModeFullAuto),
+		AutoDelegate:   true,
+	})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "finished without planner takeover" {
+		t.Fatalf("expected direct completion, got %q", out.FinalText)
+	}
+	if len(subRunner.calls) != 0 {
+		t.Fatalf("expected no subagent execution for advisory trigger, got %d calls", len(subRunner.calls))
+	}
+	if len(model.reqs) != 3 {
+		t.Fatalf("expected third model turn to complete directly, got %d requests", len(model.reqs))
+	}
+	if !strings.Contains(model.reqs[2].SystemPrompt, "DELEGATION_RECOMMENDED") {
+		t.Fatalf("expected advisory delegation hint in prompt, got %q", model.reqs[2].SystemPrompt)
+	}
+}
+
+type sequentialSubAgentRunner struct {
+	calls   []DecomposedTask
+	results []SubAgentOutput
+	index   int
+}
+
+func (r *sequentialSubAgentRunner) ExecuteSubAgent(_ context.Context, task DecomposedTask) (SubAgentOutput, error) {
+	r.calls = append(r.calls, task)
+	if r.index >= len(r.results) {
+		return SubAgentOutput{Success: false, Error: "missing sequential result"}, errors.New("missing sequential result")
+	}
+	result := r.results[r.index]
+	r.index++
+	return result, nil
+}
+
+func TestExecuteDelegatedTasksInjectsDependencyContextFromTaskResult(t *testing.T) {
+	subRunner := &sequentialSubAgentRunner{results: []SubAgentOutput{
+		{RunID: "sub-1", FinalText: "root cause is missing config", Success: true},
+		{RunID: "sub-2", FinalText: "fixed configuration", Success: true},
+	}}
+	runner := Runner{SubAgentRunner: subRunner}
+	state := newRunState(RunInput{Message: "fix the config issue", RunID: "parent-run"}, runner)
+	state.delegationReason = "failures>=2"
+
+	tasks := []DecomposedTask{
+		{
+			TaskID:   "generic-assess",
+			AgentID:  "default",
+			Message:  "Assess the current task state.",
+			Priority: 1,
+		},
+		{
+			TaskID:    "generic-execute",
+			AgentID:   "default",
+			Message:   "Execute the smallest next step identified in the assessment.",
+			DependsOn: []string{"generic-assess"},
+			Priority:  2,
+		},
+	}
+
+	if err := runner.executeDelegatedTasks(context.Background(), state, tasks, RunInput{RunID: "parent-run", Message: "fix the config issue"}); err != nil {
+		t.Fatalf("executeDelegatedTasks() error = %v", err)
+	}
+	if len(subRunner.calls) != 2 {
+		t.Fatalf("expected 2 subagent calls, got %d", len(subRunner.calls))
+	}
+	if !strings.Contains(subRunner.calls[1].Message, "Context from previous steps") {
+		t.Fatalf("expected dependency context in second task, got %q", subRunner.calls[1].Message)
+	}
+	if !strings.Contains(subRunner.calls[1].Message, "generic-assess: root cause is missing config") {
+		t.Fatalf("expected first task result injected into dependency context, got %q", subRunner.calls[1].Message)
+	}
+}
+
 func TestDelegationFailureCascadingRetriesEscalatesAndRecordsFailure(t *testing.T) {
 	subRunner := &alwaysFailSubAgentRunner{}
 	runner := Runner{SubAgentRunner: subRunner}

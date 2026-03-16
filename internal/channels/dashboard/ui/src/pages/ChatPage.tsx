@@ -2452,6 +2452,18 @@ export function ChatPage() {
                 className="min-h-[96px] w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 placeholder="Ask the agent to investigate, summarize, or run a workflow..."
                 value={state.draft}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" || event.shiftKey) {
+                    return
+                  }
+                  if (event.nativeEvent.isComposing) {
+                    return
+                  }
+                  event.preventDefault()
+                  if (!sendDisabled) {
+                    void sendMessage()
+                  }
+                }}
                 onChange={(event) => {
                   setState((prev) => ({
                     ...prev,

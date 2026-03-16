@@ -32,6 +32,9 @@ const (
 	stateMutationRepetitionCap   = 1
 	becomussyWriteRepetitionCap  = 2
 	becomussyReadRepetitionCap   = 6
+	stateReaderRepetitionCap     = 3 // control-plane state readers (scheduler.list, policy.list, etc.)
+	defaultRepeatedFileReadCap   = 6 // fs.read on non-special paths (per path)
+	defaultRepeatedFileListCap   = 4 // fs.list (per directory path)
 	noChoicesRetryCap            = 3
 	noChoicesRetryDelay          = 300 * time.Millisecond
 	transientModelRetryCap       = 3
@@ -80,6 +83,14 @@ type runState struct {
 	// directory, capability denied).  When any category reaches the cap
 	// the run is hard-stopped with an escalation message to the owner.
 	structuralBlockerCounts map[string]int
+
+	// lastUncacheableOutputs tracks the most recent output for uncacheable
+	// tool calls (keyed by tool name + normalized args).  When a fresh
+	// execution produces the exact same output as the last invocation with
+	// the same key, it is not counted as genuine progress — this prevents
+	// the no-progress detector from being defeated by tools that always
+	// return the same result but are intentionally excluded from caching.
+	lastUncacheableOutputs map[string]string
 
 	// Context tracking from model responses
 	lastPromptTokens int
@@ -143,6 +154,7 @@ func newRunState(input RunInput, r Runner) *runState {
 		toolCap:                 toolCap,
 		repetitionPrevention:    make(map[string]int),
 		structuralBlockerCounts: make(map[string]int),
+		lastUncacheableOutputs:  make(map[string]string),
 		lastPromptTokens:        0,
 		contextWindow:           120000, // default context window
 		delegationMode:          "",
@@ -616,10 +628,11 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 		}
 		record.Result = result
 		record.CompletedAt = time.Now().UTC()
-		hadFreshExecution = true
 		s.registerToolOutcome(result.Error)
 
 		if callKey != "|" {
+			// Cacheable tool: mark as fresh progress and update cache.
+			hadFreshExecution = true
 			if strings.TrimSpace(result.Error) == "" {
 				s.cachedToolResults[callKey] = ToolCallResult{Output: result.Output}
 				delete(s.cachedFailedToolResults, callKey)
@@ -637,6 +650,20 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 					s.cachedFailedToolResults[callKey] = ToolCallResult{Output: result.Output, Error: result.Error}
 				}
 			}
+		} else {
+			// Uncacheable tool: track whether the output actually changed.
+			// If the tool returns the exact same output as its last
+			// invocation with the same name+args, it is not genuine
+			// progress — the no-progress detector should not be reset.
+			stableKey := call.Name + "|" + string(call.Arguments)
+			prevOutput, seen := s.lastUncacheableOutputs[stableKey]
+			currentOutput := strings.TrimSpace(result.Output) + "\x00" + strings.TrimSpace(result.Error)
+			s.lastUncacheableOutputs[stableKey] = currentOutput
+			if !seen || prevOutput != currentOutput {
+				hadFreshExecution = true
+			}
+			// If output is identical to the previous call (seen && prevOutput == currentOutput),
+			// hadFreshExecution stays false for this call, letting the no-progress counter advance.
 		}
 
 		s.notifyToolCall(&record, input.OnToolCall)
@@ -721,7 +748,28 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 					"snapshot_errors": append([]string(nil), snapshot.LastErrorTypes...),
 				}, fmt.Sprintf("Delegation trigger fired (%s): %s", strings.TrimSpace(string(trigger.Mode)), firstN(strings.TrimSpace(trigger.Reason), 140)))
 
-				if isPlannerDelegationMode(configuredMode) {
+				if isPlannerDelegationMode(configuredMode) && trigger.Mode == DelegationModePromptOnly {
+					if plan, _, planErr := GenerateDecompositionPlan(trigger.Reason, configuredMode, trigger.Subtasks, nil); planErr == nil {
+						if s.out.DecompositionPlan == nil {
+							s.out.DecompositionPlan = &plan
+						}
+						for _, task := range plan.Tasks {
+							s.emitDecision(ctx, DecisionRecordTypeRoleSelection, map[string]any{
+								"task_id":        strings.TrimSpace(task.TaskID),
+								"role":           strings.TrimSpace(task.AssignedRole),
+								"confidence":     task.Confidence,
+								"task":           strings.TrimSpace(task.Description),
+								"role_rationale": strings.TrimSpace(task.Rationale),
+							}, fmt.Sprintf("Selected role %s for task %s.", strings.TrimSpace(task.AssignedRole), strings.TrimSpace(task.TaskID)))
+						}
+					}
+				}
+
+				// Planner-led delegation modes should only take over once the
+				// trigger has escalated beyond a prompt-only advisory signal.
+				// Otherwise mild failure signals in modes like full_autonomous
+				// can unexpectedly turn into fully delegated execution loops.
+				if isPlannerDelegationMode(configuredMode) && trigger.Mode != DelegationModePromptOnly {
 					plan, plannedTasks, planErr := GenerateDecompositionPlan(trigger.Reason, configuredMode, trigger.Subtasks, nil)
 					if planErr != nil {
 						s.out.Thinking = s.latestThinking
@@ -1345,6 +1393,18 @@ func repeatedCallRepetitionKey(call ToolCallRequest) (string, int, bool) {
 		return "memory.write|" + key, memoryWriteRepetitionCap, true
 	}
 
+	// Control-plane state readers are intentionally uncacheable (their output
+	// can change after mutations within the same run), but they still need a
+	// repetition cap so the model cannot poll them indefinitely.  A cap of 3
+	// is generous — the model should rarely need to read the same state
+	// endpoint more than once or twice per run.
+	switch name {
+	case "scheduler.list", "policy.list", "config.get",
+		"session.list", "agent.list",
+		"run.list", "run.get", "metrics.get":
+		return name, stateReaderRepetitionCap, true
+	}
+
 	// becomussy tools: write tools (create, propose, reinforce) get a tight
 	// cap to prevent duplicate entries; read tools (search, list, get,
 	// resume, current, history, pending) get a higher cap because they are
@@ -1355,6 +1415,17 @@ func repeatedCallRepetitionKey(call ToolCallRequest) (string, int, bool) {
 			cap = becomussyWriteRepetitionCap
 		}
 		return name + "|" + string(call.Arguments), cap, true
+	}
+
+	// fs.list is uncacheable (directory contents change after writes) but
+	// still needs a repetition cap so the model cannot poll the same
+	// directory indefinitely.
+	if name == "fs.list" {
+		path := extractPathFromToolArgs(call.Arguments)
+		if path == "" {
+			path = "."
+		}
+		return name + "|" + path, defaultRepeatedFileListCap, true
 	}
 
 	if name != "fs.write" && name != "fs.append" && name != "fs.read" && name != "shell.exec" {
@@ -1420,6 +1491,11 @@ func repetitionCapForToolPath(toolName, path string) (int, bool) {
 	}
 	if toolName == "fs.read" && isJournalPath {
 		return journalFileReadCap, true
+	}
+	// Default cap for fs.read on non-special paths.  Reading the same file
+	// more than a handful of times in one run is almost always a loop.
+	if toolName == "fs.read" {
+		return defaultRepeatedFileReadCap, true
 	}
 	return 0, false
 }

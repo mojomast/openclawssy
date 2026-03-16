@@ -2099,11 +2099,32 @@ func (a *agentSubAgentRunnerAdapter) ExecuteSubAgent(ctx context.Context, task a
 	if err != nil {
 		return agent.SubAgentOutput{Success: false, Error: err.Error()}, err
 	}
+	if interruptionErr := subAgentInterruptionError(result.FinalText); interruptionErr != "" {
+		return agent.SubAgentOutput{
+			RunID:     result.RunID,
+			FinalText: result.FinalText,
+			Success:   false,
+			Error:     interruptionErr,
+		}, nil
+	}
 	return agent.SubAgentOutput{
 		RunID:     result.RunID,
 		FinalText: result.FinalText,
 		Success:   true,
 	}, nil
+}
+
+func subAgentInterruptionError(finalText string) string {
+	lower := strings.ToLower(strings.TrimSpace(finalText))
+	if lower == "" {
+		return ""
+	}
+	if strings.Contains(lower, "response stream was interrupted") ||
+		strings.Contains(lower, "resume from the cutoff point") ||
+		strings.Contains(lower, "send `continue`") {
+		return "subagent response was interrupted before completion"
+	}
+	return ""
 }
 
 func applyRoleRestrictions(base config.SubAgentRestrictions, task agent.DecomposedTask) config.SubAgentRestrictions {
