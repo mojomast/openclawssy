@@ -634,6 +634,102 @@ func TestRunnerAllowsRepeatedCallAfterPreviousToolError(t *testing.T) {
 	}
 }
 
+func TestRunnerBlocksRepeatedSchedulerAddAfterFirstSuccess(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "scheduler.add", Arguments: []byte(`{"id":"hourly-research-journal","schedule":"@hourly","message":"research and journal"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "scheduler.add", Arguments: []byte(`{"id":"hourly-research-journal","schedule":"@hourly","message":"research and journal again"}`)}}},
+		{FinalText: "done"},
+	}}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Output: `{"added":true,"id":"hourly-research-journal"}`},
+	}}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 8}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "create the hourly journal job"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(out.ToolCalls) != 2 {
+		t.Fatalf("expected two tool call records, got %d", len(out.ToolCalls))
+	}
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected only first scheduler.add to execute, got %d", len(tools.calls))
+	}
+	if !strings.Contains(out.ToolCalls[1].Result.Error, "repetition detected") {
+		t.Fatalf("expected second scheduler.add to be blocked as repetition, got %+v", out.ToolCalls[1].Result)
+	}
+	if !strings.Contains(out.ToolCalls[1].Result.Error, "scheduler.add|hourly-research-journal") {
+		t.Fatalf("expected repetition key in error, got %+v", out.ToolCalls[1].Result)
+	}
+	if out.ToolCalls[0].Result.Output == "" {
+		t.Fatalf("expected first scheduler.add success output, got %+v", out.ToolCalls[0].Result)
+	}
+	if out.ToolCalls[1].Result.Output != "" {
+		t.Fatalf("expected blocked repeated call to have empty output, got %+v", out.ToolCalls[1].Result)
+	}
+	if len(model.reqs) != 3 {
+		t.Fatalf("expected two tool turns and one final text turn, got %d model requests", len(model.reqs))
+	}
+}
+
+func TestRunnerBlocksRepeatedPolicyGrantAfterFirstSuccess(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "policy.grant", Arguments: []byte(`{"agent_id":"default","capability":"http.request"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "policy.grant", Arguments: []byte(`{"agent_id":"default","capability":"http.request"}`)}}},
+		{FinalText: "done"},
+	}}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Output: `{"granted":true,"changed":true}`},
+	}}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 8}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "grant http.request to default"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected only first policy.grant to execute, got %d", len(tools.calls))
+	}
+	if len(out.ToolCalls) != 2 {
+		t.Fatalf("expected two tool records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[1].Result.Error, "repetition detected") {
+		t.Fatalf("expected repeated policy.grant to be blocked, got %+v", out.ToolCalls[1].Result)
+	}
+}
+
+func TestRunnerDoesNotCacheSchedulerListAcrossMutation(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "scheduler.list", Arguments: []byte(`{}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "scheduler.add", Arguments: []byte(`{"id":"hourly-research-journal","schedule":"@hourly","message":"research and journal"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "scheduler.list", Arguments: []byte(`{}`)}}},
+		{FinalText: "done"},
+	}}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Output: `{"jobs":[],"paused":false}`},
+		"2": {ID: "2", Output: `{"added":true,"id":"hourly-research-journal"}`},
+		"3": {ID: "3", Output: `{"jobs":[{"id":"hourly-research-journal"}],"paused":false}`},
+	}}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 8}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "create a job and verify it exists"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(tools.calls) != 3 {
+		t.Fatalf("expected both scheduler.list calls and scheduler.add to execute, got %d", len(tools.calls))
+	}
+	if got := out.ToolCalls[2].Result.Output; !strings.Contains(got, "hourly-research-journal") {
+		t.Fatalf("expected fresh scheduler.list output after add, got %q", got)
+	}
+}
+
 func TestRunnerCachesRepeatedFailureAfterSecondIdenticalError(t *testing.T) {
 	model := &mockModel{responses: []ModelResponse{
 		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "shell.exec", Arguments: []byte(`{"command":"bash","args":["-lc","nmap -sS 127.0.0.1"]}`)}}},
