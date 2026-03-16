@@ -926,18 +926,25 @@ func normalizedPromptFile(raw string) (string, error) {
 	if fileName == "" {
 		return "", errors.New("file is required")
 	}
-	allowed := map[string]bool{
-		"SOUL.MD":     true,
-		"RULES.MD":    true,
-		"TOOLS.MD":    true,
-		"SPECPLAN.MD": true,
-		"DEVPLAN.MD":  true,
-		"HANDOFF.MD":  true,
+	allowed := map[string]string{
+		"SOUL":        "SOUL.md",
+		"SOUL.MD":     "SOUL.md",
+		"RULES":       "RULES.md",
+		"RULES.MD":    "RULES.md",
+		"TOOLS":       "TOOLS.md",
+		"TOOLS.MD":    "TOOLS.md",
+		"SPECPLAN":    "SPECPLAN.md",
+		"SPECPLAN.MD": "SPECPLAN.md",
+		"DEVPLAN":     "DEVPLAN.md",
+		"DEVPLAN.MD":  "DEVPLAN.md",
+		"HANDOFF":     "HANDOFF.md",
+		"HANDOFF.MD":  "HANDOFF.md",
 	}
-	if !allowed[fileName] {
+	canonical, ok := allowed[fileName]
+	if !ok {
 		return "", errors.New("file must be one of SOUL.md, RULES.md, TOOLS.md, SPECPLAN.md, DEVPLAN.md, HANDOFF.md")
 	}
-	return fileName, nil
+	return canonical, nil
 }
 
 func containsTrimmedString(items []string, candidate string) bool {

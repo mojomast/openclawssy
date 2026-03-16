@@ -239,6 +239,32 @@ test("renders all settings categories, supports search filtering, and honors cat
   await expect(page.getByRole("button", { name: /General/ })).toHaveCount(0)
 })
 
+test("applies settings-specific layout styling so category navigation and controls remain visible", async ({ page }) => {
+  const state = createState()
+  await routeSettingsApi(page, state)
+
+  await page.goto("/dashboard#/settings")
+
+  const workspace = page.locator(".settings-workspace")
+  await expect(workspace).toBeVisible()
+
+  const workspaceDisplay = await workspace.evaluate((element) => window.getComputedStyle(element).display)
+  expect(workspaceDisplay).toBe("grid")
+
+  const categoryButtonStyles = await page.locator(".settings-category-button").first().evaluate((element) => {
+    const styles = window.getComputedStyle(element)
+    return {
+      backgroundColor: styles.backgroundColor,
+      borderRadius: styles.borderRadius,
+      paddingTop: styles.paddingTop,
+    }
+  })
+
+  expect(categoryButtonStyles.backgroundColor).not.toBe("rgba(0, 0, 0, 0)")
+  expect(Number.parseFloat(categoryButtonStyles.borderRadius)).toBeGreaterThan(0)
+  expect(Number.parseFloat(categoryButtonStyles.paddingTop)).toBeGreaterThan(0)
+})
+
 test("editing fields updates the diff table and Save Config PATCHes with success feedback", async ({ page }) => {
   const state = createState()
   await routeSettingsApi(page, state)

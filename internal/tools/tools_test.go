@@ -1139,6 +1139,31 @@ func TestConfigGetSingleField(t *testing.T) {
 	}
 }
 
+func TestConfigGetSchedulerFields(t *testing.T) {
+	ws, _, reg := setupConfigToolRegistry(t)
+
+	res, err := reg.Execute(context.Background(), "agent", "config.get", ws, map[string]any{"field": "scheduler"})
+	if err != nil {
+		t.Fatalf("config.get scheduler: %v", err)
+	}
+	schedulerCfg, ok := res["value"].(config.SchedulerConfig)
+	if !ok {
+		t.Fatalf("expected scheduler config struct, got %#v", res["value"])
+	}
+	if !schedulerCfg.CatchUp {
+		t.Fatalf("expected scheduler.catch_up=true by default, got %+v", schedulerCfg)
+	}
+
+	res, err = reg.Execute(context.Background(), "agent", "config.get", ws, map[string]any{"field": "scheduler.catch_up"})
+	if err != nil {
+		t.Fatalf("config.get scheduler.catch_up: %v", err)
+	}
+	catchUp, ok := res["value"].(bool)
+	if !ok || !catchUp {
+		t.Fatalf("expected scheduler.catch_up=true, got %#v", res["value"])
+	}
+}
+
 func TestConfigSetAppliesAndPersistsSafeUpdates(t *testing.T) {
 	ws, cfgPath, reg := setupConfigToolRegistry(t)
 
@@ -1721,6 +1746,49 @@ func TestSkillToolsDiscoverAndReadWorkspaceSkillWithSecrets(t *testing.T) {
 	}
 	if ready, _ := readRes["ready"].(bool); !ready {
 		t.Fatalf("expected ready=true, got %#v", readRes["ready"])
+	}
+}
+
+func TestSkillReadAllowsSecretlessSkillWithoutOpeningSecretStore(t *testing.T) {
+	root := t.TempDir()
+	ws := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(filepath.Join(ws, "skills"), 0o755); err != nil {
+		t.Fatalf("mkdir skills dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "skills", "fixer.md"), []byte("# Fixer\n\nUse run.list, agent.prompt.read, and config.get before retrying a failed plan."), 0o600); err != nil {
+		t.Fatalf("write fixer skill: %v", err)
+	}
+	masterPath := filepath.Join(root, ".openclawssy", "master.key")
+	if err := os.MkdirAll(filepath.Dir(masterPath), 0o755); err != nil {
+		t.Fatalf("mkdir secret config dir: %v", err)
+	}
+	if err := os.WriteFile(masterPath, []byte("ZmFrZQ=="), 0o600); err != nil {
+		t.Fatalf("write invalid master key: %v", err)
+	}
+	cfgPath := filepath.Join(root, ".openclawssy", "config.json")
+	cfg := config.Default()
+	cfg.Workspace.Root = ws
+	cfg.Secrets.StoreFile = filepath.Join(root, ".openclawssy", "secrets.enc")
+	cfg.Secrets.MasterKeyFile = masterPath
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save config fixture: %v", err)
+	}
+
+	reg := NewRegistry(fakePolicy{}, nil)
+	if err := RegisterCoreWithOptions(reg, CoreOptions{EnableShellExec: true, ConfigPath: cfgPath}); err != nil {
+		t.Fatalf("register core: %v", err)
+	}
+
+	readRes, err := reg.Execute(context.Background(), "agent", "skill.read", ws, map[string]any{"name": "fixer"})
+	if err != nil {
+		t.Fatalf("skill.read secretless fixer: %v", err)
+	}
+	if content, _ := readRes["content"].(string); !strings.Contains(content, "run.list") {
+		t.Fatalf("expected fixer skill content, got %#v", readRes["content"])
+	}
+	required, ok := readRes["required_secrets"].([]string)
+	if !ok || len(required) != 0 {
+		t.Fatalf("expected no required secrets, got %#v", readRes["required_secrets"])
 	}
 }
 
@@ -2499,6 +2567,48 @@ func TestAgentPromptUpdateCrossAgentRequiresPolicyAdmin(t *testing.T) {
 	}
 }
 
+func TestAgentPromptToolsNormalizePromptFileCaseToCanonicalPaths(t *testing.T) {
+	ws, _, agentsPath, cfgPath, reg := setupAgentToolRegistry(t, fakePolicy{})
+	if _, err := createAgentScaffold(filepath.Join(agentsPath, "worker"), false); err != nil {
+		t.Fatalf("seed worker scaffold: %v", err)
+	}
+
+	readRes, err := reg.Execute(context.Background(), "worker", "agent.prompt.read", ws, map[string]any{"file": "soul.md"})
+	if err != nil {
+		t.Fatalf("agent.prompt.read lowercase soul: %v", err)
+	}
+	if readRes["file"] != "SOUL.md" {
+		t.Fatalf("expected canonical SOUL.md response, got %#v", readRes["file"])
+	}
+
+	cfg, err := config.LoadOrDefault(cfgPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.Agents.SelfImprovementEnabled = true
+	if cfg.Agents.Profiles == nil {
+		cfg.Agents.Profiles = map[string]config.AgentProfile{}
+	}
+	cfg.Agents.Profiles["worker"] = config.AgentProfile{SelfImprovement: true}
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	if _, err := reg.Execute(context.Background(), "worker", "agent.prompt.update", ws, map[string]any{"file": "SOUL.MD", "content": "# SOUL\nupdated"}); err != nil {
+		t.Fatalf("agent.prompt.update uppercase extension: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(agentsPath, "worker", "SOUL.md"))
+	if err != nil {
+		t.Fatalf("read canonical SOUL.md: %v", err)
+	}
+	if string(raw) != "# SOUL\nupdated" {
+		t.Fatalf("unexpected canonical SOUL.md content: %q", string(raw))
+	}
+	if _, err := os.Stat(filepath.Join(agentsPath, "worker", "SOUL.MD")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no uppercase-extension prompt file, got err=%v", err)
+	}
+}
+
 func TestAgentIdentitySetWritesSoulForCurrentAgent(t *testing.T) {
 	ws, _, agentsPath, _, reg := setupAgentToolRegistry(t, fakePolicy{})
 
@@ -2923,10 +3033,49 @@ func TestSchedulerAddRejectsInvalidSchedule(t *testing.T) {
 	ws, _, reg := setupSchedulerToolRegistry(t, fakePolicy{})
 	if _, err := reg.Execute(context.Background(), "agent", "scheduler.add", ws, map[string]any{
 		"id":       "job-invalid",
-		"schedule": "daily",
+		"schedule": "every hour please",
 		"message":  "ping",
 	}); err == nil {
 		t.Fatal("expected invalid schedule rejection")
+	}
+}
+
+func TestSchedulerAddAcceptsHelpfulRecurringAliases(t *testing.T) {
+	ws, _, reg := setupSchedulerToolRegistry(t, fakePolicy{})
+	for _, tc := range []struct {
+		id       string
+		schedule string
+	}{
+		{id: "job-hourly-alias", schedule: "@hourly"},
+		{id: "job-hourly-cron", schedule: "0 * * * *"},
+		{id: "job-daily-cron", schedule: "0 0 * * *"},
+	} {
+		if _, err := reg.Execute(context.Background(), "agent", "scheduler.add", ws, map[string]any{
+			"id":       tc.id,
+			"schedule": tc.schedule,
+			"message":  "ping",
+		}); err != nil {
+			t.Fatalf("scheduler.add %s: %v", tc.schedule, err)
+		}
+	}
+
+	listRes, err := reg.Execute(context.Background(), "agent", "scheduler.list", ws, map[string]any{})
+	if err != nil {
+		t.Fatalf("scheduler.list: %v", err)
+	}
+	jobs, ok := listRes["jobs"].([]scheduler.Job)
+	if !ok || len(jobs) != 3 {
+		t.Fatalf("expected three scheduler jobs, got %#v", listRes["jobs"])
+	}
+	gotSchedules := map[string]string{}
+	for _, job := range jobs {
+		gotSchedules[job.ID] = job.Schedule
+	}
+	if gotSchedules["job-hourly-alias"] != "@every 1h" || gotSchedules["job-hourly-cron"] != "@every 1h" {
+		t.Fatalf("expected hourly aliases normalized to @every 1h, got %#v", gotSchedules)
+	}
+	if gotSchedules["job-daily-cron"] != "@every 24h" {
+		t.Fatalf("expected daily cron shorthand normalized to @every 24h, got %#v", gotSchedules)
 	}
 }
 

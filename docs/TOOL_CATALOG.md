@@ -63,7 +63,7 @@ All tools are deny-by-default through capability policy, and all tool inputs are
 ### `config.get`
 - Required: none
 - Optional: `field`
-- Notes: returns redacted configuration only.
+- Notes: returns redacted configuration only; `field` can target specific allowlisted values such as `output.thinking_mode`, `engine.max_concurrent_runs`, `scheduler`, or `scheduler.catch_up`.
 
 ### `config.set`
 - Required: `updates`
@@ -89,6 +89,7 @@ All tools are deny-by-default through capability policy, and all tool inputs are
 ### `scheduler.add`
 - Required: `schedule`, `message`
 - Optional: `id`, `agent_id`, `enabled`
+- Notes: accepts `@every <duration>`, helpful recurring aliases (`@hourly`, `@daily`), common hourly/daily cron shorthands (`0 * * * *`, `0 0 * * *`), or one-shot RFC3339 timestamps. Recurring aliases are normalized before persistence.
 
 ### `scheduler.remove`
 - Required: `id`

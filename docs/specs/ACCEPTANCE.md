@@ -4,7 +4,7 @@ Source of truth: `devplan.md`.
 
 ## Current Scope Notes
 - This checklist tracks implemented prototype behavior at v0.2.
-- Scheduler supports `@every <duration>` and one-shot RFC3339 schedules only (no cron parser).
+- Scheduler supports `@every <duration>`, helpful hourly/daily aliases, common hourly/daily cron shorthands, and one-shot RFC3339 schedules (no general cron parser).
 - Supported sandbox providers are `none` and `local`.
 
 ## Core Platform

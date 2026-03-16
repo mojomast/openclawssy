@@ -804,7 +804,7 @@ func (cronService) Cron(_ context.Context, input cli.CronInput) (string, error) 
 		fs.StringVar(&userID, "user", "dashboard_user", "delivery user id")
 		fs.StringVar(&roomID, "room", "dashboard", "delivery room id")
 		fs.StringVar(&sessionID, "session", "", "delivery session id (optional)")
-		fs.StringVar(&schedule, "schedule", "", "schedule (@every 1m or RFC3339)")
+		fs.StringVar(&schedule, "schedule", "", "schedule (@every 1m, @hourly, 0 * * * *, or RFC3339)")
 		fs.StringVar(&message, "message", "", "message")
 		fs.BoolVar(&enabled, "enabled", true, "enable job")
 		if err := fs.Parse(input.Args); err != nil {

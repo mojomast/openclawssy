@@ -14,7 +14,7 @@ import (
 func registerConfigTools(reg *Registry, configuredPath string) error {
 	if err := reg.Register(ToolSpec{
 		Name:        "config.get",
-		Description: "Get runtime config (redacted)",
+		Description: "Get redacted runtime config or an allowlisted field",
 		ArgTypes:    map[string]ArgType{"field": ArgTypeString},
 	}, configGet(configuredPath)); err != nil {
 		return err
@@ -411,6 +411,10 @@ func configGetField(cfg config.Config, field string) (any, bool) {
 		return cfg.Discord.CommandPrefix, true
 	case "engine.max_concurrent_runs":
 		return cfg.Engine.MaxConcurrentRuns, true
+	case "scheduler":
+		return cfg.Scheduler, true
+	case "scheduler.catch_up":
+		return cfg.Scheduler.CatchUp, true
 	case "scheduler.max_concurrent_jobs":
 		return cfg.Scheduler.MaxConcurrentJobs, true
 	case "network.enabled":

@@ -18,7 +18,7 @@ func registerSchedulerTools(reg *Registry, configuredPath string) error {
 	}
 	if err := reg.Register(ToolSpec{
 		Name:        "scheduler.add",
-		Description: "Add scheduler job",
+		Description: "Add scheduler job using @every <duration>, @hourly/@daily aliases, common hourly/daily cron shorthands, or RFC3339 for one-shot runs",
 		Required:    []string{"schedule", "message"},
 		ArgTypes: map[string]ArgType{
 			"id":         ArgTypeString,
