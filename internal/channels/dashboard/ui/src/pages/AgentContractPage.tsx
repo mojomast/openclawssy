@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useControlPlaneFeatures } from "@/hooks/useControlPlaneFeatures"
 import { ApiError, api } from "@/lib/api"
 
 type SourceType = "global" | "agent-profile" | "subagent-override"
@@ -194,6 +195,7 @@ function buildInstanceContractRoute(instanceID: string, agentID: string, action:
 }
 
 export function AgentContractPage() {
+  const { features, loading: featuresLoading } = useControlPlaneFeatures()
   const [instances, setInstances] = useState<InstanceSummary[]>([])
   const [selectedInstance, setSelectedInstance] = useState("")
   const [agents, setAgents] = useState<string[]>([])
@@ -216,6 +218,7 @@ export function AgentContractPage() {
   const [snapshotMessage, setSnapshotMessage] = useState("")
   const [rollbackError, setRollbackError] = useState("")
   const [rollingBackSnapshotID, setRollingBackSnapshotID] = useState("")
+  const featureDisabled = !featuresLoading && !features.instanceAgents
 
   const loadSelectors = useCallback(async () => {
     setLoadingAgents(true)
@@ -341,17 +344,42 @@ export function AgentContractPage() {
   }, [])
 
   useEffect(() => {
+    if (featuresLoading) {
+      return
+    }
+    if (featureDisabled) {
+      setLoadingAgents(false)
+      setErrorMessage("")
+      setInstances([])
+      setSelectedInstance("")
+      setAgents([])
+      setSelectedAgent("")
+      setResolvedContract(null)
+      setSourceMap({})
+      setDiffRows([])
+      setDiffError("")
+      setSnapshots([])
+      setSnapshotMessage("")
+      setRollbackError("")
+      return
+    }
     void loadSelectors()
-  }, [loadSelectors])
+  }, [featureDisabled, featuresLoading, loadSelectors])
 
   useEffect(() => {
+    if (featureDisabled) {
+      return
+    }
     if (!selectedInstance || !selectedAgent) {
       return
     }
     void loadResolvedContract(selectedInstance, selectedAgent)
-  }, [loadResolvedContract, selectedAgent, selectedInstance])
+  }, [featureDisabled, loadResolvedContract, selectedAgent, selectedInstance])
 
   useEffect(() => {
+    if (featureDisabled) {
+      return
+    }
     if (!selectedInstance || !selectedAgent) {
       return
     }
@@ -359,7 +387,7 @@ export function AgentContractPage() {
       return
     }
     void loadDiff(selectedInstance, selectedAgent, diffBase)
-  }, [activePanel, diffBase, loadDiff, selectedAgent, selectedInstance])
+  }, [activePanel, diffBase, featureDisabled, loadDiff, selectedAgent, selectedInstance])
 
   const sectionRows = useMemo(() => {
     if (!resolvedContract) {
@@ -451,6 +479,22 @@ export function AgentContractPage() {
         </p>
       </div>
 
+      {featureDisabled ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Agent Contract unavailable</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="rounded-md border border-border bg-muted/30 p-4" data-testid="agent-contract-disabled-state">
+              <p className="text-sm font-medium">Agent Contract disabled</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Instance agent controls are disabled for this control plane.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Contract controls</CardTitle>
@@ -463,7 +507,7 @@ export function AgentContractPage() {
                 id="agent-contract-instance-selector"
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                 value={selectedInstance}
-                disabled={loadingAgents || instances.length === 0}
+                disabled={featureDisabled || loadingAgents || instances.length === 0}
                 onChange={async (event) => {
                   const nextInstance = event.target.value
                   setSelectedInstance(nextInstance)
@@ -506,7 +550,7 @@ export function AgentContractPage() {
                 id="agent-contract-agent-selector"
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                 value={selectedAgent}
-                disabled={loadingAgents || agents.length === 0}
+                disabled={featureDisabled || loadingAgents || agents.length === 0}
                 onChange={(event) => {
                   setSelectedAgent(event.target.value)
                   setDiffBase("global")
@@ -531,6 +575,7 @@ export function AgentContractPage() {
                   size="sm"
                   variant={activePanel === "contract" ? "default" : "outline"}
                   onClick={() => setActivePanel("contract")}
+                  disabled={featureDisabled}
                 >
                   Contract
                 </Button>
@@ -539,6 +584,7 @@ export function AgentContractPage() {
                   size="sm"
                   variant={activePanel === "diff" ? "default" : "outline"}
                   onClick={() => setActivePanel("diff")}
+                  disabled={featureDisabled}
                 >
                   Diff
                 </Button>
@@ -553,6 +599,7 @@ export function AgentContractPage() {
                   size="sm"
                   variant={viewMode === "resolved" ? "default" : "outline"}
                   onClick={() => setViewMode("resolved")}
+                  disabled={featureDisabled}
                 >
                   Resolved
                 </Button>
@@ -561,6 +608,7 @@ export function AgentContractPage() {
                   size="sm"
                   variant={viewMode === "raw" ? "default" : "outline"}
                   onClick={() => setViewMode("raw")}
+                  disabled={featureDisabled}
                 >
                   Raw
                 </Button>
@@ -573,15 +621,15 @@ export function AgentContractPage() {
                  type="button"
                  size="sm"
                  variant="outline"
-                 disabled={!selectedInstance || !selectedAgent}
-                 onClick={() => void saveSnapshot()}
-               >
+                  disabled={featureDisabled || !selectedInstance || !selectedAgent}
+                  onClick={() => void saveSnapshot()}
+                >
                  Save rollback snapshot
               </Button>
             </div>
           </div>
 
-          {loadingAgents ? <p className="text-sm text-muted-foreground">Loading instance and agents...</p> : null}
+          {!featureDisabled && loadingAgents ? <p className="text-sm text-muted-foreground">Loading instance and agents...</p> : null}
           {!loadingAgents && instances.length === 0 ? (
             <p className="text-sm text-muted-foreground">No configured instances found.</p>
           ) : null}
@@ -625,7 +673,7 @@ export function AgentContractPage() {
         </div>
       ) : null}
 
-      {activePanel === "contract" ? (
+      {!featureDisabled && activePanel === "contract" ? (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Resolved contract</CardTitle>
@@ -675,7 +723,7 @@ export function AgentContractPage() {
               : null}
           </CardContent>
         </Card>
-      ) : (
+      ) : !featureDisabled ? (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Diff view</CardTitle>
@@ -744,7 +792,7 @@ export function AgentContractPage() {
             ) : null}
           </CardContent>
         </Card>
-      )}
+      ) : null}
     </div>
   )
 }

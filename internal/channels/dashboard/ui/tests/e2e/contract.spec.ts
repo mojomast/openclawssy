@@ -21,6 +21,10 @@ type ContractState = {
   restoreRequests: string[]
 }
 
+type ContractMockOptions = {
+  instanceAgentsEnabled?: boolean
+}
+
 function deepClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
@@ -232,7 +236,8 @@ function createState(): ContractState {
   }
 }
 
-async function installContractMocks(page: Page, state: ContractState) {
+async function installContractMocks(page: Page, state: ContractState, options: ContractMockOptions = {}) {
+  const instanceAgentsEnabled = options.instanceAgentsEnabled ?? true
   await page.route("**/*", async (route: Route) => {
     const request = route.request()
     const method = request.method()
@@ -249,6 +254,18 @@ async function installContractMocks(page: Page, state: ContractState) {
 
     if (pathname === "/api/admin/status") {
       await json({ ok: true, model: { provider: "hatz", name: "glm-4.5" }, run_count: 1 })
+      return
+    }
+
+    if (pathname === "/api/admin/control-plane/features" && method === "GET") {
+      await json({
+        features: {
+          instance_control: true,
+          instance_agents: instanceAgentsEnabled,
+          wizard: true,
+          eval: true,
+        },
+      })
       return
     }
 
@@ -443,4 +460,25 @@ test("rollback snapshots are server-backed and restore preserves secret fields",
   await expect.poll(() => state.restoreRequests.length).toBe(1)
   await expect(page.getByText("Rollback restored successfully.")).toBeVisible()
   expect(state.config).toEqual(baselineConfig)
+})
+
+test("Agent Contract hides nav entry and shows disabled state when instance agents feature is off", async ({ page }) => {
+  const state = createState()
+  await installContractMocks(page, state, { instanceAgentsEnabled: false })
+
+  await page.goto("/dashboard#/agent-contract")
+
+  await expect(page.getByRole("link", { name: "Agent Contract" })).toHaveCount(0)
+  await expect(page.getByRole("link", { name: "Prompt Stack" })).toHaveCount(0)
+  await expect(page.getByTestId("agent-contract-disabled-state")).toContainText("Agent Contract disabled")
+  await expect(page.getByTestId("agent-contract-disabled-state")).toContainText("Instance agent controls are disabled")
+  await expect(page.locator("#agent-contract-instance-selector")).toBeDisabled()
+  await expect(page.locator("#agent-contract-agent-selector")).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Contract" })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Diff" })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Resolved" })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Raw" })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Save rollback snapshot" })).toBeDisabled()
+  await expect(page.getByRole("heading", { name: "Resolved contract", level: 3 })).toHaveCount(0)
+  await expect(page.getByRole("heading", { name: "Diff view", level: 3 })).toHaveCount(0)
 })

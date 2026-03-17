@@ -291,6 +291,7 @@ Progress update:
 - Sessions now consumes those canonical inbox detail/ack/run endpoints from lifecycle cards, closing another dashboard-side gap between session history and the shared inbox model
 - delegated subagent execution now records additive parent/sender/recipient identity in `DelegationEvent`, so trace/ledger/eval consumers can correlate delegated work to the same instance/agent/run/message model more directly
 - Agent Monitor now consumes active-instance identity for new launches and uses per-run composite identity for cancel actions, aligning another operator surface with the canonical `(instance_id, agent_id, run_id)` model
+- dashboard nav and direct-route behavior for Agent Contract and Prompt Stack now honor the shared `instance_agents` feature state, hiding disabled entries and showing deterministic disabled-state panels instead of attempting instance-scoped loads
 
 ## Milestone 6: Wizard
 

@@ -38,6 +38,7 @@ Date: 2026-03-16
 - Sessions lifecycle cards now open the canonical inbox detail view and let operators trigger inbox `ack` / `run` actions without leaving the session transcript.
 - Delegation events now carry additive `parent_run_id`, `from_agent_id`, and `to_agent_id` metadata so delegated subagent work is easier to correlate across trace, ledger, and inbox-aligned operator surfaces.
 - Agent Monitor launch/cancel flows now send explicit `instance_id` / `agent_id`, and monitor rows use composite identity instead of assuming bare `run_id` uniqueness.
+- Agent Contract and Prompt Stack now honor `instance_agents` feature gating in the dashboard shell: nav entries hide when disabled and direct route access shows explicit disabled-state panels instead of attempting live instance/agent loads.
 
 ## Validation completed
 
@@ -72,6 +73,7 @@ Date: 2026-03-16
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/chat.spec.ts tests/e2e/eval.spec.ts`
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/sessions.spec.ts --reporter=line`
 - `cd internal/channels/dashboard/ui && npm run build && CI=1 npx playwright test tests/e2e/contract.spec.ts tests/e2e/prompt-stack.spec.ts --reporter=line`
+- `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/contract.spec.ts tests/e2e/prompt-stack.spec.ts --reporter=line`
 
 Note:
 
@@ -127,6 +129,7 @@ Still open overall:
 - Messaging is now instance-scoped and lifecycle-aware, but it is still chatstore-backed rather than a dedicated canonical inbox store.
 - Dashboard/eval/decision views and some API/runtime guards are improved, but broader composite identity adoption, UI/runtime feature gating, and delegation metadata rollout are still incomplete.
 - The dashboard UI fix landed for chat/eval operator flows plus Sessions/Contract/Prompt Stack, but more pages still need to consume the shared control-plane feature hook and canonical instance identity consistently.
+- Contract and Prompt Stack now match Eval's disabled-nav/direct-access behavior, but the same shared feature-state determinism still needs to reach more instance-agent-dependent pages.
 
 ## Recommended next starting point
 

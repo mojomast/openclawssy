@@ -5,6 +5,7 @@ import { useToast } from "@/hooks/useToast"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { useControlPlaneFeatures } from "@/hooks/useControlPlaneFeatures"
 
 type LayerDefinition = {
   id: string
@@ -408,6 +409,7 @@ function diffPrefix(type: string): string {
 }
 
 export function PromptStackPage() {
+  const { features, loading: featuresLoading } = useControlPlaneFeatures()
   const { toast } = useToast()
 
   const [loading, setLoading] = useState(true)
@@ -464,6 +466,7 @@ export function PromptStackPage() {
   const tokenUsageRatio = contextWindow > 0 ? totalTokens / contextWindow : 0
   const tokenUsagePercent = Math.min(100, Math.round(tokenUsageRatio * 100))
   const isOverflow = contextWindow > 0 && totalTokens > contextWindow
+  const featureDisabled = !featuresLoading && !features.instanceAgents
 
   const applyLayers = useCallback((nextLayers: PromptLayer[]) => {
     setLayers(nextLayers)
@@ -555,8 +558,32 @@ export function PromptStackPage() {
   }, [loadAgentPromptData])
 
   useEffect(() => {
+    if (featuresLoading) {
+      return
+    }
+    if (featureDisabled) {
+      setLoading(false)
+      setLoadError("")
+      setInstances([])
+      setSelectedInstance("")
+      setAgents([])
+      setSelectedAgent("")
+      setLayers([])
+      setDraftByLayerID({})
+      setPreview(null)
+      setVersions([])
+      setDiff(null)
+      setDiffError("")
+      setLintIssues([])
+      setLintError("")
+      setTestResult(null)
+      setTestError("")
+      setSaveNotice("")
+      setSaveError("")
+      return
+    }
     void initialize()
-  }, [initialize])
+  }, [featureDisabled, featuresLoading, initialize])
 
   const handleAgentChange = useCallback(async (agentID: string) => {
     if (!selectedInstance || !agentID || agentID === selectedAgent) {
@@ -734,6 +761,22 @@ export function PromptStackPage() {
         </p>
       </div>
 
+      {featureDisabled ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Prompt Stack unavailable</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="rounded-md border border-border bg-muted/30 p-4" data-testid="prompt-stack-disabled-state">
+              <p className="text-sm font-medium">Prompt Stack disabled</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Instance agent controls are disabled for this control plane.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Prompt stack controls</CardTitle>
@@ -746,7 +789,7 @@ export function PromptStackPage() {
                 id="prompt-stack-instance-selector"
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                 value={selectedInstance}
-                disabled={loading || instances.length === 0}
+                disabled={featureDisabled || loading || instances.length === 0}
                 onChange={async (event) => {
                   const instanceID = event.target.value
                   setSelectedInstance(instanceID)
@@ -797,7 +840,7 @@ export function PromptStackPage() {
                 id="prompt-stack-agent-selector"
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                 value={selectedAgent}
-                disabled={loading || agents.length === 0}
+                disabled={featureDisabled || loading || agents.length === 0}
                 onChange={(event) => {
                   void handleAgentChange(event.target.value)
                 }}
@@ -815,7 +858,7 @@ export function PromptStackPage() {
               <Button
                 type="button"
                 variant="outline"
-                disabled={loading || lintLoading || !selectedAgent}
+                disabled={featureDisabled || loading || lintLoading || !selectedAgent}
                 data-testid="prompt-stack-run-lint"
                 onClick={() => {
                   void handleLint()
@@ -830,7 +873,7 @@ export function PromptStackPage() {
               <Button
                 type="button"
                 variant="outline"
-                disabled={loading || testLoading || !selectedAgent}
+                disabled={featureDisabled || loading || testLoading || !selectedAgent}
                 data-testid="prompt-stack-run-test"
                 onClick={() => {
                   void handleRunTests()
@@ -848,7 +891,7 @@ export function PromptStackPage() {
         </CardContent>
       </Card>
 
-      {loadError ? (
+      {!featureDisabled && loadError ? (
         <div className="rounded-md border border-destructive/50 bg-destructive/5 p-3">
           <p className="text-sm text-destructive">{loadError}</p>
           <Button
@@ -865,7 +908,9 @@ export function PromptStackPage() {
         </div>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      {!featureDisabled ? (
+        <>
+          <div className="grid gap-4 xl:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Layer editors</CardTitle>
@@ -1001,9 +1046,9 @@ export function PromptStackPage() {
             </div>
           </CardContent>
         </Card>
-      </div>
+          </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+          <div className="grid gap-4 xl:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Version history & rollback</CardTitle>
@@ -1141,9 +1186,9 @@ export function PromptStackPage() {
             </div>
           </CardContent>
         </Card>
-      </div>
+          </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+          <div className="grid gap-4 xl:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Lint issues</CardTitle>
@@ -1199,7 +1244,9 @@ export function PromptStackPage() {
             ) : null}
           </CardContent>
         </Card>
-      </div>
+          </div>
+        </>
+      ) : null}
     </div>
   )
 }

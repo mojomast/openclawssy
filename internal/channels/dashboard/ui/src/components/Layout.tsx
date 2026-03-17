@@ -128,7 +128,15 @@ export function Layout() {
 
   const visibleNavSections = navSections.map((section) => ({
     ...section,
-    items: section.items.filter((item) => (item.path === '/eval' ? !featuresLoading && features.eval : true)),
+    items: section.items.filter((item) => {
+      if (item.path === '/eval') {
+        return !featuresLoading && features.eval
+      }
+      if (item.path === '/agent-contract' || item.path === '/prompt-stack') {
+        return !featuresLoading && features.instanceAgents
+      }
+      return true
+    }),
   })).filter((section) => section.items.length > 0)
 
   return (

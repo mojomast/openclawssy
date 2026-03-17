@@ -36,6 +36,10 @@ type PromptStackState = {
   rollbackRequests: number[]
 }
 
+type PromptStackMockOptions = {
+  instanceAgentsEnabled?: boolean
+}
+
 const LAYER_ORDER: LayerID[] = [
   "global_operator_policy",
   "agent_identity",
@@ -192,7 +196,8 @@ function appendSnapshot(state: PromptStackState, changedLayer: LayerID): void {
   })
 }
 
-async function installPromptStackMocks(page: Page, state: PromptStackState): Promise<void> {
+async function installPromptStackMocks(page: Page, state: PromptStackState, options: PromptStackMockOptions = {}): Promise<void> {
+  const instanceAgentsEnabled = options.instanceAgentsEnabled ?? true
   await page.route("**/*", async (route: Route) => {
     const request = route.request()
     const method = request.method()
@@ -209,6 +214,18 @@ async function installPromptStackMocks(page: Page, state: PromptStackState): Pro
 
     if (pathname === "/api/admin/status") {
       await json({ ok: true, model: { provider: "hatz", name: "glm-4.5" }, run_count: 1 })
+      return
+    }
+
+    if (pathname === "/api/admin/control-plane/features" && method === "GET") {
+      await json({
+        features: {
+          instance_control: true,
+          instance_agents: instanceAgentsEnabled,
+          wizard: true,
+          eval: true,
+        },
+      })
       return
     }
 
@@ -492,4 +509,25 @@ test("diff, rollback, lint, and structural tests are visible and actionable", as
   await page.getByTestId("prompt-stack-run-test").click()
   await expect(page.getByTestId("prompt-stack-test-results")).toContainText("termination_rules")
   await expect(page.getByTestId("prompt-stack-test-results")).toContainText("delegation_instructions_present")
+})
+
+test("Prompt Stack hides nav entry and shows disabled state when instance agents feature is off", async ({ page }) => {
+  const state = createPromptStackState()
+  await installPromptStackMocks(page, state, { instanceAgentsEnabled: false })
+
+  await page.goto("/dashboard#/prompt-stack")
+
+  await expect(page.getByRole("link", { name: "Agent Contract" })).toHaveCount(0)
+  await expect(page.getByRole("link", { name: "Prompt Stack" })).toHaveCount(0)
+  await expect(page.getByTestId("prompt-stack-disabled-state")).toContainText("Prompt Stack disabled")
+  await expect(page.getByTestId("prompt-stack-disabled-state")).toContainText("Instance agent controls are disabled")
+  await expect(page.locator("#prompt-stack-instance-selector")).toBeDisabled()
+  await expect(page.locator("#prompt-stack-agent-selector")).toBeDisabled()
+  await expect(page.getByTestId("prompt-stack-run-lint")).toBeDisabled()
+  await expect(page.getByTestId("prompt-stack-run-test")).toBeDisabled()
+  await expect(page.getByTestId("prompt-stack-editor")).toHaveCount(0)
+  await expect(page.getByTestId("prompt-stack-preview")).toHaveCount(0)
+  await expect(page.getByTestId("prompt-stack-version-list")).toHaveCount(0)
+  await expect(page.getByTestId("prompt-stack-diff")).toHaveCount(0)
+  await expect(page.getByTestId("prompt-stack-tab-global_operator_policy")).toHaveCount(0)
 })

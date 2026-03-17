@@ -254,6 +254,7 @@ Current capabilities:
 - Agent Contract resolved/diff/rollback flows now accept explicit `instance_id` and no longer silently depend on `LoadActiveInstanceID(...)`
 - dashboard Agent Contract and Prompt Stack pages now load instance list, active instance, and instance-scoped agent routes before fetching stack/contract data
 - legacy flat `/api/admin/agents/{agent_id}/...` contract routes remain as active-instance compatibility wrappers while instance-scoped routes are now the canonical path
+- dashboard nav now hides Agent Contract and Prompt Stack when `instance_agents` is disabled, and direct page access renders disabled-state panels with controls suppressed instead of issuing optimistic instance/agent loads
 
 ### 2.14 Shared compatibility feature loading and eval CLI runtime gating
 
@@ -305,6 +306,7 @@ Verified:
 - `go test ./internal/agent ./internal/runtime ./internal/tools`
 - `go test ./internal/channels/dashboard`
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/monitor.spec.ts --reporter=line`
+- `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/contract.spec.ts tests/e2e/prompt-stack.spec.ts --reporter=line`
 
 Note: one broader `go test ./internal/runtime ./...` package pass exposed an existing flaky/unrelated failure in `TestEngineExecuteIngestsMemoryEventsWhenEnabled`, but the focused rerun of that test passed immediately and the targeted package suites for the changed slices passed.
 
@@ -467,6 +469,7 @@ Next tasks:
 Status update:
 
 - Sessions, Agent Contract, and Prompt Stack pages now consume canonical instance identity more explicitly; remaining UI work should prioritize broader active-instance visibility, canonical wizard flows, and consistent feature-state presentation across the rest of the dashboard
+- shared feature-state presentation now also covers disabled nav/direct access behavior for Agent Contract and Prompt Stack; remaining UI work should push the same determinism into other instance-agent-dependent pages
 
 Do not:
 
