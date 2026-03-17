@@ -237,6 +237,7 @@ Current capabilities:
 - Sessions detail now renders operator-facing lifecycle cards for system/lifecycle events instead of flattening everything into generic system text
 - dashboard session-message API coverage now verifies lifecycle metadata survives the backend/UI boundary
 - Sessions lifecycle cards now open canonical inbox detail, rendering merged `message_id` lifecycle state and exposing inbox `ack` / `run` actions backed by the shared dashboard inbox endpoints
+- session list/message backend routes now require the `instance_agents` feature, and the dashboard shell hides the Sessions nav entry plus renders a disabled-state panel on direct access when that feature is off
 
 ### 2.13 Instance-aware Agent Contract and Prompt Stack consumers
 
@@ -310,6 +311,8 @@ Verified:
 - `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/contract.spec.ts tests/e2e/prompt-stack.spec.ts --reporter=line`
 - `go test ./internal/channels/dashboard -run 'TestMonitor.*|Test.*Monitor.*' -count=1`
 - `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/monitor.spec.ts --reporter=line`
+- `go test ./internal/channels/dashboard -run 'TestListChatSessionsEndpoint|TestListChatSessionsEndpointPagination|TestChatSessionMessagesEndpoint|TestChatSessionMessagesEndpointIncludesToolMetadata|TestChatSessionMessagesEndpointIncludesLifecycleMetadata|TestChatSessionMessagesEndpointPreservesMultiStepOrder|TestSessionsRoutesRequireInstanceAgentsFeature|TestListChatSessionsEndpointInvalidLimit' -count=1`
+- `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/sessions.spec.ts --reporter=line`
 
 Note: one broader `go test ./internal/runtime ./...` package pass exposed an existing flaky/unrelated failure in `TestEngineExecuteIngestsMemoryEventsWhenEnabled`, but the focused rerun of that test passed immediately and the targeted package suites for the changed slices passed.
 
@@ -474,6 +477,7 @@ Status update:
 - Sessions, Agent Contract, and Prompt Stack pages now consume canonical instance identity more explicitly; remaining UI work should prioritize broader active-instance visibility, canonical wizard flows, and consistent feature-state presentation across the rest of the dashboard
 - shared feature-state presentation now also covers disabled nav/direct access behavior for Agent Contract and Prompt Stack; remaining UI work should push the same determinism into other instance-agent-dependent pages
 - shared feature-state presentation now also covers Monitor, Contract, and Prompt Stack; remaining UI work should push the same determinism into more instance-agent-dependent pages and read-only surfaces
+- shared feature-state presentation now also covers Sessions, Monitor, Contract, and Prompt Stack; remaining UI work should push the same determinism into Chat and other instance-agent-dependent pages
 
 Do not:
 

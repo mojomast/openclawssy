@@ -1297,6 +1297,9 @@ func (h *Handler) getAgentMemory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listChatSessions(w http.ResponseWriter, r *http.Request) {
+	if !h.requireInstanceAgentsFeature(w) {
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -1354,6 +1357,9 @@ func (h *Handler) listChatSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) chatSessionMessages(w http.ResponseWriter, r *http.Request) {
+	if !h.requireInstanceAgentsFeature(w) {
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return

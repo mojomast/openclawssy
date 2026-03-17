@@ -293,6 +293,7 @@ Progress update:
 - Agent Monitor now consumes active-instance identity for new launches and uses per-run composite identity for cancel actions, aligning another operator surface with the canonical `(instance_id, agent_id, run_id)` model
 - dashboard nav and direct-route behavior for Agent Contract and Prompt Stack now honor the shared `instance_agents` feature state, hiding disabled entries and showing deterministic disabled-state panels instead of attempting instance-scoped loads
 - Agent Monitor list/control routes and dashboard shell now honor the same shared `instance_agents` feature state, extending deterministic disabled-nav/direct-access behavior to another instance-agent-dependent operator surface
+- Sessions list/detail routes and dashboard shell now honor the same shared `instance_agents` feature state, extending deterministic disabled-nav/direct-access behavior to the transcript/inbox-facing session surface too
 
 ## Milestone 6: Wizard
 

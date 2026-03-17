@@ -1882,6 +1882,34 @@ func TestMonitorRoutesRequireInstanceAgentsFeature(t *testing.T) {
 	assertDashboardErrorCode(t, controlRR.Body.Bytes(), "feature.instance_agents_disabled")
 }
 
+func TestSessionsRoutesRequireInstanceAgentsFeature(t *testing.T) {
+	root := t.TempDir()
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	store := defaultControlPlaneStore()
+	store.Features.InstanceAgents = false
+	if err := h.saveControlPlaneStore(store); err != nil {
+		t.Fatalf("save control plane store: %v", err)
+	}
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/chat/sessions", nil)
+	listRR := httptest.NewRecorder()
+	mux.ServeHTTP(listRR, listReq)
+	if listRR.Code != http.StatusForbidden {
+		t.Fatalf("expected sessions list status %d, got %d (%s)", http.StatusForbidden, listRR.Code, listRR.Body.String())
+	}
+	assertDashboardErrorCode(t, listRR.Body.Bytes(), "feature.instance_agents_disabled")
+
+	messagesReq := httptest.NewRequest(http.MethodGet, "/api/admin/chat/sessions/session-1/messages?limit=10", nil)
+	messagesRR := httptest.NewRecorder()
+	mux.ServeHTTP(messagesRR, messagesReq)
+	if messagesRR.Code != http.StatusForbidden {
+		t.Fatalf("expected session messages status %d, got %d (%s)", http.StatusForbidden, messagesRR.Code, messagesRR.Body.String())
+	}
+	assertDashboardErrorCode(t, messagesRR.Body.Bytes(), "feature.instance_agents_disabled")
+}
+
 func TestListChatSessionsEndpointInvalidLimit(t *testing.T) {
 	root := t.TempDir()
 	h := New(root, httpchannel.NewInMemoryRunStore())

@@ -135,6 +135,9 @@ export function Layout() {
       if (item.path === '/monitor') {
         return !featuresLoading && features.instanceAgents
       }
+      if (item.path === '/sessions') {
+        return !featuresLoading && features.instanceAgents
+      }
       if (item.path === '/agent-contract' || item.path === '/prompt-stack') {
         return !featuresLoading && features.instanceAgents
       }

@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useControlPlaneFeatures } from "@/hooks/useControlPlaneFeatures"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { ApiError, api } from "@/lib/api"
@@ -497,6 +498,7 @@ function metaRange(offset: number, total: number, count: number): { start: numbe
 }
 
 export function SessionsPage() {
+  const { features, loading: featuresLoading } = useControlPlaneFeatures()
   const navigate = useNavigate()
   const params = useParams<{ sessionId?: string }>()
   const [searchParams] = useSearchParams()
@@ -535,6 +537,7 @@ export function SessionsPage() {
     }
     return pathSessionID
   }, [pathSessionID, querySessionID])
+  const featureDisabled = !featuresLoading && !features.instanceAgents
 
   const visibleSessions = useMemo(() => {
     const query = normalizeSearch(searchQuery)
@@ -681,10 +684,33 @@ export function SessionsPage() {
   }, [])
 
   useEffect(() => {
+    if (featuresLoading) {
+      return
+    }
+    if (featureDisabled) {
+      setListLoading(false)
+      setListError("")
+      setSessions([])
+      setTotal(0)
+      setSelectedSessionID("")
+      setSelectedSession(null)
+      setMessages([])
+      setMessagesLoading(false)
+      setMessagesError("")
+      setActiveInboxKey("")
+      setActiveInboxDetail(null)
+      setActiveInboxLoading(false)
+      setActiveInboxError("")
+      setActiveInboxAction("")
+      return
+    }
     void loadSessions()
-  }, [listReloadToken, loadSessions])
+  }, [featureDisabled, featuresLoading, listReloadToken, loadSessions])
 
   useEffect(() => {
+    if (featureDisabled) {
+      return
+    }
     if (!deepLinkedSessionID) {
       return
     }
@@ -692,9 +718,12 @@ export function SessionsPage() {
     if (pathSessionID !== deepLinkedSessionID || querySessionID !== deepLinkedSessionID) {
       navigate(buildSessionRoute(deepLinkedSessionID), { replace: true })
     }
-  }, [deepLinkedSessionID, navigate, pathSessionID, querySessionID])
+  }, [deepLinkedSessionID, featureDisabled, navigate, pathSessionID, querySessionID])
 
   useEffect(() => {
+    if (featureDisabled) {
+      return
+    }
     if (!deepLinkedSessionID) {
       return
     }
@@ -703,11 +732,14 @@ export function SessionsPage() {
     if (matched) {
       setSelectedSession(matched)
     }
-  }, [deepLinkedSessionID, sessions])
+  }, [deepLinkedSessionID, featureDisabled, sessions])
 
   useEffect(() => {
+    if (featureDisabled) {
+      return
+    }
     void loadMessages()
-  }, [loadMessages, messagesReloadToken])
+  }, [featureDisabled, loadMessages, messagesReloadToken])
 
   useEffect(() => {
     setActiveInboxKey("")
@@ -731,6 +763,15 @@ export function SessionsPage() {
           <CardTitle className="text-base">Session list</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {featureDisabled ? (
+            <div className="rounded-md border border-border bg-muted/30 p-4" data-testid="sessions-disabled-state">
+              <p className="text-sm font-medium">Sessions disabled</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Instance agent controls are disabled for this control plane.
+              </p>
+            </div>
+          ) : null}
+
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <label htmlFor="sessions-search" className="space-y-1 text-sm">
               <span>Search</span>
@@ -740,7 +781,7 @@ export function SessionsPage() {
                 placeholder="Session id, title, user, room"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
-                disabled={listLoading}
+                disabled={featureDisabled || listLoading}
               />
             </label>
 
@@ -751,7 +792,7 @@ export function SessionsPage() {
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                 value={sortMode}
                 onChange={(event) => setSortMode(event.target.value as SortMode)}
-                disabled={listLoading}
+                disabled={featureDisabled || listLoading}
               >
                 {SESSION_SORT_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
@@ -772,7 +813,7 @@ export function SessionsPage() {
                   setLimit(Number.isFinite(nextLimit) && nextLimit > 0 ? nextLimit : 25)
                   setOffset(0)
                 }}
-                disabled={listLoading}
+                disabled={featureDisabled || listLoading}
               >
                 {SESSION_PAGE_SIZES.map((value) => (
                   <option key={value} value={value}>
@@ -792,7 +833,7 @@ export function SessionsPage() {
                   variant="outline"
                   size="sm"
                   onClick={() => setOffset((current) => Math.max(0, current - limit))}
-                  disabled={listLoading || offset <= 0}
+                  disabled={featureDisabled || listLoading || offset <= 0}
                 >
                   Prev
                 </Button>
@@ -801,7 +842,7 @@ export function SessionsPage() {
                   variant="outline"
                   size="sm"
                   onClick={() => setOffset((current) => current + limit)}
-                  disabled={listLoading || offset + limit >= total}
+                  disabled={featureDisabled || listLoading || offset + limit >= total}
                 >
                   Next
                 </Button>
@@ -809,13 +850,13 @@ export function SessionsPage() {
             </div>
           </div>
 
-          {listLoading ? (
+          {!featureDisabled && listLoading ? (
             <p className="text-sm text-muted-foreground" data-testid="sessions-list-loading">
               Loading sessions...
             </p>
           ) : null}
 
-          {!listLoading && listError ? (
+          {!featureDisabled && !listLoading && listError ? (
             <div className="space-y-2 rounded-md border border-destructive/50 bg-destructive/5 p-3">
               <p className="text-sm text-destructive">Failed to load sessions: {listError}</p>
               <Button
@@ -829,7 +870,7 @@ export function SessionsPage() {
             </div>
           ) : null}
 
-          {!listLoading && !listError ? (
+          {!featureDisabled && !listLoading && !listError ? (
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">
                 Showing {visibleSessions.length} of {sessions.length} sessions on this page.
@@ -889,7 +930,7 @@ export function SessionsPage() {
           <CardTitle className="text-base">Session detail</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {!selectedSessionID ? (
+          {!featureDisabled && !selectedSessionID ? (
             <p className="text-sm text-muted-foreground">Select a session to inspect messages and tool events.</p>
           ) : null}
 

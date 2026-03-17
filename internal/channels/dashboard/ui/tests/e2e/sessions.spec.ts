@@ -36,6 +36,7 @@ type SessionMockOptions = {
   messagesBySessionID?: Record<string, MockSessionMessage[]>
   listDelayMS?: number
   messageDelayMS?: number
+  instanceAgentsEnabled?: boolean
 }
 
 type SessionMockState = {
@@ -87,6 +88,18 @@ async function installSessionsMocks(page: Page, options: SessionMockOptions): Pr
         ok: true,
         model: { provider: "hatz", name: "glm-4.5" },
         run_count: options.sessions.length,
+      })
+      return
+    }
+
+    if (pathname === "/api/admin/control-plane/features" && method === "GET") {
+      await json(route, {
+        features: {
+          instance_control: true,
+          instance_agents: options.instanceAgentsEnabled ?? true,
+          wizard: true,
+          eval: true,
+        },
       })
       return
     }
@@ -537,4 +550,26 @@ test("path deep-link /#/sessions/:sessionId stays synchronized and allows switch
   await expect(page.getByTestId("sessions-message-stream")).toContainText("Switched to second session")
   await expect(page).toHaveURL(/#\/sessions\/session_next\?session=session_next/)
   await expect.poll(() => state.messageQueries.at(-1)?.sessionID).toBe("session_next")
+})
+
+test("Sessions hides nav entry and shows disabled state when instance agents feature is off", async ({ page }) => {
+  await installSessionsMocks(page, {
+    sessions: [makeSession(1)],
+    instanceAgentsEnabled: false,
+  })
+
+  await page.goto("/dashboard#/sessions")
+
+  await expect(page.getByRole("link", { name: "Sessions" })).toHaveCount(0)
+  await expect(page.getByRole("link", { name: "Monitor" })).toHaveCount(0)
+  await expect(page.getByRole("link", { name: "Agent Contract" })).toHaveCount(0)
+  await expect(page.getByTestId("sessions-disabled-state")).toContainText("Sessions disabled")
+  await expect(page.getByTestId("sessions-disabled-state")).toContainText("Instance agent controls are disabled")
+  await expect(page.getByLabel("Search")).toBeDisabled()
+  await expect(page.getByLabel("Sort")).toBeDisabled()
+  await expect(page.getByLabel("Page size")).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Prev" })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Next" })).toBeDisabled()
+  await expect(page.getByTestId("sessions-table")).toHaveCount(0)
+  await expect(page.getByTestId("sessions-message-stream")).toHaveCount(0)
 })
