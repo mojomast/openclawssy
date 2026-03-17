@@ -522,6 +522,27 @@ func TestAdminStatusIncludesEffectiveRuntimeConfig(t *testing.T) {
 	}
 }
 
+func TestAdminServerControlRestart(t *testing.T) {
+	root := t.TempDir()
+	restarted := make(chan struct{}, 1)
+	h := NewWithOptions(root, httpchannel.NewInMemoryRunStore(), Options{RestartFunc: func() { restarted <- struct{}{} }})
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/server/control", bytes.NewBufferString(`{"action":"restart"}`))
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusOK, rr.Code, rr.Body.String())
+	}
+	select {
+	case <-restarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected restart func to be invoked")
+	}
+}
+
 func TestAdminConfigPatchMergesAndValidateReturnsFieldErrors(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".openclawssy"), 0o755); err != nil {

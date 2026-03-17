@@ -8,6 +8,8 @@ type SettingsApiState = {
   secretKeys: string[]
   configGetCount: number
   patchBodies: Array<Record<string, unknown>>
+  statusFailuresRemaining: number
+  restartCalls: number
 }
 
 function deepClone<T>(value: T): T {
@@ -119,6 +121,11 @@ async function routeSettingsApi(page: Page, state: SettingsApiState) {
     }
 
     if (pathname === "/api/admin/status") {
+      if (state.statusFailuresRemaining > 0) {
+        state.statusFailuresRemaining -= 1
+        await route.fulfill({ status: 504, body: "timeout" })
+        return
+      }
       await json({
         ok: true,
         model: { provider: "hatz", name: "glm-4.5" },
@@ -132,6 +139,12 @@ async function routeSettingsApi(page: Page, state: SettingsApiState) {
           engine: { max_concurrent_runs: 64 },
         },
       })
+      return
+    }
+
+    if (pathname === "/api/admin/server/control" && method === "POST") {
+      state.restartCalls += 1
+      await json({ ok: true, action: "restart", accepted: true })
       return
     }
 
@@ -207,6 +220,8 @@ function createState(): SettingsApiState {
     secretKeys: ["discord/bot_token"],
     configGetCount: 0,
     patchBodies: [],
+    statusFailuresRemaining: 0,
+    restartCalls: 0,
   }
 }
 
@@ -308,6 +323,22 @@ test("Reload Config refetches and restores server state", async ({ page }) => {
   await page.getByRole("button", { name: "Reload" }).click()
   await expect.poll(() => state.configGetCount).toBeGreaterThan(beforeReloadCount)
   await expect(page.locator("label.settings-field:has-text('Server port') input")).toHaveValue("8080")
+})
+
+test("settings still render when status hydration fails and restart can be requested", async ({ page }) => {
+  const state = createState()
+  state.statusFailuresRemaining = 1
+  await routeSettingsApi(page, state)
+
+  await page.goto("/dashboard#/settings")
+
+  await expect(page.getByRole("heading", { name: "Settings", level: 2 })).toBeVisible()
+  await expect(page.locator("label.settings-field:has-text('Server port') input")).toHaveValue("8080")
+
+  page.once("dialog", (dialog) => dialog.accept())
+  await page.getByRole("button", { name: "Restart Openclawssy" }).click()
+  await expect.poll(() => state.restartCalls).toBe(1)
+  await expect(page.getByText("Restart requested. Openclawssy should come back in a few seconds.")).toBeVisible()
 })
 
 test("provider test and model discovery actions render connectivity and discovered-model results", async ({ page }) => {

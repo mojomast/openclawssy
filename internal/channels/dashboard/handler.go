@@ -44,6 +44,7 @@ type Handler struct {
 	runCanceller          dashboardRunCanceller
 	agentRunner           tools.AgentRunner
 	effectiveConfig       *config.Config
+	restartFunc           func()
 	monitorRunMu          sync.Mutex
 	monitorRuns           map[string]monitorRunState
 	promptStackMu         sync.Mutex
@@ -68,6 +69,7 @@ type Options struct {
 	RunCanceller    dashboardRunCanceller
 	AgentRunner     tools.AgentRunner
 	EffectiveConfig *config.Config
+	RestartFunc     func()
 }
 
 type monitorRunRecord struct {
@@ -181,6 +183,7 @@ func NewWithOptions(rootDir string, store httpchannel.RunStore, opts Options) *H
 		runCanceller:          opts.RunCanceller,
 		agentRunner:           opts.AgentRunner,
 		effectiveConfig:       effectiveConfig,
+		restartFunc:           opts.RestartFunc,
 		monitorRuns:           make(map[string]monitorRunState),
 		promptStackByInstance: make(map[string]*promptstack.VersionStore),
 		rollbackByAgent:       make(map[string][]agentRollbackSnapshot),
@@ -193,6 +196,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/dashboard/", h.serveDashboard)
 	mux.HandleFunc("/dashboard/static/", h.serveDashboardStatic)
 	mux.HandleFunc("/api/admin/status", h.getStatus)
+	mux.HandleFunc("/api/admin/server/control", h.handleServerControl)
 	mux.HandleFunc("/api/admin/config", h.handleConfig)
 	mux.HandleFunc("/api/admin/config/validate", h.handleConfigValidate)
 	mux.HandleFunc("/api/admin/providers/test", h.handleProviderTest)
@@ -554,6 +558,30 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 	}
+}
+
+func (h *Handler) handleServerControl(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
+		return
+	}
+	var req struct {
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeDashboardError(w, http.StatusBadRequest, "server_control.invalid_json", "invalid json body", nil)
+		return
+	}
+	if strings.ToLower(strings.TrimSpace(req.Action)) != "restart" {
+		writeDashboardError(w, http.StatusBadRequest, "server_control.invalid_action", "unsupported server control action", nil)
+		return
+	}
+	if h.restartFunc == nil {
+		writeDashboardError(w, http.StatusNotImplemented, "server_control.unavailable", "server restart is not available in this deployment", nil)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "action": "restart", "accepted": true})
+	go h.restartFunc()
 }
 
 func (h *Handler) handleConfigValidate(w http.ResponseWriter, r *http.Request) {

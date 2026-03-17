@@ -517,6 +517,10 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 		}},
 		AgentRunner:     runtime.NewSubAgentRunner(engine),
 		EffectiveConfig: &runtimeCfg,
+		RestartFunc: func() {
+			time.Sleep(200 * time.Millisecond)
+			os.Exit(0)
+		},
 	})
 	server := httpchannel.NewServer(httpchannel.Config{
 		Addr:        serveCfg.Addr,

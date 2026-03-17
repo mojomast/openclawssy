@@ -210,6 +210,7 @@ export function SettingsPage() {
   const [draft, setDraft] = useState<JsonRecord | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [restartPending, setRestartPending] = useState(false)
   const [loadError, setLoadError] = useState("")
   const [saveNotice, setSaveNotice] = useState("")
   const [saveError, setSaveError] = useState("")
@@ -234,8 +235,18 @@ export function SettingsPage() {
     setSaveError("")
     try {
       const loaded = await fetchConfig(apiClient)
-      const status = await fetchStatus(apiClient)
       const cloned = deepClone(loaded)
+      setConfig(cloned)
+      setDraft(cloned)
+      dirtyRef.current = false
+      setRawEditorValue(`${JSON.stringify(cloned, null, 2)}\n`)
+      const profileKeys = Object.keys((loaded.agents?.profiles as JsonRecord) || {})
+      if (profileKeys.length > 0 && !profileKeys.includes(selectedProfile)) {
+        setSelectedProfile(profileKeys[0])
+      }
+      setLoading(false)
+
+      const status = await fetchStatus(apiClient).catch(() => ({} as JsonRecord))
       const runtime = isRecord(status.runtime) ? status.runtime : null
       const runtimeServer = isRecord(runtime?.server) ? runtime.server : null
       const runtimeWorkspace = isRecord(runtime?.workspace) ? runtime.workspace : null
@@ -281,13 +292,10 @@ export function SettingsPage() {
           max_concurrent_runs: readPath(runtimeEngine, "max_concurrent_runs", readPath(cloned, "engine.max_concurrent_runs", 0)),
         }
       }
-      setConfig(cloned)
-      setDraft(cloned)
-      dirtyRef.current = false
-      setRawEditorValue(`${JSON.stringify(cloned, null, 2)}\n`)
-      const profileKeys = Object.keys((loaded.agents?.profiles as JsonRecord) || {})
-      if (profileKeys.length > 0 && !profileKeys.includes(selectedProfile)) {
-        setSelectedProfile(profileKeys[0])
+      if (runtimeServer || runtimeWorkspace || runtimeSandbox || runtimeShell || runtimeOutput || runtimeEngine) {
+        setConfig(cloned)
+        setDraft(cloned)
+        setRawEditorValue(`${JSON.stringify(cloned, null, 2)}\n`)
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load config"
@@ -296,6 +304,25 @@ export function SettingsPage() {
       setLoading(false)
     }
   }, [apiClient, selectedProfile])
+
+  const requestRestart = useCallback(async () => {
+    const confirmed = window.confirm("Restart Openclawssy now? The dashboard may be unavailable for a few seconds.")
+    if (!confirmed) {
+      return
+    }
+    setRestartPending(true)
+    setSaveNotice("")
+    setSaveError("")
+    try {
+      await apiClient.post("/api/admin/server/control", { action: "restart" })
+      setSaveNotice("Restart requested. Openclawssy should come back in a few seconds.")
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to request restart"
+      setSaveError(message)
+    } finally {
+      setRestartPending(false)
+    }
+  }, [apiClient])
 
   useEffect(() => {
     void load()
@@ -654,6 +681,9 @@ export function SettingsPage() {
           </button>
           <button type="button" className="secondary" onClick={() => void reloadConfig()}>
             Reload
+          </button>
+          <button type="button" className="secondary" onClick={() => void requestRestart()} disabled={restartPending}>
+            {restartPending ? "Restarting..." : "Restart Openclawssy"}
           </button>
         </div>
       </section>
