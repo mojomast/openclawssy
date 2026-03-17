@@ -812,4 +812,23 @@ func TestQueueRunPublishesInstanceAwareEvents(t *testing.T) {
 	if !seen {
 		t.Fatal("expected completed event")
 	}
+
+	compositeCh, unsubscribeComposite := eventBus.SubscribeComposite("instance-z", "agent-7", queued.ID, 0)
+	defer unsubscribeComposite()
+	seenComposite := false
+	for event := range compositeCh {
+		if event.Type != RunEventCompleted {
+			continue
+		}
+		seenComposite = true
+		if event.RunID != queued.ID {
+			t.Fatalf("expected composite event to preserve bare run id %q, got %q", queued.ID, event.RunID)
+		}
+		if event.InstanceID != "instance-z" || event.AgentID != "agent-7" {
+			t.Fatalf("expected composite event identity metadata, got %+v", event)
+		}
+	}
+	if !seenComposite {
+		t.Fatal("expected completed composite event")
+	}
 }

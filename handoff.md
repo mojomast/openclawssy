@@ -20,6 +20,10 @@ Date: 2026-03-16
 - Eval storage and dashboard eval API now carry additive `identity { instance_id, agent_id, run_id, parent_run_id }` metadata.
 - Messaging now has a first-class envelope foundation with stable `message_id`, lifecycle status metadata, inbox authorization checks, and communication allowlist enforcement.
 - Runtime trace, audit, stored HTTP runs, dashboard trace/decision surfaces, and eval storage now carry deeper lineage metadata including `parent_run_id` and richer eval identity/runtime fields.
+- `agent.message.send` can now auto-run the recipient agent and drive real inbox lifecycle transitions through `running`, `completed`, and `failed`.
+- Proactive memory hooks now reuse that same message lifecycle path, preserving `parent_run_id` linkage into spawned runs.
+- HTTP SSE/event-bus delivery now supports composite `(instance_id, agent_id, run_id)` subscriptions while dual-publishing to legacy bare `run_id` listeners.
+- Dashboard eval detail panels now render additive identity/runtime/delegation metadata instead of dropping it in the UI.
 
 ## Validation completed
 
@@ -31,6 +35,13 @@ Date: 2026-03-16
 - `go test ./internal/eval`
 - `go test ./cmd/openclawssy`
 - `go test ./internal/channels/dashboard ./internal/eval ./internal/channels/http ./internal/tools ./internal/runtime ./cmd/openclawssy`
+- `go test ./internal/tools ./internal/runtime ./internal/channels/http`
+- `cd internal/channels/dashboard/ui && npm run typecheck`
+- `cd internal/channels/dashboard/ui && npm run build`
+
+Note:
+
+- A broad focused package pass hit an existing flaky/unrelated failure in `internal/runtime` (`TestEngineExecuteIngestsMemoryEventsWhenEnabled`), but rerunning that test directly passed and the targeted changed-package suites succeeded.
 
 ## Important files touched in this RFC pass
 
@@ -63,8 +74,8 @@ Date: 2026-03-16
 Highest priority next:
 
 1. Extend the new messaging lifecycle foundation so more producers/consumers emit `running` / `completed` / `failed` updates through the same `message_id` model.
-2. Connect the richer eval/delegation metadata contract to more real producers and dashboard consumers.
-3. Finish composite identity adoption in remaining dashboard/runtime/SSE consumers.
+2. Connect the richer eval/delegation metadata contract to more real producers and more dashboard consumers beyond the eval detail panel.
+3. Finish composite identity adoption in remaining dashboard/runtime consumers beyond the newly landed SSE/event-bus addressing slice.
 
 Still open overall:
 
@@ -79,7 +90,7 @@ Still open overall:
 - Dashboard instance projection still has lossy compatibility shaping in some paths.
 - Canonical clone fidelity and metadata provenance are not fully complete.
 - Messaging is now instance-scoped and lifecycle-aware, but it is still chatstore-backed rather than a dedicated canonical inbox store.
-- Dashboard/eval/decision views are improved, but some broader composite identity, SSE addressing, and delegation metadata adoption is still incomplete.
+- Dashboard/eval/decision views are improved, but some broader composite identity adoption and delegation metadata rollout is still incomplete.
 
 ## Recommended next starting point
 

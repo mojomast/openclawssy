@@ -75,10 +75,30 @@ export function parseEvalRun(payload: unknown): EvalRun | null {
   const baseline = asRecord(record?.baseline)
   const regressionsRaw = Array.isArray(baseline?.regressions) ? baseline.regressions : []
   const metrics = asRecord(record?.metrics)
+  const identity = asRecord(record?.identity)
+  const metadata = asRecord(record?.metadata)
+  const delegationEvents = Array.isArray(metadata?.delegation_events) ? metadata.delegation_events : []
 
   return {
     id: asNumber(record?.id),
     suite,
+    identity: {
+      instanceID: asText(identity?.instance_id),
+      agentID: asText(identity?.agent_id),
+      runID: asText(identity?.run_id),
+      parentRunID: asText(identity?.parent_run_id),
+      rootRunID: asText(identity?.root_run_id),
+      source: asText(identity?.source),
+      taskID: asText(identity?.task_id),
+      sessionID: asText(identity?.session_id),
+    },
+    metadata: {
+      artifactPath: asText(metadata?.artifact_path),
+      checkpointPath: asText(metadata?.checkpoint_path),
+      decompositionPlan: asRecord(metadata?.decomposition_plan),
+      delegationEvents: delegationEvents.map((entry) => asRecord(entry)).filter((entry): entry is Record<string, unknown> => entry !== null),
+      trace: asRecord(metadata?.trace),
+    },
     timestamp: asText(record?.timestamp),
     total: asNumber(record?.total),
     passed: asNumber(record?.passed),
@@ -155,4 +175,16 @@ export function statusBadgeClass(status: string): string {
     return "bg-destructive text-destructive-foreground"
   }
   return "bg-emerald-600 text-white"
+}
+
+export function formatValue(value: string): string {
+  return value.trim() || "-"
+}
+
+export function countDelegationEvents(events: Array<Record<string, unknown>>): number {
+  return events.length
+}
+
+export function summarizeDelegationMode(plan: Record<string, unknown> | null): string {
+  return formatValue(asText(plan?.delegation_mode))
 }

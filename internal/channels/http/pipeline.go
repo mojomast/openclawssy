@@ -84,6 +84,7 @@ func executeQueuedRun(ctx context.Context, store RunStore, executor RunExecutor,
 	}
 	if opts.EventBus != nil {
 		defer opts.EventBus.Close(run.ID)
+		defer opts.EventBus.CloseComposite(run.InstanceID, run.AgentID, run.ID)
 	}
 
 	run.Status = "running"
@@ -210,7 +211,11 @@ func publishQueueRunEvent(bus *RunEventBus, run Run, eventType RunEventType, dat
 	if bus == nil {
 		return
 	}
-	bus.Publish(run.ID, RunEvent{Type: eventType, InstanceID: run.InstanceID, AgentID: run.AgentID, Data: data})
+	event := RunEvent{Type: eventType, InstanceID: run.InstanceID, AgentID: run.AgentID, Data: data}
+	bus.Publish(run.ID, event)
+	if strings.TrimSpace(run.InstanceID) != "" || strings.TrimSpace(run.AgentID) != "" {
+		bus.PublishComposite(run.InstanceID, run.AgentID, run.ID, event)
+	}
 }
 
 func progressEventType(eventType string) (RunEventType, bool) {

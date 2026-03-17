@@ -109,10 +109,21 @@ type fakeAgentRunner struct {
 
 func (f *fakeAgentRunner) ExecuteSubAgent(_ context.Context, input AgentRunInput) (AgentRunOutput, error) {
 	f.lastInput = input
-	if f.err != nil {
-		return AgentRunOutput{}, f.err
+	out := f.result
+	if out.MessageID == "" {
+		out.MessageID = input.MessageID
 	}
-	return f.result, nil
+	if out.Status == "" {
+		if f.err != nil {
+			out.Status = agentMessageStatusFailed
+		} else {
+			out.Status = agentMessageStatusCompleted
+		}
+	}
+	if f.err != nil {
+		return out, f.err
+	}
+	return out, nil
 }
 
 func (s *shOnlyFallbackShell) Exec(ctx context.Context, command string, args []string, workDir string) (string, string, int, error) {
@@ -2562,6 +2573,122 @@ func TestAgentMessageInboxRejectsCrossAgentReadWithoutPolicyAdmin(t *testing.T) 
 	ctx := WithRequestContext(context.Background(), RequestContext{InstanceID: "default"})
 	if _, err := reg.Execute(ctx, "sender", "agent.message.inbox", ws, map[string]any{"agent_id": "receiver", "limit": 5}); err == nil {
 		t.Fatal("expected cross-agent inbox read to require policy.admin")
+	}
+}
+
+func TestAgentMessageSendAutoRunMarksLifecycleCompleted(t *testing.T) {
+	root := t.TempDir()
+	ws := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	cfgPath := filepath.Join(root, ".openclawssy", "config.json")
+	cfg := config.Default()
+	cfg.Workspace.Root = ws
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save config fixture: %v", err)
+	}
+	agentsPath := filepath.Join(root, ".openclawssy", "agents")
+	runner := &fakeAgentRunner{result: AgentRunOutput{RunID: "run_auto", FinalText: "done"}}
+	enforcer := policy.NewEnforcer(ws, map[string][]string{"sender": {"agent.message.send"}, "receiver": {"agent.message.inbox"}})
+	reg := NewRegistry(enforcer, nil)
+	if err := RegisterCoreWithOptions(reg, CoreOptions{EnableShellExec: true, ConfigPath: cfgPath, AgentsPath: agentsPath, AgentRunner: runner}); err != nil {
+		t.Fatalf("register core: %v", err)
+	}
+	if _, err := instances.BootstrapDefaultInstance(root); err != nil {
+		t.Fatalf("bootstrap default instance: %v", err)
+	}
+	if err := instances.SaveAgentManifest(root, "default", instances.DefaultAgentManifest("sender")); err != nil {
+		t.Fatalf("save sender agent manifest: %v", err)
+	}
+	if err := instances.SaveAgentManifest(root, "default", instances.DefaultAgentManifest("receiver")); err != nil {
+		t.Fatalf("save receiver agent manifest: %v", err)
+	}
+
+	ctx := WithRequestContext(context.Background(), RequestContext{InstanceID: "default"})
+	res, err := reg.Execute(ctx, "sender", "agent.message.send", ws, map[string]any{
+		"to_agent_id":   "receiver",
+		"message":       "hello",
+		"task_id":       "task-1",
+		"session_id":    "session-1",
+		"source":        "test-suite",
+		"parent_run_id": "run-parent",
+		"auto_run":      true,
+	})
+	if err != nil {
+		t.Fatalf("agent.message.send auto_run: %v", err)
+	}
+	if res["status"] != agentMessageStatusCompleted || res["run_id"] != "run_auto" {
+		t.Fatalf("expected completed auto-run result, got %#v", res)
+	}
+	if runner.lastInput.ParentRunID != "run-parent" || runner.lastInput.Source != "test-suite" || runner.lastInput.MessageID == "" {
+		t.Fatalf("unexpected runner input: %#v", runner.lastInput)
+	}
+
+	inbox, err := reg.Execute(ctx, "receiver", "agent.message.inbox", ws, map[string]any{"agent_id": "receiver", "limit": 5})
+	if err != nil {
+		t.Fatalf("agent.message.inbox: %v", err)
+	}
+	var msg map[string]any
+	if typed, ok := inbox["messages"].([]map[string]any); ok {
+		if len(typed) == 0 {
+			t.Fatalf("expected inbox messages, got %#v", inbox["messages"])
+		}
+		msg = typed[0]
+	} else {
+		rawMsgs, ok := inbox["messages"].([]any)
+		if !ok || len(rawMsgs) == 0 {
+			t.Fatalf("expected inbox messages, got %#v", inbox["messages"])
+		}
+		var castOK bool
+		msg, castOK = rawMsgs[0].(map[string]any)
+		if !castOK {
+			t.Fatalf("expected first message map, got %#v", rawMsgs[0])
+		}
+	}
+	if msg["status"] != agentMessageStatusCompleted || msg["related_run_id"] != "run_auto" {
+		t.Fatalf("expected completed inbox lifecycle, got %#v", msg)
+	}
+}
+
+func TestAgentRunMessageLifecycleMarksFailure(t *testing.T) {
+	root := t.TempDir()
+	ws := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	cfgPath := filepath.Join(root, ".openclawssy", "config.json")
+	cfg := config.Default()
+	cfg.Workspace.Root = ws
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save config fixture: %v", err)
+	}
+	agentsPath := filepath.Join(root, ".openclawssy", "agents")
+	runner := &fakeAgentRunner{result: AgentRunOutput{RunID: "run_fail"}, err: errors.New("runner failed")}
+	enforcer := policy.NewEnforcer(ws, map[string][]string{"agent": {"agent.run", "agent.message.inbox"}})
+	reg := NewRegistry(enforcer, nil)
+	if err := RegisterCoreWithOptions(reg, CoreOptions{EnableShellExec: true, ConfigPath: cfgPath, AgentsPath: agentsPath, AgentRunner: runner}); err != nil {
+		t.Fatalf("register core: %v", err)
+	}
+	if _, err := instances.BootstrapDefaultInstance(root); err != nil {
+		t.Fatalf("bootstrap default instance: %v", err)
+	}
+	if err := instances.SaveAgentManifest(root, "default", instances.DefaultAgentManifest("agent")); err != nil {
+		t.Fatalf("save agent manifest: %v", err)
+	}
+
+	ctx := WithRequestContext(context.Background(), RequestContext{InstanceID: "default"})
+	_, err := reg.Execute(ctx, "agent", "agent.run", ws, map[string]any{
+		"agent_id":         "agent",
+		"message":          "hello",
+		"message_id":       "msg-test",
+		"inbox_session_id": "missing-session",
+	})
+	if err == nil {
+		t.Fatal("expected agent.run failure from runner")
+	}
+	if runner.lastInput.MessageID != "msg-test" {
+		t.Fatalf("expected message_id to propagate to runner, got %#v", runner.lastInput)
 	}
 }
 

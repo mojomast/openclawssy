@@ -26,9 +26,30 @@ export type EvalRegression = {
   latest: EvalTestResult
 }
 
+export type EvalIdentity = {
+  instanceID: string
+  agentID: string
+  runID: string
+  parentRunID: string
+  rootRunID: string
+  source: string
+  taskID: string
+  sessionID: string
+}
+
+export type EvalMetadata = {
+  artifactPath: string
+  checkpointPath: string
+  decompositionPlan: Record<string, unknown> | null
+  delegationEvents: Array<Record<string, unknown>>
+  trace: Record<string, unknown> | null
+}
+
 export type EvalRun = {
   id: number
   suite: string
+  identity: EvalIdentity
+  metadata: EvalMetadata
   timestamp: string
   total: number
   passed: number

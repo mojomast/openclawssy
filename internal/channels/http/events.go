@@ -1,6 +1,7 @@
 package httpchannel
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -66,6 +67,19 @@ func NewRunEventBus(replayLimit int) *RunEventBus {
 	}
 }
 
+func runEventCompositeKey(instanceID, agentID, runID string) string {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return ""
+	}
+	instanceID = strings.TrimSpace(instanceID)
+	agentID = strings.TrimSpace(agentID)
+	if instanceID == "" && agentID == "" {
+		return runID
+	}
+	return fmt.Sprintf("%s:%s:%s", instanceID, agentID, runID)
+}
+
 func (b *RunEventBus) Subscribe(runID string, lastEventID int64) (<-chan RunEvent, func()) {
 	runID = strings.TrimSpace(runID)
 	if runID == "" {
@@ -118,16 +132,25 @@ func (b *RunEventBus) Subscribe(runID string, lastEventID int64) (<-chan RunEven
 	return ch, unsubscribe
 }
 
+func (b *RunEventBus) SubscribeComposite(instanceID, agentID, runID string, lastEventID int64) (<-chan RunEvent, func()) {
+	return b.Subscribe(runEventCompositeKey(instanceID, agentID, runID), lastEventID)
+}
+
 func (b *RunEventBus) Publish(runID string, event RunEvent) {
-	runID = strings.TrimSpace(runID)
-	if runID == "" {
+	b.publish(runID, runID, event)
+}
+
+func (b *RunEventBus) publish(stateKey, publicRunID string, event RunEvent) {
+	stateKey = strings.TrimSpace(stateKey)
+	publicRunID = strings.TrimSpace(publicRunID)
+	if stateKey == "" || publicRunID == "" {
 		return
 	}
 
 	b.mu.Lock()
-	state := b.ensureRunLocked(runID)
+	state := b.ensureRunLocked(stateKey)
 
-	event.RunID = runID
+	event.RunID = publicRunID
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now().UTC()
 	}
@@ -155,6 +178,10 @@ func (b *RunEventBus) Publish(runID string, event RunEvent) {
 	b.mu.Unlock()
 }
 
+func (b *RunEventBus) PublishComposite(instanceID, agentID, runID string, event RunEvent) {
+	b.publish(runEventCompositeKey(instanceID, agentID, runID), strings.TrimSpace(runID), event)
+}
+
 func (b *RunEventBus) Close(runID string) {
 	runID = strings.TrimSpace(runID)
 	if runID == "" {
@@ -173,6 +200,10 @@ func (b *RunEventBus) Close(runID string) {
 		close(sub)
 	}
 	b.mu.Unlock()
+}
+
+func (b *RunEventBus) CloseComposite(instanceID, agentID, runID string) {
+	b.Close(runEventCompositeKey(instanceID, agentID, runID))
 }
 
 func (b *RunEventBus) unsubscribe(runID string, subID int64) {

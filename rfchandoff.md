@@ -90,6 +90,7 @@ Current capabilities:
 - `POST /v1/runs` accepts optional `instance_id`
 - persisted HTTP runs store `instance_id`
 - SSE run events include `instance_id` and `agent_id`
+- SSE/event-bus subscribers can now opt into composite `(instance_id, agent_id, run_id)` addressing while compatibility subscribers still receive dual-published bare `run_id` events
 - HTTP queued-run tracker now stores both bare `run_id` and composite `instance_id:agent_id:run_id`
 - HTTP cancel keeps bare `run_id` compatibility and falls back to composite identity
 - `agent.message.send` and `agent.message.inbox` are explicitly instance-scoped
@@ -134,11 +135,28 @@ Current capabilities:
 - inter-agent inbox messages now carry stable `message_id`
 - `agent.message.send` returns lifecycle metadata (`message_id`, `status`) and persists structured envelope fields alongside legacy raw content
 - inbox entries now expose structured lifecycle metadata and collapse repeated status updates by `message_id`
+- `agent.message.send` can optionally auto-run the recipient agent and now emits real `running` / `completed` / `failed` lifecycle transitions through the shared message model
+- `agent.run` reuses the same lifecycle helper when invoked against an existing `message_id`
 - sender/recipient communication allowlists are enforced when present (`can_message`, `can_receive_from`)
 - cross-agent inbox reads now require `policy.admin`
 - runtime trace, audit, and stored HTTP runs now carry additive `parent_run_id`
 - trace and audit metadata now surface additive `instance_id` / `agent_id` lineage directly instead of forcing all consumers to infer from file paths
 - eval storage now preserves richer additive identity/runtime metadata (`root_run_id`, `source`, `task_id`, `session_id`, artifact/checkpoint/delegation/trace metadata)
+- proactive memory-triggered inbox delivery now uses the shared auto-run lifecycle path and preserves `parent_run_id` linkage into spawned agent execution
+
+### 2.8 Dashboard eval metadata consumer adoption
+
+Implemented in:
+
+- `internal/channels/dashboard/ui/src/pages/eval/types.ts`
+- `internal/channels/dashboard/ui/src/pages/eval/utils.ts`
+- `internal/channels/dashboard/ui/src/pages/eval/EvalRunDetailPanel.tsx`
+
+Current capabilities:
+
+- dashboard eval parsing now preserves additive `identity` and `metadata` blocks returned by the backend
+- eval detail panels now render instance/agent/run lineage, task/session/source linkage, artifact/checkpoint paths, and a lightweight delegation summary for operators
+- delegation/decomposition metadata is now visible in the dashboard without requiring raw JSON inspection
 
 ### 3. Tests currently passing
 
@@ -151,8 +169,11 @@ Verified:
 - `go test ./internal/eval`
 - `go test ./cmd/openclawssy`
 - `go test ./internal/channels/dashboard ./internal/eval ./internal/channels/http ./internal/tools ./internal/runtime ./cmd/openclawssy`
+- `go test ./internal/tools ./internal/runtime ./internal/channels/http`
+- `cd internal/channels/dashboard/ui && npm run typecheck`
+- `cd internal/channels/dashboard/ui && npm run build`
 
-Note: dashboard tests pass and the instance API backend has been moved onto canonical storage, but there is still projection debt, UI wiring remaining, and some eval/delegation surfaces still need deeper normalization.
+Note: one broader `go test ./internal/runtime ./...` package pass exposed an existing flaky/unrelated failure in `TestEngineExecuteIngestsMemoryEventsWhenEnabled`, but the focused rerun of that test passed immediately and the targeted package suites for the changed slices passed.
 
 ## Previously Non-Canonical Area That Has Since Been Reworked
 
@@ -214,9 +235,9 @@ Not finished:
 - canonical wizard backend
 - dashboard/UI integration
 - deepen first-class messaging / inbox lifecycle wiring so more producers/consumers emit `running` / `completed` / `failed` updates through the same message model
-- finish composite run identity adoption across remaining runtime + HTTP + eval/dashboard consumers, especially SSE/event-bus addressing
+- finish composite run identity adoption across remaining runtime + HTTP + eval/dashboard consumers beyond the newly landed SSE/event-bus addressing slice
 - feature flag enforcement from one canonical source across UI/API/runtime
-- connect richer eval/delegation metadata to more real producers/CLI flows beyond the current additive storage contract
+- connect richer eval/delegation metadata to more real producers/CLI flows and more dashboard surfaces beyond the current additive storage contract + eval detail panel
 - migration cleanup of remaining legacy flat-agent callers
 
 ## Required Parallel Subagent Plan
