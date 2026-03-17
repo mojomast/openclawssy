@@ -36,6 +36,7 @@ Date: 2026-03-16
 - Shared control-plane compatibility feature loading now lives in `internal/instances`, and `openclawssy eval` operational subcommands are blocked when eval is disabled.
 - Dashboard inbox list/detail APIs now preserve the original message envelope across ack/run lifecycle updates by merging rows per `message_id` instead of returning sparse latest-row snapshots.
 - Sessions lifecycle cards now open the canonical inbox detail view and let operators trigger inbox `ack` / `run` actions without leaving the session transcript.
+- Delegation events now carry additive `parent_run_id`, `from_agent_id`, and `to_agent_id` metadata so delegated subagent work is easier to correlate across trace, ledger, and inbox-aligned operator surfaces.
 
 ## Validation completed
 
@@ -60,6 +61,7 @@ Date: 2026-03-16
 - `go test ./internal/channels/dashboard -run 'TestInstanceScopedPromptStackRoutesIsolateSameAgentID|TestInstanceScopedContractResolvedAndDiffEndpointsUseRequestedInstance|TestChatSessionMessagesEndpointIncludesLifecycleMetadata' -count=1`
 - `go test ./internal/channels/dashboard -run 'TestInstanceInboxListAckAndRunFlow' -count=1`
 - `go test ./internal/channels/dashboard ./internal/tools ./internal/runtime`
+- `go test ./internal/agent ./internal/runtime ./internal/tools`
 - `cd internal/channels/dashboard/ui && npm run typecheck`
 - `cd internal/channels/dashboard/ui && npm run build`
 - `cd internal/channels/dashboard/ui && npm run build`

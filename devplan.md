@@ -201,6 +201,7 @@ Completed or substantially landed:
 - control-plane compatibility feature loading now lives in `internal/instances`, and `openclawssy eval` operational CLI commands are runtime-gated when eval is disabled
 - dashboard inbox list/detail handlers now merge lifecycle rows by `message_id`, preserving original message/task/source fields while surfacing the latest status and related run linkage
 - Sessions lifecycle cards now open canonical inbox detail and expose inbox `ack` / `run` actions, making the shared `message_id` lifecycle model directly actionable from the session transcript
+- delegation events now preserve additive `parent_run_id`, `from_agent_id`, and `to_agent_id` metadata, reducing another gap between delegated execution and the canonical inbox/run identity model
 
 Still open:
 
@@ -287,6 +288,7 @@ Progress update:
 - dashboard Agent Contract and Prompt Stack flows now consume canonical instance-scoped routes instead of silently binding to the active instance, while preserving legacy flat-route compatibility wrappers
 - dashboard inbox list/detail APIs now match the shared tool inbox semantics by projecting merged lifecycle state per `message_id` instead of sparse latest-row snapshots
 - Sessions now consumes those canonical inbox detail/ack/run endpoints from lifecycle cards, closing another dashboard-side gap between session history and the shared inbox model
+- delegated subagent execution now records additive parent/sender/recipient identity in `DelegationEvent`, so trace/ledger/eval consumers can correlate delegated work to the same instance/agent/run/message model more directly
 
 ## Milestone 6: Wizard
 

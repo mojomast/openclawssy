@@ -260,6 +260,9 @@ func TestRecordDelegationEventsPersistsEventsInTrace(t *testing.T) {
 	collector := newRunTraceCollector("default", "agent-a", "run_events", "run-root", "session_events", "dashboard", "delegate")
 	events := []agent.DelegationEvent{
 		{
+			ParentRunID:    "run-root",
+			FromAgentID:    "planner",
+			ToAgentID:      "implementer",
 			TriggerReason:  "failure loop",
 			SelectedRole:   "implementer",
 			Confidence:     0.78,
@@ -284,5 +287,8 @@ func TestRecordDelegationEventsPersistsEventsInTrace(t *testing.T) {
 	}
 	if event["task_assignment"] != "implement fix" {
 		t.Fatalf("expected task_assignment preserved, got %#v", event["task_assignment"])
+	}
+	if event["parent_run_id"] != "run-root" || event["from_agent_id"] != "planner" || event["to_agent_id"] != "implementer" {
+		t.Fatalf("expected additive delegation identity preserved, got %#v", event)
 	}
 }

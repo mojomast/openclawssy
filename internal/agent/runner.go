@@ -530,9 +530,16 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 		if failedDependency != "" {
 			failureMessage := fmt.Sprintf("FAILED: dependency %s failed", failedDependency)
 			s.completedSubtasks[routedTask.TaskID] = failureMessage
+			parentRunID := strings.TrimSpace(routedTask.ParentRunID)
+			if parentRunID == "" {
+				parentRunID = strings.TrimSpace(input.RunID)
+			}
 			s.recordDelegationEvent(ctx, DelegationEvent{
 				Timestamp:      time.Now().UTC(),
 				TaskID:         routedTask.TaskID,
+				ParentRunID:    parentRunID,
+				FromAgentID:    strings.TrimSpace(input.AgentID),
+				ToAgentID:      strings.TrimSpace(routedTask.AgentID),
 				TriggerReason:  strings.TrimSpace(s.delegationReason),
 				SelectedRole:   routedTask.AssignedRole,
 				Confidence:     routedTask.RoutingConfidence,
@@ -560,6 +567,10 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 
 			result, execErr := r.SubAgentRunner.ExecuteSubAgent(taskCtx, modifiedTask)
 			cancel()
+			parentRunID := strings.TrimSpace(routedTask.ParentRunID)
+			if parentRunID == "" {
+				parentRunID = strings.TrimSpace(input.RunID)
+			}
 
 			if execErr == nil && result.Success {
 				slog.Debug("delegation: subtask completed", "task_id", routedTask.TaskID, "success", result.Success, "output_len", len(result.FinalText))
@@ -573,6 +584,9 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 					TaskID:         routedTask.TaskID,
 					MessageID:      strings.TrimSpace(result.MessageID),
 					RelatedRunID:   strings.TrimSpace(result.RunID),
+					ParentRunID:    parentRunID,
+					FromAgentID:    strings.TrimSpace(input.AgentID),
+					ToAgentID:      strings.TrimSpace(routedTask.AgentID),
 					TriggerReason:  strings.TrimSpace(s.delegationReason),
 					SelectedRole:   routedTask.AssignedRole,
 					Confidence:     routedTask.RoutingConfidence,
@@ -604,6 +618,9 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 					TaskID:         routedTask.TaskID,
 					MessageID:      strings.TrimSpace(result.MessageID),
 					RelatedRunID:   strings.TrimSpace(result.RunID),
+					ParentRunID:    parentRunID,
+					FromAgentID:    strings.TrimSpace(input.AgentID),
+					ToAgentID:      strings.TrimSpace(routedTask.AgentID),
 					TriggerReason:  strings.TrimSpace(s.delegationReason),
 					SelectedRole:   routedTask.AssignedRole,
 					Confidence:     routedTask.RoutingConfidence,
@@ -621,6 +638,9 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 					TaskID:         routedTask.TaskID,
 					MessageID:      strings.TrimSpace(result.MessageID),
 					RelatedRunID:   strings.TrimSpace(result.RunID),
+					ParentRunID:    parentRunID,
+					FromAgentID:    strings.TrimSpace(input.AgentID),
+					ToAgentID:      strings.TrimSpace(routedTask.AgentID),
 					TriggerReason:  strings.TrimSpace(s.delegationReason),
 					SelectedRole:   routedTask.AssignedRole,
 					Confidence:     routedTask.RoutingConfidence,
@@ -635,6 +655,9 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 					TaskID:         routedTask.TaskID,
 					MessageID:      strings.TrimSpace(result.MessageID),
 					RelatedRunID:   strings.TrimSpace(result.RunID),
+					ParentRunID:    parentRunID,
+					FromAgentID:    strings.TrimSpace(input.AgentID),
+					ToAgentID:      strings.TrimSpace(routedTask.AgentID),
 					TriggerReason:  strings.TrimSpace(s.delegationReason),
 					SelectedRole:   routedTask.AssignedRole,
 					Confidence:     routedTask.RoutingConfidence,

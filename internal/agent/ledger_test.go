@@ -257,6 +257,8 @@ func TestIntegrationDelegationEventsEmitLedgerRecordsWithRoutingContext(t *testi
 			selectedRole, _ := record.Payload["selected_role"].(string)
 			taskAssignment, _ := record.Payload["task_assignment"].(string)
 			parentRunID, _ := record.Payload["parent_run_id"].(string)
+			fromAgentID, _ := record.Payload["from_agent_id"].(string)
+			toAgentID, _ := record.Payload["to_agent_id"].(string)
 
 			if strings.TrimSpace(triggerReason) == "" {
 				t.Fatalf("expected trigger_reason in payload, got %+v", record.Payload)
@@ -269,6 +271,12 @@ func TestIntegrationDelegationEventsEmitLedgerRecordsWithRoutingContext(t *testi
 			}
 			if parentRunID != "run-integration-ledger" {
 				t.Fatalf("expected parent_run_id run-integration-ledger, got %q", parentRunID)
+			}
+			if strings.TrimSpace(fromAgentID) == "" {
+				t.Fatalf("expected from_agent_id in payload, got %+v", record.Payload)
+			}
+			if strings.TrimSpace(event.ToAgentID) != "" && strings.TrimSpace(toAgentID) == "" {
+				t.Fatalf("expected to_agent_id in payload, got %+v", record.Payload)
 			}
 
 			matched = true
@@ -292,7 +300,7 @@ func assertDelegationTriggerPayloadContract(t *testing.T, record DecisionRecord,
 		t.Fatalf("expected delegation payload, got nil for record %+v", record)
 	}
 
-	requiredNonEmpty := []string{"trigger_reason", "selected_role", "task_assignment", "parent_run_id"}
+	requiredNonEmpty := []string{"trigger_reason", "selected_role", "task_assignment", "parent_run_id", "from_agent_id"}
 	for _, key := range requiredNonEmpty {
 		value, ok := payload[key]
 		if !ok {
@@ -309,6 +317,12 @@ func assertDelegationTriggerPayloadContract(t *testing.T, record DecisionRecord,
 
 	if got := strings.TrimSpace(payload["parent_run_id"].(string)); got != expectedParentRunID {
 		t.Fatalf("expected parent_run_id=%q, got %q in payload %+v", expectedParentRunID, got, payload)
+	}
+
+	if toAgentID, ok := payload["to_agent_id"]; ok {
+		if _, ok := toAgentID.(string); !ok {
+			t.Fatalf("expected to_agent_id to be string when present, got %T (%#v)", toAgentID, toAgentID)
+		}
 	}
 
 	if _, ok := payload["confidence"]; !ok {

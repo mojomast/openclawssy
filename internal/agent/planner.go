@@ -43,6 +43,9 @@ type DelegationEvent struct {
 	TaskID         string    `json:"task_id,omitempty"`
 	MessageID      string    `json:"message_id,omitempty"`
 	RelatedRunID   string    `json:"related_run_id,omitempty"`
+	ParentRunID    string    `json:"parent_run_id,omitempty"`
+	FromAgentID    string    `json:"from_agent_id,omitempty"`
+	ToAgentID      string    `json:"to_agent_id,omitempty"`
 	TriggerReason  string    `json:"trigger_reason"`
 	SelectedRole   string    `json:"selected_role"`
 	Confidence     float64   `json:"confidence"`

@@ -2301,6 +2301,12 @@ func TestExecuteDelegatedTasksRecordsMessageBackedLifecycleMetadata(t *testing.T
 	if last.RelatedRunID != "sub-run-1" {
 		t.Fatalf("expected related run id in delegation event, got %+v", last)
 	}
+	if last.ParentRunID != "run-parent" {
+		t.Fatalf("expected parent run id in delegation event, got %+v", last)
+	}
+	if last.ToAgentID != "default" {
+		t.Fatalf("expected target agent in delegation event, got %+v", last)
+	}
 	if len(subRunner.calls) != 1 || subRunner.calls[0].ParentRunID != "run-parent" {
 		t.Fatalf("expected delegated task parent linkage, got %#v", subRunner.calls)
 	}

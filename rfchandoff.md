@@ -145,6 +145,7 @@ Current capabilities:
 - proactive memory-triggered inbox delivery now uses the shared auto-run lifecycle path and preserves `parent_run_id` linkage into spawned agent execution
 - delegated subagent execution now synthesizes stable delegated `message_id` values and propagates them back through `SubAgentOutput`
 - delegation ledger events now persist additive `message_id` and `related_run_id` fields so delegated task outcomes can be correlated with shared message lifecycle metadata
+- delegation events now also persist additive `parent_run_id`, `from_agent_id`, and `to_agent_id` fields so trace/ledger consumers can correlate delegated work with sender/recipient identity without inferring it from surrounding context
 - runtime `RunTracker` now exposes composite track/cancel/remove helpers so runtime and tool-layer cancellation can converge on the same `(instance_id, agent_id, run_id)` identity model
 - `run.cancel` now accepts optional `instance_id` and `agent_id`, rejects partial composite identity, and prefers composite cancellation before falling back to legacy bare `run_id`
 
@@ -300,6 +301,7 @@ Verified:
 - `cd internal/channels/dashboard/ui && npm run build && CI=1 npx playwright test tests/e2e/contract.spec.ts tests/e2e/prompt-stack.spec.ts --reporter=line`
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/sessions.spec.ts --reporter=line`
 - `cd internal/channels/dashboard/ui && npm run build`
+- `go test ./internal/agent ./internal/runtime ./internal/tools`
 
 Note: one broader `go test ./internal/runtime ./...` package pass exposed an existing flaky/unrelated failure in `TestEngineExecuteIngestsMemoryEventsWhenEnabled`, but the focused rerun of that test passed immediately and the targeted package suites for the changed slices passed.
 

@@ -329,6 +329,13 @@ func (s *runState) normalizeDelegationTriggerPayload(payload map[string]any) map
 		sourceAgentID = strings.TrimSpace(s.agentID)
 	}
 
+	fromAgentID := strings.TrimSpace(stringValueFromAny(normalized["from_agent_id"]))
+	if fromAgentID == "" {
+		fromAgentID = sourceAgentID
+	}
+
+	toAgentID := strings.TrimSpace(stringValueFromAny(normalized["to_agent_id"]))
+
 	normalized["trigger_reason"] = triggerReason
 	normalized["reason"] = triggerReason
 	normalized["selected_role"] = selectedRole
@@ -338,6 +345,8 @@ func (s *runState) normalizeDelegationTriggerPayload(payload map[string]any) map
 	normalized["event_timestamp"] = eventTimestamp
 	normalized["source_run_id"] = sourceRunID
 	normalized["source_agent_id"] = sourceAgentID
+	normalized["from_agent_id"] = fromAgentID
+	normalized["to_agent_id"] = toAgentID
 
 	return normalized
 }
@@ -1835,9 +1844,15 @@ func (s *runState) setLastModelOutput(output string) {
 
 func (s *runState) appendPlannedDelegationEvents(ctx context.Context, plan DecompositionPlan) {
 	for _, task := range plan.Tasks {
+		parentRunID := strings.TrimSpace(s.runID)
+		if parentRunID == "" {
+			parentRunID = strings.TrimSpace(s.parentRunID)
+		}
 		s.recordDelegationEvent(ctx, DelegationEvent{
 			Timestamp:      time.Now().UTC(),
 			TaskID:         task.TaskID,
+			ParentRunID:    parentRunID,
+			FromAgentID:    strings.TrimSpace(s.agentID),
 			TriggerReason:  strings.TrimSpace(plan.TriggerReason),
 			SelectedRole:   strings.TrimSpace(task.AssignedRole),
 			Confidence:     task.Confidence,
@@ -1859,6 +1874,9 @@ func (s *runState) appendDelegationEvent(event DelegationEvent) {
 	event.Outcome = strings.TrimSpace(event.Outcome)
 	event.MessageID = strings.TrimSpace(event.MessageID)
 	event.RelatedRunID = strings.TrimSpace(event.RelatedRunID)
+	event.ParentRunID = strings.TrimSpace(event.ParentRunID)
+	event.FromAgentID = strings.TrimSpace(event.FromAgentID)
+	event.ToAgentID = strings.TrimSpace(event.ToAgentID)
 	s.out.DelegationEvents = append(s.out.DelegationEvents, event)
 }
 
@@ -1869,6 +1887,9 @@ func (s *runState) recordDelegationEvent(ctx context.Context, event DelegationEv
 		"task_id":           strings.TrimSpace(event.TaskID),
 		"message_id":        strings.TrimSpace(event.MessageID),
 		"related_run_id":    strings.TrimSpace(event.RelatedRunID),
+		"parent_run_id":     strings.TrimSpace(event.ParentRunID),
+		"from_agent_id":     strings.TrimSpace(event.FromAgentID),
+		"to_agent_id":       strings.TrimSpace(event.ToAgentID),
 		"trigger_reason":    strings.TrimSpace(event.TriggerReason),
 		"selected_role":     strings.TrimSpace(event.SelectedRole),
 		"confidence":        event.Confidence,
