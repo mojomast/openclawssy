@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { useActiveInstance } from "@/hooks/useActiveInstance"
+import { useControlPlaneFeatures } from "@/hooks/useControlPlaneFeatures"
 import { api } from "@/lib/api"
 
 const WORKSPACE_AUTO_REFRESH_MS = 4000
@@ -29,6 +31,8 @@ type WorkspaceFile = {
 type WorkspaceEntriesResponse = {
   workspace_root?: string
   workspace_mode?: unknown
+  instance_id?: unknown
+  agent_id?: unknown
   path?: string
   parent_path?: string
   entries?: WorkspaceEntryResponseItem[]
@@ -44,7 +48,10 @@ type WorkspaceEntryResponseItem = {
 }
 
 type WorkspaceFileResponse = {
+  workspace_root?: string
   workspace_mode?: unknown
+  instance_id?: unknown
+  agent_id?: unknown
   path?: string
   name?: string
   size_bytes?: number
@@ -107,8 +114,12 @@ function normalizeEntry(entry: WorkspaceEntryResponseItem): WorkspaceEntry | nul
 }
 
 export function WorkspacePage() {
+  const { features } = useControlPlaneFeatures()
+  const { instance: activeInstance } = useActiveInstance(features.instanceControl)
   const [workspaceRoot, setWorkspaceRoot] = useState("")
   const [workspaceMode, setWorkspaceMode] = useState("")
+  const [instanceID, setInstanceID] = useState("")
+  const [agentID, setAgentID] = useState("")
   const [currentPath, setCurrentPath] = useState(".")
   const [parentPath, setParentPath] = useState("")
   const [entries, setEntries] = useState<WorkspaceEntry[]>([])
@@ -140,6 +151,15 @@ export function WorkspacePage() {
     setSelectedFile(null)
   }, [])
 
+  const workspaceQuery = useCallback((pathValue: string) => {
+    const params = new URLSearchParams()
+    params.set("path", asText(pathValue) || ".")
+    if (activeInstance?.id) {
+      params.set("instance_id", activeInstance.id)
+    }
+    return params.toString()
+  }, [activeInstance?.id])
+
   const loadEntries = useCallback(async (pathValue: string = currentPathRef.current, options: { keepStatus?: boolean } = {}) => {
     if (loadingEntriesRef.current) {
       return
@@ -155,7 +175,7 @@ export function WorkspacePage() {
     }
 
     try {
-      const payload = await api.get<WorkspaceEntriesResponse>(`/api/admin/workspace/entries?path=${encodeURIComponent(nextPath)}`)
+      const payload = await api.get<WorkspaceEntriesResponse>(`/api/admin/workspace/entries?${workspaceQuery(nextPath)}`)
       const normalizedEntries = Array.isArray(payload.entries)
         ? payload.entries.map((entry) => normalizeEntry(entry)).filter((entry): entry is WorkspaceEntry => Boolean(entry && entry.path))
         : []
@@ -164,13 +184,15 @@ export function WorkspacePage() {
       currentPathRef.current = resolvedPath
       setWorkspaceRoot(asText(payload.workspace_root))
       setWorkspaceMode(asText(payload.workspace_mode))
+      setInstanceID(asText(payload.instance_id))
+      setAgentID(asText(payload.agent_id))
       setCurrentPath(resolvedPath)
       setParentPath(asText(payload.parent_path))
       setEntries(normalizedEntries)
 
       if (!keepStatus) {
         setStatusKind("success")
-        setStatusText(`Loaded ${normalizedEntries.length} item(s).`)
+      setStatusText(`Loaded ${normalizedEntries.length} item(s).`)
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -180,7 +202,7 @@ export function WorkspacePage() {
       loadingEntriesRef.current = false
       setLoadingEntries(false)
     }
-  }, [])
+  }, [workspaceQuery])
 
   const loadFile = useCallback(async (pathValue: string, options: { keepStatus?: boolean } = {}) => {
     if (loadingFileRef.current) {
@@ -204,7 +226,7 @@ export function WorkspacePage() {
     }
 
     try {
-      const payload = await api.get<WorkspaceFileResponse>(`/api/admin/workspace/file?path=${encodeURIComponent(nextPath)}`)
+      const payload = await api.get<WorkspaceFileResponse>(`/api/admin/workspace/file?${workspaceQuery(nextPath)}`)
       const filePayload: WorkspaceFile = {
         path: asText(payload.path),
         name: asText(payload.name),
@@ -216,6 +238,10 @@ export function WorkspacePage() {
         previewNotice: asText(payload.preview_notice),
         content: typeof payload.content === "string" ? payload.content : "",
       }
+      setWorkspaceRoot(asText(payload.workspace_root) || workspaceRoot)
+      setWorkspaceMode(asText(payload.workspace_mode) || workspaceMode)
+      setInstanceID(asText(payload.instance_id) || instanceID)
+      setAgentID(asText(payload.agent_id) || agentID)
       selectedPathRef.current = filePayload.path
       setSelectedPath(filePayload.path)
       setSelectedFile(filePayload)
@@ -237,7 +263,7 @@ export function WorkspacePage() {
       loadingFileRef.current = false
       setLoadingFile(false)
     }
-  }, [])
+  }, [agentID, instanceID, workspaceMode, workspaceQuery, workspaceRoot])
 
   const refreshWorkspace = useCallback(async (options: { silent?: boolean } = {}) => {
     const { silent = false } = options
@@ -300,6 +326,9 @@ export function WorkspacePage() {
         </p>
         <p className="text-sm text-muted-foreground" data-testid="workspace-mode-summary">
           Viewing `{workspaceRoot || "/workspace"}` via {workspaceMode || "runtime"} workspace mode.
+        </p>
+        <p className="text-sm text-muted-foreground" data-testid="workspace-identity-summary">
+          Instance `{instanceID || activeInstance?.id || "default"}` agent `{agentID || "default"}`.
         </p>
       </div>
 

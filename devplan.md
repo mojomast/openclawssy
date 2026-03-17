@@ -203,14 +203,16 @@ Completed or substantially landed:
 - Sessions lifecycle cards now open canonical inbox detail and expose inbox `ack` / `run` actions, making the shared `message_id` lifecycle model directly actionable from the session transcript
 - delegation events now preserve additive `parent_run_id`, `from_agent_id`, and `to_agent_id` metadata, reducing another gap between delegated execution and the canonical inbox/run identity model
 - Agent Monitor UI now threads explicit `instance_id` / `agent_id` on launch and cancel operations, reducing another remaining bare-`run_id` operator path
+- dashboard Workspace backend now resolves through canonical effective runtime identity instead of legacy host workspace fallback, and Docker mode now browses the live sandbox `/workspace` volume for the selected agent
+- dashboard Workspace UI now requests active-instance-scoped workspace data and surfaces resolved workspace mode plus instance/agent identity to reduce operator confusion about where files actually live
 
 Still open:
 
 - first-class inbox/message lifecycle model
-- dashboard/UI instance wiring completion beyond the newly landed Sessions, Agent Contract, and Prompt Stack pages
+- dashboard/UI instance wiring completion beyond the newly landed Sessions, Agent Contract, Prompt Stack, and Workspace pages
 - deeper eval/delegation metadata normalization beyond the current additive schema and operator detail views
 - end-to-end feature flag enforcement polish beyond the newly landed dashboard API/UI guards and eval CLI runtime gating
-- broader validation and migration cleanup
+- broader validation and migration cleanup, including additional live Docker workspace verification against runtime-written files
 
 ## Milestone 1: Foundation
 

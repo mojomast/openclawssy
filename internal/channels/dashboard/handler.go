@@ -31,6 +31,7 @@ import (
 	memorystore "openclawssy/internal/memory/store"
 	"openclawssy/internal/promptstack"
 	"openclawssy/internal/runtime"
+	"openclawssy/internal/sandbox"
 	"openclawssy/internal/scheduler"
 	"openclawssy/internal/secrets"
 	"openclawssy/internal/skillcatalog"
@@ -142,6 +143,17 @@ type workspaceEntryPayload struct {
 	MIMEType   string `json:"mime_type,omitempty"`
 }
 
+type dashboardWorkspaceTarget struct {
+	instanceID    string
+	agentID       string
+	workspaceMode string
+	workspaceRoot string
+	resolvedPath  string
+	relPath       string
+	provider      sandbox.Provider
+	close         func() error
+}
+
 var dashboardEditableDocNames = []string{
 	"SOUL.md",
 	"RULES.md",
@@ -158,6 +170,8 @@ const (
 )
 
 var builtInSkillCatalog = skillcatalog.Catalog()
+
+var newDashboardSandboxProviderForAgent = sandbox.NewProviderForAgent
 
 //go:embed ui/dist
 var dashboardUIFS embed.FS
@@ -2612,44 +2626,80 @@ func (h *Handler) handleWorkspaceEntries(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	workspaceRoot, absPath, relPath, err := h.resolveDashboardWorkspacePath(r.URL.Query().Get("path"))
+	target, err := h.resolveDashboardWorkspaceTarget(r.Context(), r.URL.Query().Get("instance_id"), r.URL.Query().Get("agent_id"), r.URL.Query().Get("path"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	entries, err := os.ReadDir(absPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			http.Error(w, "workspace path not found", http.StatusNotFound)
+	if target.close != nil {
+		defer target.close()
+	}
+	var payload []workspaceEntryPayload
+	if target.provider != nil {
+		entries, listErr := target.provider.ListDir(r.Context(), target.resolvedPath)
+		if listErr != nil {
+			if strings.Contains(strings.ToLower(listErr.Error()), "does not exist") {
+				http.Error(w, "workspace path not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "failed to read workspace path", http.StatusInternalServerError)
 			return
 		}
-		http.Error(w, "failed to read workspace path", http.StatusInternalServerError)
-		return
-	}
-	payload := make([]workspaceEntryPayload, 0, len(entries))
-	for _, entry := range entries {
-		info, err := entry.Info()
-		if err != nil {
-			continue
+		payload = make([]workspaceEntryPayload, 0, len(entries))
+		for _, entry := range entries {
+			itemRel := entry.Name
+			if target.relPath != "." {
+				itemRel = filepath.Join(target.relPath, entry.Name)
+			}
+			item := workspaceEntryPayload{
+				Name:      entry.Name,
+				Path:      filepath.ToSlash(itemRel),
+				Kind:      "file",
+				SizeBytes: entry.Size,
+				MIMEType:  mime.TypeByExtension(strings.ToLower(filepath.Ext(entry.Name))),
+			}
+			if entry.IsDir {
+				item.Kind = "dir"
+				item.SizeBytes = 0
+				item.MIMEType = ""
+			}
+			payload = append(payload, item)
 		}
-		itemRel := entry.Name()
-		if relPath != "." {
-			itemRel = filepath.Join(relPath, entry.Name())
+	} else {
+		entries, readErr := os.ReadDir(target.resolvedPath)
+		if readErr != nil {
+			if errors.Is(readErr, os.ErrNotExist) {
+				http.Error(w, "workspace path not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "failed to read workspace path", http.StatusInternalServerError)
+			return
 		}
-		item := workspaceEntryPayload{
-			Name:       entry.Name(),
-			Path:       filepath.ToSlash(itemRel),
-			Kind:       "file",
-			SizeBytes:  info.Size(),
-			ModifiedAt: info.ModTime().UTC().Format(time.RFC3339),
-			MIMEType:   mime.TypeByExtension(strings.ToLower(filepath.Ext(entry.Name()))),
+		payload = make([]workspaceEntryPayload, 0, len(entries))
+		for _, entry := range entries {
+			info, infoErr := entry.Info()
+			if infoErr != nil {
+				continue
+			}
+			itemRel := entry.Name()
+			if target.relPath != "." {
+				itemRel = filepath.Join(target.relPath, entry.Name())
+			}
+			item := workspaceEntryPayload{
+				Name:       entry.Name(),
+				Path:       filepath.ToSlash(itemRel),
+				Kind:       "file",
+				SizeBytes:  info.Size(),
+				ModifiedAt: info.ModTime().UTC().Format(time.RFC3339),
+				MIMEType:   mime.TypeByExtension(strings.ToLower(filepath.Ext(entry.Name()))),
+			}
+			if entry.IsDir() {
+				item.Kind = "dir"
+				item.SizeBytes = 0
+				item.MIMEType = ""
+			}
+			payload = append(payload, item)
 		}
-		if entry.IsDir() {
-			item.Kind = "dir"
-			item.SizeBytes = 0
-			item.MIMEType = ""
-		}
-		payload = append(payload, item)
 	}
 	sort.Slice(payload, func(i, j int) bool {
 		if payload[i].Kind != payload[j].Kind {
@@ -2658,15 +2708,18 @@ func (h *Handler) handleWorkspaceEntries(w http.ResponseWriter, r *http.Request)
 		return strings.ToLower(payload[i].Name) < strings.ToLower(payload[j].Name)
 	})
 	parentPath := ""
-	if relPath != "." {
-		parentPath = filepath.ToSlash(filepath.Dir(relPath))
+	if target.relPath != "." {
+		parentPath = filepath.ToSlash(filepath.Dir(target.relPath))
 		if parentPath == "." {
 			parentPath = ""
 		}
 	}
 	writeJSON(w, map[string]any{
-		"workspace_root": filepath.ToSlash(workspaceRoot),
-		"path":           filepath.ToSlash(relPath),
+		"workspace_root": filepath.ToSlash(target.workspaceRoot),
+		"workspace_mode": target.workspaceMode,
+		"instance_id":    target.instanceID,
+		"agent_id":       target.agentID,
+		"path":           filepath.ToSlash(target.relPath),
 		"parent_path":    parentPath,
 		"entries":        payload,
 	})
@@ -2677,35 +2730,73 @@ func (h *Handler) handleWorkspaceFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	workspaceRoot, absPath, relPath, err := h.resolveDashboardWorkspacePath(r.URL.Query().Get("path"))
+	target, err := h.resolveDashboardWorkspaceTarget(r.Context(), r.URL.Query().Get("instance_id"), r.URL.Query().Get("agent_id"), r.URL.Query().Get("path"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	info, err := os.Stat(absPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+	if target.close != nil {
+		defer target.close()
+	}
+	var (
+		name       string
+		sizeBytes  int64
+		modifiedAt string
+	)
+	if target.provider != nil {
+		info, exists, statErr := target.provider.Lstat(r.Context(), target.resolvedPath)
+		if statErr != nil {
+			http.Error(w, "failed to stat workspace file", http.StatusInternalServerError)
+			return
+		}
+		if !exists {
 			http.Error(w, "workspace file not found", http.StatusNotFound)
 			return
 		}
-		http.Error(w, "failed to stat workspace file", http.StatusInternalServerError)
-		return
-	}
-	if info.IsDir() {
-		http.Error(w, "workspace path is a directory", http.StatusBadRequest)
-		return
+		if info.IsDir {
+			http.Error(w, "workspace path is a directory", http.StatusBadRequest)
+			return
+		}
+		name = info.Name
+		sizeBytes = info.Size
+	} else {
+		info, statErr := os.Stat(target.resolvedPath)
+		if statErr != nil {
+			if errors.Is(statErr, os.ErrNotExist) {
+				http.Error(w, "workspace file not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "failed to stat workspace file", http.StatusInternalServerError)
+			return
+		}
+		if info.IsDir() {
+			http.Error(w, "workspace path is a directory", http.StatusBadRequest)
+			return
+		}
+		name = info.Name()
+		sizeBytes = info.Size()
+		modifiedAt = info.ModTime().UTC().Format(time.RFC3339)
 	}
 	const previewLimitBytes = 256 * 1024
-	file, err := os.Open(absPath)
-	if err != nil {
-		http.Error(w, "failed to open workspace file", http.StatusInternalServerError)
-		return
-	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, previewLimitBytes+1))
-	if err != nil {
-		http.Error(w, "failed to read workspace file", http.StatusInternalServerError)
-		return
+	var data []byte
+	if target.provider != nil {
+		data, err = target.provider.ReadFile(r.Context(), target.resolvedPath)
+		if err != nil {
+			http.Error(w, "failed to read workspace file", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		file, openErr := os.Open(target.resolvedPath)
+		if openErr != nil {
+			http.Error(w, "failed to open workspace file", http.StatusInternalServerError)
+			return
+		}
+		defer file.Close()
+		data, err = io.ReadAll(io.LimitReader(file, previewLimitBytes+1))
+		if err != nil {
+			http.Error(w, "failed to read workspace file", http.StatusInternalServerError)
+			return
+		}
 	}
 	truncated := len(data) > previewLimitBytes
 	if truncated {
@@ -2723,17 +2814,128 @@ func (h *Handler) handleWorkspaceFile(w http.ResponseWriter, r *http.Request) {
 		previewNotice = "Binary or non-UTF-8 file preview is not shown in the dashboard."
 	}
 	writeJSON(w, map[string]any{
-		"workspace_root": filepath.ToSlash(workspaceRoot),
-		"path":           filepath.ToSlash(relPath),
-		"name":           info.Name(),
-		"size_bytes":     info.Size(),
-		"modified_at":    info.ModTime().UTC().Format(time.RFC3339),
-		"mime_type":      mime.TypeByExtension(strings.ToLower(filepath.Ext(info.Name()))),
+		"workspace_root": filepath.ToSlash(target.workspaceRoot),
+		"workspace_mode": target.workspaceMode,
+		"instance_id":    target.instanceID,
+		"agent_id":       target.agentID,
+		"path":           filepath.ToSlash(target.relPath),
+		"name":           name,
+		"size_bytes":     sizeBytes,
+		"modified_at":    modifiedAt,
+		"mime_type":      mime.TypeByExtension(strings.ToLower(filepath.Ext(name))),
 		"is_text":        isText,
 		"truncated":      truncated,
 		"preview_notice": previewNotice,
 		"content":        content,
 	})
+}
+
+func (h *Handler) resolveDashboardWorkspaceTarget(ctx context.Context, rawInstanceID, rawAgentID, rawPath string) (*dashboardWorkspaceTarget, error) {
+	instanceID := strings.TrimSpace(rawInstanceID)
+	agentID := strings.TrimSpace(rawAgentID)
+	if agentID != "" {
+		normalizedAgentID, err := normalizeDashboardAgentID(agentID)
+		if err != nil {
+			return nil, err
+		}
+		agentID = normalizedAgentID
+	}
+	effectiveRuntime, err := h.resolveDashboardEffectiveRuntime(instanceID, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workspace runtime: %w", err)
+	}
+	runtimeConfig, err := h.dashboardWorkspaceRuntimeConfig()
+	if err != nil {
+		return nil, err
+	}
+	workspaceMode := "none"
+	if runtimeConfig.Sandbox.Active {
+		workspaceMode = strings.TrimSpace(runtimeConfig.Sandbox.Provider)
+		if workspaceMode == "" {
+			workspaceMode = "none"
+		}
+	}
+	workspaceRoot := filepath.Clean(effectiveRuntime.WorkspaceRoot)
+	visibleRoot := workspaceRoot
+	if strings.EqualFold(workspaceMode, "docker") {
+		visibleRoot = "/workspace"
+	}
+	resolvedPath, relPath, err := resolveWorkspacePathWithinRoot(visibleRoot, rawPath)
+	if err != nil {
+		return nil, err
+	}
+	target := &dashboardWorkspaceTarget{
+		instanceID:    effectiveRuntime.InstanceID,
+		agentID:       effectiveRuntime.AgentID,
+		workspaceMode: workspaceMode,
+		workspaceRoot: visibleRoot,
+		resolvedPath:  resolvedPath,
+		relPath:       relPath,
+	}
+	if !strings.EqualFold(workspaceMode, "docker") {
+		return target, nil
+	}
+	provider, err := newDashboardSandboxProviderForAgent("docker", workspaceRoot, effectiveRuntime.AgentID, runtimeConfig.Sandbox.Docker)
+	if err != nil {
+		return nil, fmt.Errorf("create docker workspace provider: %w", err)
+	}
+	if err := provider.Start(ctx); err != nil {
+		return nil, fmt.Errorf("start docker workspace provider: %w", err)
+	}
+	target.provider = provider
+	target.close = provider.Stop
+	return target, nil
+}
+
+func (h *Handler) resolveDashboardEffectiveRuntime(instanceID, agentID string) (*instances.EffectiveRuntime, error) {
+	effectiveRuntime, err := instances.ResolveEffectiveRuntime(h.rootDir, strings.TrimSpace(instanceID), strings.TrimSpace(agentID))
+	if err == nil {
+		return effectiveRuntime, nil
+	}
+	if _, bootstrapErr := instances.BootstrapDefaultInstance(h.rootDir); bootstrapErr != nil {
+		return nil, err
+	}
+	return instances.ResolveEffectiveRuntime(h.rootDir, strings.TrimSpace(instanceID), strings.TrimSpace(agentID))
+}
+
+func (h *Handler) dashboardWorkspaceRuntimeConfig() (config.Config, error) {
+	if h != nil && h.effectiveConfig != nil {
+		cfg := *h.effectiveConfig
+		return cfg, nil
+	}
+	return h.loadDashboardConfig()
+}
+
+func resolveWorkspacePathWithinRoot(workspaceRoot, rawPath string) (string, string, error) {
+	workspaceRoot = filepath.Clean(workspaceRoot)
+	requested := strings.TrimSpace(rawPath)
+	if requested == "" || requested == "/" {
+		return workspaceRoot, ".", nil
+	}
+	var absPath string
+	var relPath string
+	if filepath.IsAbs(requested) {
+		absPath = filepath.Clean(requested)
+		rel, err := filepath.Rel(workspaceRoot, absPath)
+		if err != nil {
+			return "", "", errors.New("invalid workspace path")
+		}
+		relPath = rel
+	} else {
+		relPath = filepath.Clean(strings.TrimPrefix(filepath.ToSlash(requested), "/"))
+		absPath = filepath.Join(workspaceRoot, relPath)
+	}
+	if relPath == "." {
+		return workspaceRoot, ".", nil
+	}
+	if relPath == ".." || strings.HasPrefix(relPath, ".."+string(os.PathSeparator)) || strings.HasPrefix(relPath, "../") {
+		return "", "", errors.New("workspace path escapes root")
+	}
+	absPath = filepath.Clean(absPath)
+	if absPath != workspaceRoot && !strings.HasPrefix(absPath, workspaceRoot+string(os.PathSeparator)) {
+		return "", "", errors.New("workspace path escapes root")
+	}
+	return absPath, relPath, nil
 }
 
 func (h *Handler) resolveDashboardWorkspacePath(rawPath string) (string, string, string, error) {

@@ -14,6 +14,9 @@ test("tokenless load shows in-app auth gate and retries requests with bearer hea
       contentType: "application/json",
       body: JSON.stringify({
         workspace_root: "/tmp/workspace",
+        workspace_mode: "none",
+        instance_id: "default",
+        agent_id: "default",
         path: ".",
         parent_path: "",
         entries: [],
@@ -30,13 +33,14 @@ test("tokenless load shows in-app auth gate and retries requests with bearer hea
   await page.getByRole("button", { name: "Save token and continue" }).click()
 
   await expect(page.getByRole("heading", { name: "Dashboard access token required" })).toHaveCount(0)
-  await expect.poll(() => authorizationHeaders.length).toBe(1)
-  expect(authorizationHeaders[0]).toBe("Bearer e2e-token")
+  await expect.poll(() => authorizationHeaders.length).toBeGreaterThan(0)
+  expect(authorizationHeaders.at(-1)).toBe("Bearer e2e-token")
   await expect(page.getByText("Loaded 0 item(s).")).toBeVisible()
 
+  const refreshBaseline = authorizationHeaders.length
   await page.getByRole("button", { name: "Refresh" }).click()
-  await expect.poll(() => authorizationHeaders.length).toBe(2)
-  expect(authorizationHeaders[1]).toBe("Bearer e2e-token")
+  await expect.poll(() => authorizationHeaders.length).toBeGreaterThan(refreshBaseline)
+  expect(authorizationHeaders.at(-1)).toBe("Bearer e2e-token")
 
   const storedToken = await page.evaluate(() => window.localStorage.getItem("openclawssy.dashboard.bearer"))
   expect(storedToken).toBe("e2e-token")

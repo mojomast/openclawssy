@@ -52,8 +52,10 @@ Substantial portions of Milestones 1-5 are now landed on the current branch, inc
 - Wizard preview/create now converges through the same canonical instance projection path too, reducing drift between previewed instance config and persisted manifests while keeping wizard UI response shapes stable
 - The dashboard now has a dedicated Instances page backed by canonical instance APIs, so operators can see the active instance clearly, review available instances, activate another instance, and get a deterministic disabled-state shell when `instance_control` is off
 - The dashboard shell now also shows the active instance globally in the header, reducing instance-context ambiguity without requiring operators to navigate into the Instances page first
+- Dashboard Workspace browsing now resolves through the same effective runtime identity as agent execution, so the active/requested instance and agent determine the visible workspace instead of legacy host-root fallback logic
+- In Docker sandbox mode, the Workspace page now reads the live `/workspace` volume through the sandbox provider, aligning dashboard file browsing with runtime `fs.*` writes and making workspace mode/identity explicit in the UI
 
-Remaining work is concentrated in wizard parity, broader composite-identity rollout, and finishing first-class messaging/eval consumer convergence beyond the newly landed dashboard/CLI slices.
+Remaining work is concentrated in broader composite-identity rollout, finishing first-class messaging/eval consumer convergence beyond the newly landed dashboard/CLI slices, and tightening real-environment validation around the new workspace/runtime alignment.
 
 This design is grounded in the current code shape:
 

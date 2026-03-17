@@ -136,7 +136,7 @@ async function installMinimalDashboardMocks(page: Page) {
     }
 
     if (pathname === "/api/admin/workspace/entries") {
-      await json(route, { workspace_root: "/tmp", path: ".", parent_path: "", entries: [] })
+      await json(route, { workspace_root: "/tmp", workspace_mode: "none", instance_id: "default", agent_id: "default", path: ".", parent_path: "", entries: [] })
       return
     }
 

@@ -20,9 +20,55 @@ import (
 	"openclawssy/internal/instances"
 	"openclawssy/internal/memory"
 	memorystore "openclawssy/internal/memory/store"
+	"openclawssy/internal/sandbox"
 	"openclawssy/internal/scheduler"
 	"openclawssy/internal/secrets"
 )
+
+type stubDashboardWorkspaceProvider struct {
+	listDir  func(context.Context, string) ([]sandbox.FileInfo, error)
+	readFile func(context.Context, string) ([]byte, error)
+	lstat    func(context.Context, string) (sandbox.FileInfo, bool, error)
+}
+
+func (p *stubDashboardWorkspaceProvider) Start(context.Context) error { return nil }
+func (p *stubDashboardWorkspaceProvider) Exec(sandbox.Command) (sandbox.Result, error) {
+	return sandbox.Result{}, errors.New("not implemented")
+}
+func (p *stubDashboardWorkspaceProvider) Stop() error { return nil }
+func (p *stubDashboardWorkspaceProvider) ReadFile(ctx context.Context, path string) ([]byte, error) {
+	if p.readFile != nil {
+		return p.readFile(ctx, path)
+	}
+	return nil, os.ErrNotExist
+}
+func (p *stubDashboardWorkspaceProvider) WriteFile(context.Context, string, []byte, os.FileMode) error {
+	return errors.New("not implemented")
+}
+func (p *stubDashboardWorkspaceProvider) ListDir(ctx context.Context, path string) ([]sandbox.FileInfo, error) {
+	if p.listDir != nil {
+		return p.listDir(ctx, path)
+	}
+	return nil, os.ErrNotExist
+}
+func (p *stubDashboardWorkspaceProvider) MkdirAll(context.Context, string, os.FileMode) error {
+	return errors.New("not implemented")
+}
+func (p *stubDashboardWorkspaceProvider) Remove(context.Context, string, bool) error {
+	return errors.New("not implemented")
+}
+func (p *stubDashboardWorkspaceProvider) Rename(context.Context, string, string) error {
+	return errors.New("not implemented")
+}
+func (p *stubDashboardWorkspaceProvider) Lstat(ctx context.Context, path string) (sandbox.FileInfo, bool, error) {
+	if p.lstat != nil {
+		return p.lstat(ctx, path)
+	}
+	return sandbox.FileInfo{}, false, nil
+}
+func (p *stubDashboardWorkspaceProvider) EvalSymlinks(context.Context, string) (string, error) {
+	return "", errors.New("not implemented")
+}
 
 func extractDashboardAssetPath(indexHTML string, suffix string) string {
 	marker := "/dashboard/static/assets/"
@@ -146,7 +192,14 @@ func TestDashboardStaticAssetRouteMissingAssetNotFound(t *testing.T) {
 
 func TestAdminWorkspaceEntriesListsDirectoriesAndFiles(t *testing.T) {
 	root := t.TempDir()
-	workspaceRoot := filepath.Join(root, "workspace")
+	manifest, err := instances.BootstrapDefaultInstance(root)
+	if err != nil {
+		t.Fatalf("bootstrap default instance: %v", err)
+	}
+	workspaceRoot := manifest.Workspace.Root
+	if !filepath.IsAbs(workspaceRoot) {
+		workspaceRoot = filepath.Join(root, workspaceRoot)
+	}
 	if err := os.MkdirAll(filepath.Join(workspaceRoot, "project", "nested"), 0o755); err != nil {
 		t.Fatalf("mkdir workspace tree: %v", err)
 	}
@@ -195,7 +248,14 @@ func TestAdminWorkspaceEntriesListsDirectoriesAndFiles(t *testing.T) {
 
 func TestAdminWorkspaceFileReadsTextAndRejectsTraversal(t *testing.T) {
 	root := t.TempDir()
-	workspaceRoot := filepath.Join(root, "workspace")
+	manifest, err := instances.BootstrapDefaultInstance(root)
+	if err != nil {
+		t.Fatalf("bootstrap default instance: %v", err)
+	}
+	workspaceRoot := manifest.Workspace.Root
+	if !filepath.IsAbs(workspaceRoot) {
+		workspaceRoot = filepath.Join(root, workspaceRoot)
+	}
 	if err := os.MkdirAll(filepath.Join(workspaceRoot, "project"), 0o755); err != nil {
 		t.Fatalf("mkdir workspace: %v", err)
 	}
@@ -234,6 +294,181 @@ func TestAdminWorkspaceFileReadsTextAndRejectsTraversal(t *testing.T) {
 	mux.ServeHTTP(denyResp, denyReq)
 	if denyResp.Code != http.StatusBadRequest {
 		t.Fatalf("expected %d, got %d", http.StatusBadRequest, denyResp.Code)
+	}
+}
+
+func TestAdminWorkspaceUsesActiveInstanceWorkspaceInsteadOfHostFallback(t *testing.T) {
+	root := t.TempDir()
+	hostWorkspace := filepath.Join(root, "workspace", "project")
+	if err := os.MkdirAll(hostWorkspace, 0o755); err != nil {
+		t.Fatalf("mkdir host workspace: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(hostWorkspace, "host-only.txt"), []byte("host"), 0o644); err != nil {
+		t.Fatalf("write host file: %v", err)
+	}
+	if _, err := instances.BootstrapDefaultInstance(root); err != nil {
+		t.Fatalf("bootstrap default instance: %v", err)
+	}
+	lab := instances.DefaultInstanceManifest("lab")
+	lab.Workspace.Root = filepath.Join(root, "workspace", "instances", "lab")
+	if err := instances.SaveInstanceManifest(root, lab); err != nil {
+		t.Fatalf("save lab instance: %v", err)
+	}
+	if err := instances.SaveAgentManifest(root, "lab", instances.DefaultAgentManifest("default")); err != nil {
+		t.Fatalf("save lab default agent: %v", err)
+	}
+	if err := instances.SaveAgentManifest(root, "lab", instances.DefaultAgentManifest("builder")); err != nil {
+		t.Fatalf("save lab agent: %v", err)
+	}
+	if err := instances.SaveActiveInstanceID(root, "lab"); err != nil {
+		t.Fatalf("save active instance: %v", err)
+	}
+	instanceWorkspace := filepath.Join(lab.Workspace.Root, "project")
+	if err := os.MkdirAll(instanceWorkspace, 0o755); err != nil {
+		t.Fatalf("mkdir instance workspace: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(instanceWorkspace, "instance-only.txt"), []byte("instance"), 0o644); err != nil {
+		t.Fatalf("write instance file: %v", err)
+	}
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/workspace/entries?path=project", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusOK, rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		WorkspaceRoot string                  `json:"workspace_root"`
+		WorkspaceMode string                  `json:"workspace_mode"`
+		InstanceID    string                  `json:"instance_id"`
+		AgentID       string                  `json:"agent_id"`
+		Entries       []workspaceEntryPayload `json:"entries"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.InstanceID != "lab" || payload.AgentID != "default" {
+		t.Fatalf("expected lab/default identity, got %#v", payload)
+	}
+	if payload.WorkspaceMode != "none" {
+		t.Fatalf("expected none workspace mode, got %#v", payload.WorkspaceMode)
+	}
+	if payload.WorkspaceRoot != filepath.ToSlash(filepath.Clean(lab.Workspace.Root)) {
+		t.Fatalf("expected lab workspace root %q, got %q", filepath.ToSlash(filepath.Clean(lab.Workspace.Root)), payload.WorkspaceRoot)
+	}
+	if len(payload.Entries) != 1 || payload.Entries[0].Name != "instance-only.txt" {
+		t.Fatalf("expected instance workspace entries only, got %#v", payload.Entries)
+	}
+}
+
+func TestAdminWorkspaceUsesDockerProviderForSelectedAgentWorkspace(t *testing.T) {
+	root := t.TempDir()
+	if _, err := instances.BootstrapDefaultInstance(root); err != nil {
+		t.Fatalf("bootstrap default instance: %v", err)
+	}
+	lab := instances.DefaultInstanceManifest("lab")
+	lab.Workspace.Root = filepath.Join(root, "workspace", "instances", "lab")
+	if err := instances.SaveInstanceManifest(root, lab); err != nil {
+		t.Fatalf("save lab instance: %v", err)
+	}
+	if err := instances.SaveAgentManifest(root, "lab", instances.DefaultAgentManifest("builder")); err != nil {
+		t.Fatalf("save lab agent: %v", err)
+	}
+	if err := instances.SaveActiveInstanceID(root, "lab"); err != nil {
+		t.Fatalf("save active instance: %v", err)
+	}
+
+	effective := config.Default()
+	effective.Sandbox.Active = true
+	effective.Sandbox.Provider = "docker"
+
+	originalFactory := newDashboardSandboxProviderForAgent
+	t.Cleanup(func() { newDashboardSandboxProviderForAgent = originalFactory })
+	newDashboardSandboxProviderForAgent = func(name, workspace, agentID string, dockerCfg config.DockerSandboxConfig) (sandbox.Provider, error) {
+		if name != "docker" {
+			return nil, fmt.Errorf("unexpected provider %q", name)
+		}
+		if filepath.Clean(workspace) != filepath.Clean(lab.Workspace.Root) {
+			return nil, fmt.Errorf("unexpected workspace %q", workspace)
+		}
+		if agentID != "builder" {
+			return nil, fmt.Errorf("unexpected agent %q", agentID)
+		}
+		return &stubDashboardWorkspaceProvider{
+			listDir: func(_ context.Context, path string) ([]sandbox.FileInfo, error) {
+				if path != "/workspace/project" {
+					return nil, fmt.Errorf("unexpected list path %q", path)
+				}
+				return []sandbox.FileInfo{{Name: "test2", Size: 5}, {Name: "skills", IsDir: true}}, nil
+			},
+			readFile: func(_ context.Context, path string) ([]byte, error) {
+				if path != "/workspace/project/test2" {
+					return nil, fmt.Errorf("unexpected read path %q", path)
+				}
+				return []byte("hello"), nil
+			},
+			lstat: func(_ context.Context, path string) (sandbox.FileInfo, bool, error) {
+				if path != "/workspace/project/test2" {
+					return sandbox.FileInfo{}, false, fmt.Errorf("unexpected stat path %q", path)
+				}
+				return sandbox.FileInfo{Name: "test2", Size: 5}, true, nil
+			},
+		}, nil
+	}
+
+	h := NewWithOptions(root, httpchannel.NewInMemoryRunStore(), Options{EffectiveConfig: &effective})
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	entriesReq := httptest.NewRequest(http.MethodGet, "/api/admin/workspace/entries?instance_id=lab&agent_id=builder&path=project", nil)
+	entriesResp := httptest.NewRecorder()
+	mux.ServeHTTP(entriesResp, entriesReq)
+	if entriesResp.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusOK, entriesResp.Code, entriesResp.Body.String())
+	}
+	var entriesPayload struct {
+		WorkspaceRoot string                  `json:"workspace_root"`
+		WorkspaceMode string                  `json:"workspace_mode"`
+		InstanceID    string                  `json:"instance_id"`
+		AgentID       string                  `json:"agent_id"`
+		Entries       []workspaceEntryPayload `json:"entries"`
+	}
+	if err := json.Unmarshal(entriesResp.Body.Bytes(), &entriesPayload); err != nil {
+		t.Fatalf("decode entries payload: %v", err)
+	}
+	if entriesPayload.WorkspaceRoot != "/workspace" || entriesPayload.WorkspaceMode != "docker" {
+		t.Fatalf("expected docker workspace metadata, got %#v", entriesPayload)
+	}
+	if entriesPayload.InstanceID != "lab" || entriesPayload.AgentID != "builder" {
+		t.Fatalf("expected lab/builder identity, got %#v", entriesPayload)
+	}
+	if len(entriesPayload.Entries) != 2 || entriesPayload.Entries[0].Name != "skills" || entriesPayload.Entries[1].Name != "test2" {
+		t.Fatalf("unexpected docker entries %#v", entriesPayload.Entries)
+	}
+
+	fileReq := httptest.NewRequest(http.MethodGet, "/api/admin/workspace/file?instance_id=lab&agent_id=builder&path=project/test2", nil)
+	fileResp := httptest.NewRecorder()
+	mux.ServeHTTP(fileResp, fileReq)
+	if fileResp.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusOK, fileResp.Code, fileResp.Body.String())
+	}
+	var filePayload struct {
+		WorkspaceRoot string `json:"workspace_root"`
+		WorkspaceMode string `json:"workspace_mode"`
+		InstanceID    string `json:"instance_id"`
+		AgentID       string `json:"agent_id"`
+		Path          string `json:"path"`
+		Content       string `json:"content"`
+	}
+	if err := json.Unmarshal(fileResp.Body.Bytes(), &filePayload); err != nil {
+		t.Fatalf("decode file payload: %v", err)
+	}
+	if filePayload.WorkspaceRoot != "/workspace" || filePayload.Path != "project/test2" || filePayload.Content != "hello" {
+		t.Fatalf("unexpected docker file payload %#v", filePayload)
 	}
 }
 

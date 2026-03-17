@@ -58,6 +58,7 @@ What works now:
 - **Agent monitor + self-repair visibility**: dashboard monitor for main/subagent runs with task/model/checkpoint metadata, plus `clawdefuckifier*` bootstrap and automatic run checkpoints
 - **Hatz provider support**: API key ingestion via secrets or env, OpenAI-style model use, and provider model discovery in dashboard settings
 - **Wizard dashboard flows**: operators can now browse template catalogs, preview/create instances, preview/create agents into existing instances, and continue from instance creation directly into agent targeting from the same `/wizard` session
+- **Workspace/runtime alignment**: dashboard workspace browsing now resolves through canonical instance/agent runtime identity, surfaces workspace mode plus instance/agent context, and in Docker mode reads the live sandbox `/workspace` volume instead of a silent host fallback path
 
 What is not production-ready:
 - compatibility and schema stability
@@ -67,7 +68,7 @@ What is not production-ready:
 - final RFC slices: broader message lifecycle adoption across remaining producers/consumers, broader eval/delegation identity adoption, remaining dashboard/operator UI completion beyond the newly landed wizard flows, and end-to-end feature flag/runtime enforcement beyond the landed dashboard/API guards
 
 Current test status:
-- latest targeted validation for the active RFC slices passed: `go test ./internal/runtime ./internal/tools ./internal/channels/dashboard`, `go test ./internal/runtime -run '^TestRunTracker_' -count=1`, `go test ./internal/tools -run '^TestRunCancelTool_' -count=1`, `go test ./internal/channels/dashboard -run 'TestControlPlaneFeaturesAndWizardEndpoints|TestWizardEndpointsRequireFeatureSpecificGuards|TestWizardAgentCreateRejectsDuplicateAgent|TestInstanceFeatureFlagEnforcement' -count=1`, `cd internal/channels/dashboard/ui && npm run typecheck`, and `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/wizard.spec.ts tests/e2e/runs.spec.ts`
+- latest targeted validation for the active RFC slices passed: `go test ./internal/runtime ./internal/tools ./internal/channels/dashboard`, `go test ./internal/runtime -run '^TestRunTracker_' -count=1`, `go test ./internal/tools -run '^TestRunCancelTool_' -count=1`, `go test ./internal/channels/dashboard`, `cd internal/channels/dashboard/ui && npm run build && npm run e2e:test -- tests/e2e/workspace.spec.ts tests/e2e/auth.spec.ts tests/e2e/cross-area-integration.spec.ts`, and prior wizard/runs/dashboard targeted suites
 - one broader focused package pass hit an existing flaky/unrelated `internal/runtime` test (`TestEngineExecuteIngestsMemoryEventsWhenEnabled`), but an immediate rerun of that test passed
 
 ## Recommendation

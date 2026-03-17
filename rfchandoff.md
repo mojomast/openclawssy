@@ -294,6 +294,25 @@ Current capabilities:
 - `instances.ResolveEffectiveRuntime(...)` now consumes that shared feature state instead of assuming `DefaultFeatureSet()`
 - `openclawssy eval` now blocks operational subcommands (`run`, `list`, `results`, `baseline`, `compare`) when eval is disabled, while leaving help/usage reachable
 
+### 2.15 Workspace/runtime alignment for dashboard browsing
+
+Implemented in:
+
+- `internal/channels/dashboard/handler.go`
+- `internal/channels/dashboard/handler_test.go`
+- `internal/channels/dashboard/ui/src/pages/WorkspacePage.tsx`
+- `internal/channels/dashboard/ui/tests/e2e/workspace.spec.ts`
+- `internal/channels/dashboard/ui/tests/e2e/auth.spec.ts`
+- `internal/channels/dashboard/ui/tests/e2e/cross-area-integration.spec.ts`
+
+Current capabilities:
+
+- dashboard workspace entry/file routes now resolve via `instances.ResolveEffectiveRuntime(...)` instead of browsing a legacy config-root/host fallback path
+- workspace browsing now returns explicit `workspace_mode`, `instance_id`, and `agent_id` metadata so operators can tell which runtime context they are viewing
+- non-Docker workspace browsing now follows the active or requested instance workspace root, preventing the dashboard from silently showing unrelated host `./workspace` contents
+- Docker workspace browsing now starts a sandbox provider for the resolved agent and reads the live `/workspace` volume, aligning dashboard browsing with the same Docker-backed workspace used by runtime `fs.*` tools
+- Workspace UI now passes active-instance context when loading entries/files and renders the resolved workspace mode plus instance/agent identity summary to reduce filesystem-context ambiguity
+
 ### 3. Tests currently passing
 
 Verified:
@@ -337,6 +356,8 @@ Verified:
 - `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/chat.spec.ts --reporter=line`
 - `go test ./internal/channels/dashboard -run 'TestAdminAgentsEndpointListAndSetActive|TestAdminAgentsEndpointUsesActiveInstanceConfigAndInstanceScopedPointers|TestAdminAgentsEndpointRequiresInstanceAgentsFeature|TestMonitorRoutesRequireInstanceAgentsFeature|TestSessionsRoutesRequireInstanceAgentsFeature|TestInstanceFeatureFlagEnforcement' -count=1`
 - `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/chat.spec.ts tests/e2e/monitor.spec.ts --reporter=line`
+- `go test ./internal/channels/dashboard`
+- `cd internal/channels/dashboard/ui && npm run build && npm run e2e:test -- tests/e2e/workspace.spec.ts tests/e2e/auth.spec.ts tests/e2e/cross-area-integration.spec.ts`
 
 Note: one broader `go test ./internal/runtime ./...` package pass exposed an existing flaky/unrelated failure in `TestEngineExecuteIngestsMemoryEventsWhenEnabled`, but the focused rerun of that test passed immediately and the targeted package suites for the changed slices passed.
 

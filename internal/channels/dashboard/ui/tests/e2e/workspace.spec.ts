@@ -9,9 +9,12 @@ type WorkspaceEntry = {
   mime_type?: string
 }
 
-const entriesByPath: Record<string, { workspace_root: string; path: string; parent_path: string; entries: WorkspaceEntry[] }> = {
+const entriesByPath: Record<string, { workspace_root: string; workspace_mode: string; instance_id: string; agent_id: string; path: string; parent_path: string; entries: WorkspaceEntry[] }> = {
   ".": {
     workspace_root: "/workspace",
+    workspace_mode: "docker",
+    instance_id: "lab",
+    agent_id: "builder",
     path: ".",
     parent_path: "",
     entries: [
@@ -41,6 +44,9 @@ const entriesByPath: Record<string, { workspace_root: string; path: string; pare
   },
   docs: {
     workspace_root: "/workspace",
+    workspace_mode: "docker",
+    instance_id: "lab",
+    agent_id: "builder",
     path: "docs",
     parent_path: "",
     entries: [
@@ -59,6 +65,9 @@ const entriesByPath: Record<string, { workspace_root: string; path: string; pare
 const filesByPath: Record<string, Record<string, unknown>> = {
   "README.md": {
     workspace_root: "/workspace",
+    workspace_mode: "docker",
+    instance_id: "lab",
+    agent_id: "builder",
     path: "README.md",
     name: "README.md",
     size_bytes: 2048,
@@ -71,6 +80,9 @@ const filesByPath: Record<string, Record<string, unknown>> = {
   },
   "docs/guide.txt": {
     workspace_root: "/workspace",
+    workspace_mode: "docker",
+    instance_id: "lab",
+    agent_id: "builder",
     path: "docs/guide.txt",
     name: "guide.txt",
     size_bytes: 20,
@@ -90,6 +102,14 @@ test.beforeEach(async ({ page }) => {
 })
 
 test("shows directory listing, filter, breadcrumbs, and file preview", async ({ page }) => {
+  let activeInstanceRequests = 0
+  await page.route("**/api/admin/control-plane/features", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ features: { instance_control: true, instance_agents: true, wizard: true, eval: true } }) })
+  })
+  await page.route("**/api/admin/instances/active", async (route) => {
+    activeInstanceRequests += 1
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ instance: { id: "lab", name: "Lab" } }) })
+  })
   await page.route("**/api/admin/workspace/entries?**", async (route) => {
     const requestURL = new URL(route.request().url())
     const path = (requestURL.searchParams.get("path") || ".").trim() || "."
@@ -103,12 +123,13 @@ test("shows directory listing, filter, breadcrumbs, and file preview", async ({ 
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ ...payload, workspace_mode: "docker" }),
+      body: JSON.stringify(payload),
     })
   })
 
   await page.route("**/api/admin/workspace/file?**", async (route) => {
     const requestURL = new URL(route.request().url())
+    expect(requestURL.searchParams.get("instance_id")).toBe("lab")
     const path = (requestURL.searchParams.get("path") || "").trim()
     const payload = filesByPath[path]
 
@@ -126,8 +147,12 @@ test("shows directory listing, filter, breadcrumbs, and file preview", async ({ 
 
   await page.goto("/dashboard#/workspace")
 
+  await expect.poll(() => activeInstanceRequests).toBeGreaterThan(0)
+
   await expect(page.getByRole("heading", { name: "Workspace", level: 2 })).toBeVisible()
   await expect(page.getByTestId("workspace-mode-summary")).toContainText("via docker workspace mode")
+  await expect(page.getByTestId("workspace-identity-summary")).toContainText("lab")
+  await expect(page.getByTestId("workspace-identity-summary")).toContainText("builder")
   await expect(page.getByText("Entries (3)")).toBeVisible()
   await expect(page.getByRole("button", { name: "workspace" })).toBeVisible()
 
@@ -144,6 +169,14 @@ test("shows directory listing, filter, breadcrumbs, and file preview", async ({ 
 })
 
 test("clicking directories, breadcrumb segments, and Up navigates correctly", async ({ page }) => {
+  let activeInstanceRequests = 0
+  await page.route("**/api/admin/control-plane/features", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ features: { instance_control: true, instance_agents: true, wizard: true, eval: true } }) })
+  })
+  await page.route("**/api/admin/instances/active", async (route) => {
+    activeInstanceRequests += 1
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ instance: { id: "lab", name: "Lab" } }) })
+  })
   await page.route("**/api/admin/workspace/entries?**", async (route) => {
     const requestURL = new URL(route.request().url())
     const path = (requestURL.searchParams.get("path") || ".").trim() || "."
@@ -152,7 +185,7 @@ test("clicking directories, breadcrumb segments, and Up navigates correctly", as
       await route.fulfill({ status: 404, body: "not found" })
       return
     }
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...payload, workspace_mode: "docker" }) })
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(payload) })
   })
 
   await page.route("**/api/admin/workspace/file?**", async (route) => {
@@ -160,6 +193,7 @@ test("clicking directories, breadcrumb segments, and Up navigates correctly", as
   })
 
   await page.goto("/dashboard#/workspace")
+  await expect.poll(() => activeInstanceRequests).toBeGreaterThan(0)
 
   await page.getByRole("button", { name: /DIR docs/ }).click()
   await expect(page.getByRole("button", { name: "docs" })).toBeVisible()
@@ -177,6 +211,15 @@ test("clicking directories, breadcrumb segments, and Up navigates correctly", as
 
 test("Refresh button reloads and auto-refresh polls every 4 seconds", async ({ page }) => {
   let entriesRequestCount = 0
+  let activeInstanceRequests = 0
+
+  await page.route("**/api/admin/control-plane/features", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ features: { instance_control: true, instance_agents: true, wizard: true, eval: true } }) })
+  })
+  await page.route("**/api/admin/instances/active", async (route) => {
+    activeInstanceRequests += 1
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ instance: { id: "lab", name: "Lab" } }) })
+  })
 
   await page.route("**/api/admin/workspace/entries?**", async (route) => {
     entriesRequestCount += 1
@@ -187,7 +230,7 @@ test("Refresh button reloads and auto-refresh polls every 4 seconds", async ({ p
       await route.fulfill({ status: 404, body: "not found" })
       return
     }
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...payload, workspace_mode: "docker" }) })
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(payload) })
   })
 
   await page.route("**/api/admin/workspace/file?**", async (route) => {
@@ -195,6 +238,7 @@ test("Refresh button reloads and auto-refresh polls every 4 seconds", async ({ p
   })
 
   await page.goto("/dashboard#/workspace")
+  await expect.poll(() => activeInstanceRequests).toBeGreaterThan(0)
   await expect(page.getByText("Entries (3)")).toBeVisible()
 
   const baselineCount = entriesRequestCount

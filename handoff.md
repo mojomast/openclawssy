@@ -52,6 +52,8 @@ Date: 2026-03-16
 - Wizard instance preview/create now shares canonical projection logic too, which reduces preview-vs-persisted drift and hardens the backend side of the milestone beyond the initial UI flow work.
 - The dashboard now has an Instances page too: operators can inspect canonical instances, see the active instance clearly, activate another instance, and get deterministic disabled behavior when `instance_control` is off.
 - The dashboard header now shows the active instance globally too, so instance context remains visible while working on other pages.
+- The dashboard Workspace backend now resolves through canonical effective runtime identity instead of the old config-root/host fallback path, so browsing follows the active/requested instance and agent.
+- The dashboard Workspace page now shows resolved workspace mode plus instance/agent identity, and in Docker mode it reads the live `/workspace` volume through the sandbox provider so the UI matches runtime `fs.*` writes.
 
 ## Validation completed
 
@@ -95,6 +97,8 @@ Date: 2026-03-16
 - `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/chat.spec.ts --reporter=line`
 - `go test ./internal/channels/dashboard -run 'TestAdminAgentsEndpointListAndSetActive|TestAdminAgentsEndpointUsesActiveInstanceConfigAndInstanceScopedPointers|TestAdminAgentsEndpointRequiresInstanceAgentsFeature|TestMonitorRoutesRequireInstanceAgentsFeature|TestSessionsRoutesRequireInstanceAgentsFeature|TestInstanceFeatureFlagEnforcement' -count=1`
 - `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/chat.spec.ts tests/e2e/monitor.spec.ts --reporter=line`
+- `go test ./internal/channels/dashboard`
+- `cd internal/channels/dashboard/ui && npm run build && npm run e2e:test -- tests/e2e/workspace.spec.ts tests/e2e/auth.spec.ts tests/e2e/cross-area-integration.spec.ts`
 
 Note:
 
@@ -131,14 +135,14 @@ Note:
 Highest priority next:
 
 1. Extend the new messaging lifecycle foundation so more producers/consumers emit `running` / `completed` / `failed` updates through the same `message_id` model.
-2. Finish composite identity adoption in remaining dashboard/runtime consumers beyond the newly landed SSE/event-bus, Runs page, Delegation page, Sessions page, and Contract/Prompt Stack slices.
+2. Finish composite identity adoption in remaining dashboard/runtime consumers beyond the newly landed SSE/event-bus, Runs page, Delegation page, Sessions page, Contract/Prompt Stack, and Workspace slices.
 3. Connect the richer eval/delegation metadata contract to more real producers and more dashboard consumers beyond the eval detail and Runs detail panels.
 4. Finish broader runtime-side feature enforcement so disabled features cannot still be reached through non-dashboard execution paths beyond the newly landed eval CLI gating.
 
 Still open overall:
 
 - wizard preview/create parity validation against canonical manifests
-- dashboard UI wiring for canonical instance flows beyond Sessions, Agent Contract, and Prompt Stack
+- dashboard UI wiring for canonical instance flows beyond Sessions, Agent Contract, Prompt Stack, and Workspace
 - full feature-flag enforcement polish in UI/API/runtime beyond the current dashboard API/UI and eval CLI coverage
 - migration cleanup of remaining legacy flat-agent assumptions
 - broader validation pass (`go test ./...`, build, doctor, dashboard/e2e as needed)
@@ -155,6 +159,7 @@ Still open overall:
 - Sessions now joins Eval, Monitor, Contract, and Prompt Stack in that disabled-nav/direct-access pattern, but Chat and more instance-agent-dependent pages still need the same treatment.
 - Chat now joins Sessions, Eval, Monitor, Contract, and Prompt Stack in that disabled-nav/direct-access pattern, but more instance-agent-dependent pages and selective backend guardrails still need the same treatment.
 - Chat now joins Sessions, Eval, Monitor, Contract, and Prompt Stack in that disabled-nav/direct-access pattern, and `/api/admin/agents` now aligns with instance-aware selection too; more instance-agent-dependent pages still need the same treatment.
+- Workspace browsing now aligns with canonical runtime identity and Docker-backed `/workspace`, but broader live-environment verification and any remaining host-fallback assumptions in adjacent surfaces still need review.
 
 ## Recommended next starting point
 
