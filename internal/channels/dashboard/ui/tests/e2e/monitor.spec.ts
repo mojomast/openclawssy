@@ -46,6 +46,7 @@ function defaultRunsPayload() {
     runs: [
       {
         run_id: "run_main_1",
+        instance_id: "lab",
         agent_id: "default",
         role: "main",
         status: "completed",
@@ -54,6 +55,7 @@ function defaultRunsPayload() {
       },
       {
         run_id: "run_sub_1",
+        instance_id: "lab",
         agent_id: "default",
         role: "subagent",
         status: "running",
@@ -62,6 +64,7 @@ function defaultRunsPayload() {
       },
       {
         run_id: "run_ops_1",
+        instance_id: "lab",
         agent_id: "ops",
         role: "main",
         status: "running",
@@ -97,6 +100,11 @@ async function installMonitorMocks(page: Page, options?: MonitorMockOptions): Pr
       state.agentsCalls += 1
       const payload = options?.agentPayloadForCall?.(state.agentsCalls) || defaultAgentPayload()
       await json(route, payload)
+      return
+    }
+
+    if (pathname === "/api/admin/instances/active" && method === "GET") {
+      await json(route, { instance: { id: "lab", name: "Lab" } })
       return
     }
 
@@ -147,6 +155,7 @@ test("agent monitor shows cards, run table, and auto-polls every 2.5s", async ({
           runs: [
             {
               run_id: "run_main_1",
+              instance_id: "lab",
               agent_id: "default",
               role: "main",
               status: "completed",
@@ -155,6 +164,7 @@ test("agent monitor shows cards, run table, and auto-polls every 2.5s", async ({
             },
             {
               run_id: "run_sub_1",
+              instance_id: "lab",
               agent_id: "default",
               role: "subagent",
               status: "completed",
@@ -163,6 +173,7 @@ test("agent monitor shows cards, run table, and auto-polls every 2.5s", async ({
             },
             {
               run_id: "run_poll_new",
+              instance_id: "lab",
               agent_id: "ops",
               role: "main",
               status: "running",
@@ -209,6 +220,7 @@ test("start run, stop active, per-row stop, thinking mode, and refresh-now inter
 
   await expect.poll(() => state.startPayloads.length).toBe(1)
   expect(state.startPayloads[0]).toEqual({
+    instance_id: "lab",
     agent_id: "ops",
     message: "Investigate monitor behavior",
     thinking_mode: "on_error",
@@ -220,15 +232,19 @@ test("start run, stop active, per-row stop, thinking mode, and refresh-now inter
   await expect.poll(() => state.controlPayloads.length).toBe(1)
   expect(state.controlPayloads[0]).toEqual({
     action: "cancel",
+    instance_id: "lab",
+    agent_id: "default",
     run_id: "run_sub_1",
   })
 
-  const row = page.locator("[data-testid='monitor-run-row-run_ops_1']")
+  const row = page.locator("[data-testid='monitor-run-row-lab-ops-run_ops_1']")
   await row.getByRole("button", { name: "Stop" }).click()
 
   await expect.poll(() => state.controlPayloads.length).toBe(2)
   expect(state.controlPayloads[1]).toEqual({
     action: "cancel",
+    instance_id: "lab",
+    agent_id: "ops",
     run_id: "run_ops_1",
   })
 

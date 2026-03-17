@@ -164,6 +164,7 @@ Current capabilities:
 - Runs page now threads `instance_id` / `agent_id` into run detail, trace, and decision requests when opening a run
 - Delegation page now threads the same composite identity into plan/detail and run-comparison decision requests
 - Runs detail now renders a structured identity/delegation summary so operators can inspect lineage without opening raw JSON
+- Agent Monitor now threads `instance_id` / `agent_id` through launch and cancel flows, and its row identity no longer depends on bare `run_id` alone
 
 ### 2.9 Dashboard API feature-flag enforcement
 
@@ -302,6 +303,8 @@ Verified:
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/sessions.spec.ts --reporter=line`
 - `cd internal/channels/dashboard/ui && npm run build`
 - `go test ./internal/agent ./internal/runtime ./internal/tools`
+- `go test ./internal/channels/dashboard`
+- `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/monitor.spec.ts --reporter=line`
 
 Note: one broader `go test ./internal/runtime ./...` package pass exposed an existing flaky/unrelated failure in `TestEngineExecuteIngestsMemoryEventsWhenEnabled`, but the focused rerun of that test passed immediately and the targeted package suites for the changed slices passed.
 

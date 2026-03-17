@@ -202,6 +202,7 @@ Completed or substantially landed:
 - dashboard inbox list/detail handlers now merge lifecycle rows by `message_id`, preserving original message/task/source fields while surfacing the latest status and related run linkage
 - Sessions lifecycle cards now open canonical inbox detail and expose inbox `ack` / `run` actions, making the shared `message_id` lifecycle model directly actionable from the session transcript
 - delegation events now preserve additive `parent_run_id`, `from_agent_id`, and `to_agent_id` metadata, reducing another gap between delegated execution and the canonical inbox/run identity model
+- Agent Monitor UI now threads explicit `instance_id` / `agent_id` on launch and cancel operations, reducing another remaining bare-`run_id` operator path
 
 Still open:
 
@@ -289,6 +290,7 @@ Progress update:
 - dashboard inbox list/detail APIs now match the shared tool inbox semantics by projecting merged lifecycle state per `message_id` instead of sparse latest-row snapshots
 - Sessions now consumes those canonical inbox detail/ack/run endpoints from lifecycle cards, closing another dashboard-side gap between session history and the shared inbox model
 - delegated subagent execution now records additive parent/sender/recipient identity in `DelegationEvent`, so trace/ledger/eval consumers can correlate delegated work to the same instance/agent/run/message model more directly
+- Agent Monitor now consumes active-instance identity for new launches and uses per-run composite identity for cancel actions, aligning another operator surface with the canonical `(instance_id, agent_id, run_id)` model
 
 ## Milestone 6: Wizard
 

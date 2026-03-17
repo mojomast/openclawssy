@@ -37,6 +37,7 @@ Date: 2026-03-16
 - Dashboard inbox list/detail APIs now preserve the original message envelope across ack/run lifecycle updates by merging rows per `message_id` instead of returning sparse latest-row snapshots.
 - Sessions lifecycle cards now open the canonical inbox detail view and let operators trigger inbox `ack` / `run` actions without leaving the session transcript.
 - Delegation events now carry additive `parent_run_id`, `from_agent_id`, and `to_agent_id` metadata so delegated subagent work is easier to correlate across trace, ledger, and inbox-aligned operator surfaces.
+- Agent Monitor launch/cancel flows now send explicit `instance_id` / `agent_id`, and monitor rows use composite identity instead of assuming bare `run_id` uniqueness.
 
 ## Validation completed
 
@@ -62,9 +63,11 @@ Date: 2026-03-16
 - `go test ./internal/channels/dashboard -run 'TestInstanceInboxListAckAndRunFlow' -count=1`
 - `go test ./internal/channels/dashboard ./internal/tools ./internal/runtime`
 - `go test ./internal/agent ./internal/runtime ./internal/tools`
+- `go test ./internal/channels/dashboard`
 - `cd internal/channels/dashboard/ui && npm run typecheck`
 - `cd internal/channels/dashboard/ui && npm run build`
 - `cd internal/channels/dashboard/ui && npm run build`
+- `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/monitor.spec.ts --reporter=line`
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/runs.spec.ts`
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/chat.spec.ts tests/e2e/eval.spec.ts`
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/sessions.spec.ts --reporter=line`

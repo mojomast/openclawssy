@@ -12,6 +12,7 @@ type ThinkingMode = (typeof THINKING_MODES)[number]
 
 type MonitorRun = {
   runID: string
+  instanceID: string
   agentID: string
   taskID: string
   source: string
@@ -47,8 +48,17 @@ type StartRunResponse = {
   id?: unknown
 }
 
+type ActiveInstanceResponse = {
+  instance?: unknown
+}
+
 type MonitorRunControlResponse = {
   cancelled?: unknown
+}
+
+function normalizeActiveInstanceID(value: unknown): string {
+  const record = asRecord(value)
+  return asText(record?.id).trim()
 }
 
 function asText(value: unknown): string {
@@ -163,6 +173,7 @@ function normalizeRun(value: unknown): MonitorRun | null {
 
   return {
     runID,
+    instanceID: asText(raw.instance_id).trim(),
     agentID: asText(raw.agent_id).trim(),
     taskID: asText(raw.task_id).trim(),
     source: asText(raw.source).trim(),
@@ -235,6 +246,7 @@ function mergeAgentIDs(...sources: unknown[]): string[] {
 }
 
 export function AgentMonitorPage() {
+  const [activeInstanceID, setActiveInstanceID] = useState("")
   const [availableAgents, setAvailableAgents] = useState<string[]>(["default"])
   const [agentSummaries, setAgentSummaries] = useState<Record<string, AgentSummary>>({})
   const [runs, setRuns] = useState<MonitorRun[]>([])
@@ -275,8 +287,18 @@ export function AgentMonitorPage() {
     }
   }, [])
 
+  const loadActiveInstance = useCallback(async () => {
+    try {
+      const payload = await api.get<ActiveInstanceResponse>("/api/admin/instances/active")
+      setActiveInstanceID(normalizeActiveInstanceID(payload.instance))
+    } catch {
+      setActiveInstanceID("")
+    }
+  }, [])
+
   useEffect(() => {
     void loadMonitorData()
+    void loadActiveInstance()
 
     const pollTimer = window.setInterval(() => {
       void loadMonitorData({ silent: true })
@@ -285,7 +307,7 @@ export function AgentMonitorPage() {
     return () => {
       window.clearInterval(pollTimer)
     }
-  }, [loadMonitorData])
+  }, [loadActiveInstance, loadMonitorData])
 
   const startAgent = useCallback(
     async (agentID: string) => {
@@ -299,7 +321,16 @@ export function AgentMonitorPage() {
       setActionStatus(`Starting ${agentID}...`)
 
       try {
+        let instanceID = activeInstanceID
+        if (!instanceID) {
+          const payload = await api.get<ActiveInstanceResponse>("/api/admin/instances/active")
+          instanceID = normalizeActiveInstanceID(payload.instance)
+          if (instanceID) {
+            setActiveInstanceID(instanceID)
+          }
+        }
         const payload = await api.post<StartRunResponse>("/v1/runs", {
+          instance_id: instanceID || undefined,
           agent_id: agentID,
           message,
           thinking_mode: thinkingMode,
@@ -311,12 +342,14 @@ export function AgentMonitorPage() {
         setActionError(extractErrorMessage(startError))
       }
     },
-    [loadMonitorData, promptDraft, thinkingMode]
+    [activeInstanceID, loadMonitorData, promptDraft, thinkingMode]
   )
 
   const stopRun = useCallback(
-    async (runID: string) => {
-      const trimmedRunID = asText(runID).trim()
+    async (run: MonitorRun) => {
+      const trimmedRunID = asText(run.runID).trim()
+      const instanceID = asText(run.instanceID).trim()
+      const agentID = asText(run.agentID).trim()
       if (!trimmedRunID) {
         return
       }
@@ -328,6 +361,8 @@ export function AgentMonitorPage() {
         const payload = await api.post<MonitorRunControlResponse>("/api/admin/monitor/runs/control", {
           action: "cancel",
           run_id: trimmedRunID,
+          instance_id: instanceID || undefined,
+          agent_id: agentID || undefined,
         })
         setActionStatus(
           asBoolean(payload.cancelled)
@@ -456,7 +491,7 @@ export function AgentMonitorPage() {
                     variant="outline"
                     onClick={() => {
                       if (activeRun) {
-                        void stopRun(activeRun.runID)
+                        void stopRun(activeRun)
                       }
                     }}
                     disabled={!activeRun}
@@ -507,10 +542,10 @@ export function AgentMonitorPage() {
 
                   return (
                     <TableRow
-                      key={run.runID}
-                      data-testid={`monitor-run-row-${sanitizeForTestID(run.runID)}`}
+                      key={`${run.instanceID || "default"}:${run.agentID}:${run.runID}`}
+                      data-testid={`monitor-run-row-${sanitizeForTestID(`${run.instanceID || "default"}-${run.agentID}-${run.runID}`)}`}
                     >
-                      <TableCell>{run.agentID || "-"}</TableCell>
+                      <TableCell>{run.instanceID ? `${run.instanceID}/${run.agentID || "-"}` : run.agentID || "-"}</TableCell>
                       <TableCell>{run.role || "main"}</TableCell>
                       <TableCell>{run.status || "-"}</TableCell>
                       <TableCell>{taskText}</TableCell>
@@ -523,7 +558,7 @@ export function AgentMonitorPage() {
                       </TableCell>
                       <TableCell>
                         {isRunning ? (
-                          <Button type="button" size="sm" variant="outline" onClick={() => void stopRun(run.runID)}>
+                          <Button type="button" size="sm" variant="outline" onClick={() => void stopRun(run)}>
                             Stop
                           </Button>
                         ) : (

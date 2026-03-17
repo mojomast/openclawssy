@@ -37,6 +37,7 @@ Substantial portions of Milestones 1-5 are now landed on the current branch, inc
 - dashboard inbox list/detail APIs now project merged per-`message_id` lifecycle state so sparse ack/run status rows do not discard the original message envelope
 - Sessions lifecycle cards now let operators open the canonical inbox detail view and trigger inbox `ack` / `run` actions against the shared `message_id` lifecycle endpoints
 - delegation events now carry additive `parent_run_id`, `from_agent_id`, and `to_agent_id` metadata so delegated subagent work correlates more directly with the canonical inbox/run identity model
+- Agent Monitor launch/cancel flows now thread explicit `instance_id` / `agent_id` identity so monitor operations no longer rely on bare `run_id` or implicit active context alone
 
 Remaining work is concentrated in wizard parity, broader composite-identity rollout, and finishing first-class messaging/eval consumer convergence beyond the newly landed dashboard/CLI slices.
 

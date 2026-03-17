@@ -1844,6 +1844,13 @@ func TestMonitorRunControlUsesCompositeIdentityWhenProvided(t *testing.T) {
 	if len(canceller.called) == 0 || canceller.called[0] != "lab:alpha:run-composite" {
 		t.Fatalf("expected composite cancel call, got %#v", canceller.called)
 	}
+	var payload map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode control payload: %v", err)
+	}
+	if payload["instance_id"] != "lab" || payload["agent_id"] != "alpha" {
+		t.Fatalf("expected identity echoed in control response, got %#v", payload)
+	}
 }
 
 func TestListChatSessionsEndpointInvalidLimit(t *testing.T) {
