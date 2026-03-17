@@ -132,6 +132,9 @@ export function Layout() {
       if (item.path === '/eval') {
         return !featuresLoading && features.eval
       }
+      if (item.path === '/monitor') {
+        return !featuresLoading && features.instanceAgents
+      }
       if (item.path === '/agent-contract' || item.path === '/prompt-stack') {
         return !featuresLoading && features.instanceAgents
       }

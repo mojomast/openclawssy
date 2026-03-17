@@ -1853,6 +1853,35 @@ func TestMonitorRunControlUsesCompositeIdentityWhenProvided(t *testing.T) {
 	}
 }
 
+func TestMonitorRoutesRequireInstanceAgentsFeature(t *testing.T) {
+	root := t.TempDir()
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	store := defaultControlPlaneStore()
+	store.Features.InstanceAgents = false
+	if err := h.saveControlPlaneStore(store); err != nil {
+		t.Fatalf("save control plane store: %v", err)
+	}
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/monitor/runs", nil)
+	listRR := httptest.NewRecorder()
+	mux.ServeHTTP(listRR, listReq)
+	if listRR.Code != http.StatusForbidden {
+		t.Fatalf("expected monitor list status %d, got %d (%s)", http.StatusForbidden, listRR.Code, listRR.Body.String())
+	}
+	assertDashboardErrorCode(t, listRR.Body.Bytes(), "feature.instance_agents_disabled")
+
+	controlReq := httptest.NewRequest(http.MethodPost, "/api/admin/monitor/runs/control", bytes.NewBufferString(`{"action":"cancel","run_id":"run-1"}`))
+	controlReq.Header.Set("Content-Type", "application/json")
+	controlRR := httptest.NewRecorder()
+	mux.ServeHTTP(controlRR, controlReq)
+	if controlRR.Code != http.StatusForbidden {
+		t.Fatalf("expected monitor control status %d, got %d (%s)", http.StatusForbidden, controlRR.Code, controlRR.Body.String())
+	}
+	assertDashboardErrorCode(t, controlRR.Body.Bytes(), "feature.instance_agents_disabled")
+}
+
 func TestListChatSessionsEndpointInvalidLimit(t *testing.T) {
 	root := t.TempDir()
 	h := New(root, httpchannel.NewInMemoryRunStore())

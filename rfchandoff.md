@@ -165,6 +165,7 @@ Current capabilities:
 - Delegation page now threads the same composite identity into plan/detail and run-comparison decision requests
 - Runs detail now renders a structured identity/delegation summary so operators can inspect lineage without opening raw JSON
 - Agent Monitor now threads `instance_id` / `agent_id` through launch and cancel flows, and its row identity no longer depends on bare `run_id` alone
+- monitor list/control backend routes now require the `instance_agents` feature, and the dashboard shell hides the Monitor nav entry plus renders a disabled-state panel on direct access when that feature is off
 
 ### 2.9 Dashboard API feature-flag enforcement
 
@@ -307,6 +308,8 @@ Verified:
 - `go test ./internal/channels/dashboard`
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/monitor.spec.ts --reporter=line`
 - `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/contract.spec.ts tests/e2e/prompt-stack.spec.ts --reporter=line`
+- `go test ./internal/channels/dashboard -run 'TestMonitor.*|Test.*Monitor.*' -count=1`
+- `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/monitor.spec.ts --reporter=line`
 
 Note: one broader `go test ./internal/runtime ./...` package pass exposed an existing flaky/unrelated failure in `TestEngineExecuteIngestsMemoryEventsWhenEnabled`, but the focused rerun of that test passed immediately and the targeted package suites for the changed slices passed.
 
@@ -470,6 +473,7 @@ Status update:
 
 - Sessions, Agent Contract, and Prompt Stack pages now consume canonical instance identity more explicitly; remaining UI work should prioritize broader active-instance visibility, canonical wizard flows, and consistent feature-state presentation across the rest of the dashboard
 - shared feature-state presentation now also covers disabled nav/direct access behavior for Agent Contract and Prompt Stack; remaining UI work should push the same determinism into other instance-agent-dependent pages
+- shared feature-state presentation now also covers Monitor, Contract, and Prompt Stack; remaining UI work should push the same determinism into more instance-agent-dependent pages and read-only surfaces
 
 Do not:
 

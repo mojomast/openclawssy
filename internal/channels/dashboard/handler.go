@@ -1585,6 +1585,9 @@ func (h *Handler) buildDashboardAgentSummaries(cfg config.Config) map[string]any
 }
 
 func (h *Handler) handleMonitorRuns(w http.ResponseWriter, r *http.Request) {
+	if !h.requireInstanceAgentsFeature(w) {
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -1612,6 +1615,9 @@ func (h *Handler) handleMonitorRuns(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleMonitorRunControl(w http.ResponseWriter, r *http.Request) {
+	if !h.requireInstanceAgentsFeature(w) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return

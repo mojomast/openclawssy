@@ -11,6 +11,7 @@ type MonitorMockState = {
 type MonitorMockOptions = {
   agentPayloadForCall?: (callNumber: number) => unknown
   runsPayloadForCall?: (callNumber: number) => unknown
+  instanceAgentsEnabled?: boolean
 }
 
 function json(route: Route, body: unknown, status = 200) {
@@ -93,6 +94,18 @@ async function installMonitorMocks(page: Page, options?: MonitorMockOptions): Pr
 
     if (pathname === "/api/admin/status") {
       await json(route, { ok: true, model: { provider: "hatz", name: "glm-4.5" }, run_count: 3 })
+      return
+    }
+
+    if (pathname === "/api/admin/control-plane/features" && method === "GET") {
+      await json(route, {
+        features: {
+          instance_control: true,
+          instance_agents: options?.instanceAgentsEnabled ?? true,
+          wizard: true,
+          eval: true,
+        },
+      })
       return
     }
 
@@ -251,4 +264,22 @@ test("start run, stop active, per-row stop, thinking mode, and refresh-now inter
   const beforeRefresh = state.refreshCalls
   await page.getByRole("button", { name: "Refresh now" }).click()
   await expect.poll(() => state.refreshCalls).toBeGreaterThan(beforeRefresh)
+})
+
+test("Agent Monitor hides nav entry and shows disabled state when instance agents feature is off", async ({ page }) => {
+  await installMonitorMocks(page, { instanceAgentsEnabled: false })
+
+  await page.goto("/dashboard#/monitor")
+
+  await expect(page.getByRole("link", { name: "Monitor" })).toHaveCount(0)
+  await expect(page.getByRole("link", { name: "Agent Contract" })).toHaveCount(0)
+  await expect(page.getByRole("link", { name: "Prompt Stack" })).toHaveCount(0)
+  await expect(page.getByTestId("monitor-disabled-state")).toContainText("Agent Monitor disabled")
+  await expect(page.getByTestId("monitor-disabled-state")).toContainText("Instance agent controls are disabled")
+  await expect(page.getByLabel("Launch prompt")).toBeDisabled()
+  await expect(page.getByLabel("Thinking mode")).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Refresh now" })).toBeDisabled()
+  await expect(page.getByTestId("monitor-summary")).toHaveCount(0)
+  await expect(page.locator("[data-testid^='monitor-agent-card-']")).toHaveCount(0)
+  await expect(page.getByTestId("monitor-runs-table")).toHaveCount(0)
 })

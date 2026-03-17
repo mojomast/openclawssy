@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useControlPlaneFeatures } from "@/hooks/useControlPlaneFeatures"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { ApiError, api } from "@/lib/api"
 
@@ -246,6 +247,7 @@ function mergeAgentIDs(...sources: unknown[]): string[] {
 }
 
 export function AgentMonitorPage() {
+  const { features, loading: featuresLoading } = useControlPlaneFeatures()
   const [activeInstanceID, setActiveInstanceID] = useState("")
   const [availableAgents, setAvailableAgents] = useState<string[]>(["default"])
   const [agentSummaries, setAgentSummaries] = useState<Record<string, AgentSummary>>({})
@@ -256,6 +258,7 @@ export function AgentMonitorPage() {
   const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("never")
   const [actionStatus, setActionStatus] = useState("")
   const [actionError, setActionError] = useState("")
+  const featureDisabled = !featuresLoading && !features.instanceAgents
 
   const loadMonitorData = useCallback(async (options?: { silent?: boolean }) => {
     setLoading(true)
@@ -297,6 +300,20 @@ export function AgentMonitorPage() {
   }, [])
 
   useEffect(() => {
+    if (featuresLoading) {
+      return
+    }
+    if (featureDisabled) {
+      setLoading(false)
+      setError("")
+      setActiveInstanceID("")
+      setAvailableAgents([])
+      setAgentSummaries({})
+      setRuns([])
+      setActionStatus("")
+      setActionError("")
+      return
+    }
     void loadMonitorData()
     void loadActiveInstance()
 
@@ -307,7 +324,7 @@ export function AgentMonitorPage() {
     return () => {
       window.clearInterval(pollTimer)
     }
-  }, [loadActiveInstance, loadMonitorData])
+  }, [featureDisabled, featuresLoading, loadActiveInstance, loadMonitorData])
 
   const startAgent = useCallback(
     async (agentID: string) => {
@@ -395,6 +412,15 @@ export function AgentMonitorPage() {
           <CardTitle className="text-base">Launch controls</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {featureDisabled ? (
+            <div className="rounded-md border border-border bg-muted/30 p-4" data-testid="monitor-disabled-state">
+              <p className="text-sm font-medium">Agent Monitor disabled</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Instance agent controls are disabled for this control plane.
+              </p>
+            </div>
+          ) : null}
+
           <div className="space-y-2">
             <label htmlFor="monitor-launch-prompt" className="text-sm font-medium">
               Launch prompt
@@ -404,6 +430,7 @@ export function AgentMonitorPage() {
               className="min-h-[96px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
               placeholder="Describe the work to start for any agent card below."
               value={promptDraft}
+              disabled={featureDisabled}
               onChange={(event) => setPromptDraft(event.target.value)}
             />
           </div>
@@ -416,6 +443,7 @@ export function AgentMonitorPage() {
                 aria-label="Thinking mode"
                 className="h-10 rounded-md border bg-background px-3 text-sm"
                 value={thinkingMode}
+                disabled={featureDisabled}
                 onChange={(event) => setThinkingMode(event.target.value as ThinkingMode)}
               >
                 {THINKING_MODES.map((mode) => (
@@ -426,22 +454,24 @@ export function AgentMonitorPage() {
               </select>
             </label>
 
-            <Button type="button" variant="outline" onClick={() => void loadMonitorData()} disabled={loading}>
+            <Button type="button" variant="outline" onClick={() => void loadMonitorData()} disabled={loading || featureDisabled}>
               {loading ? "Refreshing..." : "Refresh now"}
             </Button>
           </div>
 
           {actionStatus ? <p className="text-sm text-muted-foreground">{actionStatus}</p> : null}
           {actionError ? <p className="text-sm text-destructive">{actionError}</p> : null}
-          {error ? <p className="text-sm text-destructive">Monitor load failed: {error}</p> : null}
+          {!featureDisabled && error ? <p className="text-sm text-destructive">Monitor load failed: {error}</p> : null}
         </CardContent>
       </Card>
 
-      <p className="text-sm text-muted-foreground" data-testid="monitor-summary">
-        {runs.length} recent internal runs tracked · {runningCount} active · {subagentCount} subagent runs.
-      </p>
+      {!featureDisabled ? (
+        <p className="text-sm text-muted-foreground" data-testid="monitor-summary">
+          {runs.length} recent internal runs tracked · {runningCount} active · {subagentCount} subagent runs.
+        </p>
+      ) : null}
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      {!featureDisabled ? <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {availableAgents.map((agentID) => {
           const mainRuns = runs.filter((run) => run.agentID === agentID && run.role === "main")
           const subRuns = runs.filter((run) => run.agentID === agentID && run.role === "subagent")
@@ -503,9 +533,9 @@ export function AgentMonitorPage() {
             </Card>
           )
         })}
-      </div>
+      </div> : null}
 
-      <Card>
+      {!featureDisabled ? <Card>
         <CardHeader>
           <CardTitle className="text-base">Recent Main + Subagent Runs</CardTitle>
         </CardHeader>
@@ -572,7 +602,7 @@ export function AgentMonitorPage() {
             </Table>
           )}
         </CardContent>
-      </Card>
+      </Card> : null}
     </div>
   )
 }
