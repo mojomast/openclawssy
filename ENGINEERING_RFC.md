@@ -54,6 +54,7 @@ Substantial portions of Milestones 1-5 are now landed on the current branch, inc
 - The dashboard shell now also shows the active instance globally in the header, reducing instance-context ambiguity without requiring operators to navigate into the Instances page first
 - Dashboard Workspace browsing now resolves through the same effective runtime identity as agent execution, so the active/requested instance and agent determine the visible workspace instead of legacy host-root fallback logic
 - In Docker sandbox mode, the Workspace page now reads the live `/workspace` volume through the sandbox provider, aligning dashboard file browsing with runtime `fs.*` writes and making workspace mode/identity explicit in the UI
+- Local Docker-backed `becomussy` integration is now live again: the Compose service uses the matching Postgres default credential and the bot can successfully hit continuity, project-create, and memory-create endpoints through the service DNS name
 
 Remaining work is concentrated in broader composite-identity rollout, finishing first-class messaging/eval consumer convergence beyond the newly landed dashboard/CLI slices, and tightening real-environment validation around the new workspace/runtime alignment.
 

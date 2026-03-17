@@ -54,6 +54,8 @@ Date: 2026-03-16
 - The dashboard header now shows the active instance globally too, so instance context remains visible while working on other pages.
 - The dashboard Workspace backend now resolves through canonical effective runtime identity instead of the old config-root/host fallback path, so browsing follows the active/requested instance and agent.
 - The dashboard Workspace page now shows resolved workspace mode plus instance/agent identity, and in Docker mode it reads the live `/workspace` volume through the sandbox provider so the UI matches runtime `fs.*` writes.
+- The local Docker `becomussy` sidecar is reachable by the bot again: the Compose service now uses the matching Postgres password default, restarts automatically, and live continuity/project/memory requests from `openclawssy` succeed against `http://becomussy:8000`.
+- Local override mounts now patch the upstream becomussy project/memory services so relationship-backed response models stop throwing `MissingGreenlet` 500s on create, list, and get endpoints.
 
 ## Validation completed
 
@@ -82,6 +84,8 @@ Date: 2026-03-16
 - `go test ./internal/channels/dashboard`
 - `cd internal/channels/dashboard/ui && npm run typecheck`
 - `cd internal/channels/dashboard/ui && npm run build`
+- `docker exec openclawssy-openclawssy-1 sh -lc 'wget -qO- http://becomussy:8000/api/v1/health'`
+- `docker exec openclawssy-openclawssy-1 sh -lc 'python - <<"PY" ... continuity/project/memory requests ... PY'`
 - `cd internal/channels/dashboard/ui && npm run build`
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/monitor.spec.ts --reporter=line`
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/runs.spec.ts`
@@ -160,6 +164,7 @@ Still open overall:
 - Chat now joins Sessions, Eval, Monitor, Contract, and Prompt Stack in that disabled-nav/direct-access pattern, but more instance-agent-dependent pages and selective backend guardrails still need the same treatment.
 - Chat now joins Sessions, Eval, Monitor, Contract, and Prompt Stack in that disabled-nav/direct-access pattern, and `/api/admin/agents` now aligns with instance-aware selection too; more instance-agent-dependent pages still need the same treatment.
 - Workspace browsing now aligns with canonical runtime identity and Docker-backed `/workspace`, but broader live-environment verification and any remaining host-fallback assumptions in adjacent surfaces still need review.
+- The `becomussy` service fix is now persisted through Compose-mounted local overrides, but the upstream `/tmp/becomussy/backend` source tree still needs the same relationship-loading patch committed in its own repo to eliminate this override dependency.
 
 ## Recommended next starting point
 

@@ -47,9 +47,10 @@ services:
     build:
       context: /tmp/becomussy/backend
       dockerfile: Dockerfile
+    restart: unless-stopped
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${BECOMUSSY_DB_USER:-becoming}:${BECOMUSSY_DB_PASS:-changeme}@infrastructure-db-1:5432/becoming
-      - SYNC_DATABASE_URL=postgresql://${BECOMUSSY_DB_USER:-becoming}:${BECOMUSSY_DB_PASS:-changeme}@infrastructure-db-1:5432/becoming
+      - DATABASE_URL=postgresql+asyncpg://${BECOMUSSY_DB_USER:-becoming}:${BECOMUSSY_DB_PASS:-becoming}@infrastructure-db-1:5432/becoming
+      - SYNC_DATABASE_URL=postgresql://${BECOMUSSY_DB_USER:-becoming}:${BECOMUSSY_DB_PASS:-becoming}@infrastructure-db-1:5432/becoming
       - REDIS_URL=redis://infrastructure-redis-1:6379/0
       - SECRET_KEY=${BECOMUSSY_SECRET_KEY:-changeme}
       - ENVIRONMENT=development
@@ -57,6 +58,9 @@ services:
     networks:
       - default
       - infra
+    volumes:
+      - ./docker/becomussy-overrides/app/services/projects/__init__.py:/app/app/services/projects/__init__.py
+      - ./docker/becomussy-overrides/app/services/memory/__init__.py:/app/app/services/memory/__init__.py
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
       interval: 10s

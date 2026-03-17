@@ -246,7 +246,7 @@ Requires `becomussy.enabled=true` in config. All tools communicate with a runnin
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `becomussy.enabled` | `bool` | `false` | Enable becomussy integration |
-| `becomussy.base_url` | `string` | `http://localhost:8000` | Becomussy API base URL |
+| `becomussy.base_url` | `string` | `http://localhost:8000` | Becomussy API base URL; in Docker Compose use the service DNS name such as `http://becomussy:8000` |
 | `becomussy.user_id` | `string` | `openclawssy-agent` | X-User-Id header value |
 | `becomussy.user_role` | `string` | `agent_runtime` | X-User-Role header value |
 | `becomussy.timeout_ms` | `int` | `15000` | HTTP request timeout in ms |

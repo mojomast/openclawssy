@@ -18,7 +18,7 @@ Environment variables, external dependencies, and setup notes.
 - `ZAI_API_KEY` — Required for Z.AI model provider
 - `OPENCLAWSSY_TOKEN` — Bearer token for dashboard auth (default: change-me)
 - `DISCORD_BOT_TOKEN` — Optional, for Discord integration
-- `BECOMUSSY_DB_USER` / `BECOMUSSY_DB_PASS` — Local dev DB creds for becomussy service
+- `BECOMUSSY_DB_USER` / `BECOMUSSY_DB_PASS` — Local dev DB creds for becomussy service; current local infra defaults are `becoming` / `becoming`
 
 ## Docker Services
 
