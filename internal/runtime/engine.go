@@ -2129,7 +2129,17 @@ func (s *subAgentRunner) ExecuteSubAgent(ctx context.Context, input tools.AgentR
 		SandboxAgentID:    sandboxAgentID,
 	})
 	if err != nil {
-		return tools.AgentRunOutput{}, err
+		return tools.AgentRunOutput{
+			RunID:        result.RunID,
+			FinalText:    result.FinalText,
+			ArtifactPath: result.ArtifactPath,
+			DurationMS:   result.DurationMS,
+			ToolCalls:    result.ToolCalls,
+			Provider:     result.Provider,
+			Model:        result.Model,
+			Status:       "failed",
+			MessageID:    strings.TrimSpace(input.MessageID),
+		}, err
 	}
 	return tools.AgentRunOutput{
 		RunID:        result.RunID,
@@ -2587,13 +2597,15 @@ func (e *Engine) maybeTriggerProactiveMemoryHook(ctx context.Context, cfg config
 	msg := fmt.Sprintf("Proactive memory signal: %s\nchannel=%s\nuser_id=%s\nsession_id=%s\nrun_id=%s", signal.Reason, sessionCtx.Channel, sessionCtx.UserID, sessionCtx.SessionID, runID)
 	ctx = tools.WithRequestContext(ctx, tools.RequestContext{InstanceID: strings.TrimSpace(instanceID)})
 	_, err := registry.Execute(ctx, agentID, "agent.message.send", e.workspaceDir, map[string]any{
-		"to_agent_id": toAgentID,
-		"subject":     "memory.proactive",
-		"task_id":     sessionCtx.SessionID,
-		"session_id":  sessionCtx.SessionID,
-		"channel":     sessionCtx.Channel,
-		"user_id":     sessionCtx.UserID,
-		"message":     msg,
+		"to_agent_id":   toAgentID,
+		"subject":       "memory.proactive",
+		"task_id":       sessionCtx.SessionID,
+		"session_id":    sessionCtx.SessionID,
+		"channel":       sessionCtx.Channel,
+		"user_id":       sessionCtx.UserID,
+		"message":       msg,
+		"parent_run_id": runID,
+		"auto_run":      true,
 	})
 	if err != nil {
 		slog.Warn("runtime: proactive hook delivery failed", "run_id", runID, "tool", rec.Request.Name, "error", err)

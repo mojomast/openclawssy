@@ -594,7 +594,17 @@ func (s *Server) handleRunEvents(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	events, unsubscribe := s.eventBus.Subscribe(runID, lastEventID)
+	instanceID := strings.TrimSpace(r.URL.Query().Get("instance_id"))
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+	var (
+		events      <-chan RunEvent
+		unsubscribe func()
+	)
+	if instanceID != "" || agentID != "" {
+		events, unsubscribe = s.eventBus.SubscribeComposite(instanceID, agentID, runID, lastEventID)
+	} else {
+		events, unsubscribe = s.eventBus.Subscribe(runID, lastEventID)
+	}
 	defer unsubscribe()
 
 	heartbeatTicker := time.NewTicker(sseHeartbeatInterval)

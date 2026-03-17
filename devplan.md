@@ -182,7 +182,11 @@ Completed or substantially landed:
   - dashboard monitor/status/trace/decision surfaces now emit `instance_id`
   - dashboard monitor reconciliation no longer collides on duplicate `run_id` across instances
   - `agent.message.send` / `agent.message.inbox` now mint stable `message_id` values and surface lifecycle metadata
-  - inbox authorization and per-agent communication allowlists are now enforced when configured
+- inbox authorization and per-agent communication allowlists are now enforced when configured
+- `agent.message.send` can now optionally auto-run the target agent and emit real `running` / `completed` / `failed` lifecycle transitions
+- proactive memory hooks now use the same message lifecycle path, preserving `parent_run_id` linkage into the spawned run
+- HTTP SSE/event-bus delivery now supports composite subscription by `instance_id` + `agent_id` while dual-publishing to legacy bare `run_id` subscribers
+- dashboard eval detail views now surface additive identity/runtime/delegation metadata instead of dropping it at the UI layer
 
 Still open:
 
@@ -263,6 +267,7 @@ Progress update:
 - composite tracker identity is landed in runtime and HTTP queued runs
 - dashboard run/decision surfaces now consume and emit instance-aware identity more consistently
 - inbox lifecycle foundation is landed (`message_id`, `queued`, `acknowledged`), but broader runtime/UI wiring and canonical storage cleanup are still open
+- inbox lifecycle is now exercised by real auto-run and proactive-memory producer paths, but more producers/consumers still need to converge on the same model
 
 ## Milestone 6: Wizard
 
@@ -293,6 +298,7 @@ Progress update:
 
 - eval storage and API now carry richer additive identity/runtime metadata (`instance_id`, `agent_id`, `run_id`, `parent_run_id`, `root_run_id`, `source`, `task_id`, `session_id`, artifact/checkpoint/delegation metadata)
 - dashboard/eval consumers have stronger composite identity and lineage adoption, but delegation producers and broader consumers still need follow-through
+- dashboard eval detail panels now consume and render additive identity/runtime/delegation metadata, but richer producer coverage and more operator views still remain
 
 ## 7. Detailed task list by agent
 

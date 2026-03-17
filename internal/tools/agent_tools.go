@@ -150,15 +150,19 @@ func registerAgentTools(reg *Registry, agentsPath, configPath, workspaceRoot str
 		Description: "Send a message to another agent inbox",
 		Required:    []string{"to_agent_id", "message"},
 		ArgTypes: map[string]ArgType{
-			"to_agent_id": ArgTypeString,
-			"message":     ArgTypeString,
-			"task_id":     ArgTypeString,
-			"subject":     ArgTypeString,
-			"channel":     ArgTypeString,
-			"user_id":     ArgTypeString,
-			"session_id":  ArgTypeString,
+			"to_agent_id":       ArgTypeString,
+			"message":           ArgTypeString,
+			"task_id":           ArgTypeString,
+			"subject":           ArgTypeString,
+			"channel":           ArgTypeString,
+			"user_id":           ArgTypeString,
+			"session_id":        ArgTypeString,
+			"source_session_id": ArgTypeString,
+			"message_id":        ArgTypeString,
+			"parent_run_id":     ArgTypeString,
+			"auto_run":          ArgTypeBool,
 		},
-	}, agentMessageSend(agentsPath, configPath)); err != nil {
+	}, agentMessageSend(agentsPath, configPath, runner)); err != nil {
 		return err
 	}
 	if err := reg.Register(ToolSpec{
@@ -178,7 +182,12 @@ func registerAgentTools(reg *Registry, agentsPath, configPath, workspaceRoot str
 		ArgTypes: map[string]ArgType{
 			"agent_id":            ArgTypeString,
 			"message":             ArgTypeString,
+			"message_id":          ArgTypeString,
+			"parent_run_id":       ArgTypeString,
 			"task_id":             ArgTypeString,
+			"source_session_id":   ArgTypeString,
+			"inbox_session_id":    ArgTypeString,
+			"source":              ArgTypeString,
 			"thinking_mode":       ArgTypeString,
 			"allowed_tools":       ArgTypeArray,
 			"max_tool_iterations": ArgTypeNumber,
@@ -489,8 +498,8 @@ func agentProfileSet(configPath string) Handler {
 	}
 }
 
-func agentMessageSend(agentsPath, configPath string) Handler {
-	return func(_ context.Context, req Request) (map[string]any, error) {
+func agentMessageSend(agentsPath, configPath string, runner AgentRunner) Handler {
+	return func(ctx context.Context, req Request) (map[string]any, error) {
 		instanceID, rootDir, instanceManifest, err := resolveAgentMessagingContext(req, configPath)
 		if err != nil {
 			return nil, err
@@ -636,10 +645,53 @@ func agentMessageSend(agentsPath, configPath string) Handler {
 			SentAt:          now.Format(time.RFC3339),
 		})
 
+		autoRun := getBoolArg(req.Args, "auto_run", false)
+		runID := ""
+		lifecycleStatus := agentMessageStatusQueued
+		if autoRun {
+			if runner == nil {
+				return nil, errors.New("agent auto-run is not configured")
+			}
+			out, runErr := runAgentMessageLifecycle(ctx, runner, store, req, agentMessageEnvelope{
+				MessageID:       messageID,
+				Status:          agentMessageStatusAcknowledged,
+				InstanceID:      instanceID,
+				FromAgentID:     fromAgentID,
+				ToAgentID:       toAgentID,
+				Subject:         subject,
+				TaskID:          taskID,
+				SessionID:       sessionID,
+				SourceSessionID: firstNonEmptyTrimmed(sourceSessionID, sessionID),
+				Channel:         sourceChannel,
+				UserID:          sourceUserID,
+				Message:         message,
+				SentAt:          now.Format(time.RFC3339),
+			}, session.SessionID)
+			runID = strings.TrimSpace(out.RunID)
+			lifecycleStatus = firstNonEmptyTrimmed(out.Status, agentMessageStatusCompleted)
+			if runErr != nil {
+				return map[string]any{
+					"sent":              true,
+					"message_id":        messageID,
+					"status":            lifecycleStatus,
+					"instance_id":       instanceID,
+					"session_id":        session.SessionID,
+					"inbox_session_id":  session.SessionID,
+					"source_session_id": sessionID,
+					"from_agent_id":     fromAgentID,
+					"to_agent_id":       toAgentID,
+					"task_id":           taskID,
+					"channel":           sourceChannel,
+					"user_id":           sourceUserID,
+					"run_id":            runID,
+				}, runErr
+			}
+		}
+
 		return map[string]any{
 			"sent":              true,
 			"message_id":        messageID,
-			"status":            agentMessageStatusQueued,
+			"status":            lifecycleStatus,
 			"instance_id":       instanceID,
 			"session_id":        session.SessionID,
 			"inbox_session_id":  session.SessionID,
@@ -649,6 +701,7 @@ func agentMessageSend(agentsPath, configPath string) Handler {
 			"task_id":           taskID,
 			"channel":           sourceChannel,
 			"user_id":           sourceUserID,
+			"run_id":            runID,
 		}, nil
 	}
 }
@@ -901,74 +954,39 @@ func agentRun(agentsPath, configPath string, runner AgentRunner) Handler {
 			return nil, errors.New("message is required")
 		}
 		messageID := strings.TrimSpace(valueString(req.Args, "message_id"))
-		out, err := runner.ExecuteSubAgent(ctx, AgentRunInput{
-			InstanceID:        strings.TrimSpace(req.InstanceID),
-			CallerAgentID:     caller,
-			TargetAgentID:     targetAgentID,
-			MessageID:         messageID,
-			ParentRunID:       strings.TrimSpace(valueString(req.Args, "parent_run_id")),
-			Message:           msg,
-			TaskID:            strings.TrimSpace(valueString(req.Args, "task_id")),
-			Source:            "subagent/" + caller,
-			ThinkingMode:      strings.TrimSpace(valueString(req.Args, "thinking_mode")),
-			AllowedTools:      stringSliceArg(req.Args, "allowed_tools"),
-			MaxToolIterations: getIntArg(req.Args, "max_tool_iterations", 0),
-			TimeoutMS:         getIntArg(req.Args, "timeout_ms", 0),
-		})
-		if err != nil {
-			if messageID != "" {
-				if store, storeErr := openAgentChatStore(req.Workspace, agentsPath); storeErr == nil {
-					_ = appendAgentMessageStatus(store, strings.TrimSpace(valueString(req.Args, "inbox_session_id")), agentMessageEnvelope{
-						MessageID:       messageID,
-						Status:          agentMessageStatusFailed,
-						InstanceID:      strings.TrimSpace(req.InstanceID),
-						FromAgentID:     caller,
-						ToAgentID:       targetAgentID,
-						TaskID:          strings.TrimSpace(valueString(req.Args, "task_id")),
-						SourceSessionID: strings.TrimSpace(valueString(req.Args, "source_session_id")),
-						Note:            "subagent execution failed",
-						Error:           strings.TrimSpace(err.Error()),
-					})
-				}
-			}
-			return nil, err
-		}
+		var out AgentRunOutput
 		if messageID != "" {
 			store, storeErr := openAgentChatStore(req.Workspace, agentsPath)
-			if storeErr == nil {
-				ackEnvelope := agentMessageEnvelope{
-					MessageID:       messageID,
-					Status:          agentMessageStatusRunning,
-					InstanceID:      strings.TrimSpace(req.InstanceID),
-					FromAgentID:     caller,
-					ToAgentID:       targetAgentID,
-					TaskID:          strings.TrimSpace(valueString(req.Args, "task_id")),
-					SourceSessionID: strings.TrimSpace(valueString(req.Args, "source_session_id")),
-					RelatedRunID:    strings.TrimSpace(out.RunID),
-					Note:            "subagent execution started",
-				}
-				_ = appendAgentMessageStatus(store, strings.TrimSpace(valueString(req.Args, "inbox_session_id")), ackEnvelope)
-				finalStatus := agentMessageStatusCompleted
-				finalError := ""
-				if strings.TrimSpace(out.Status) != "" {
-					finalStatus = strings.TrimSpace(out.Status)
-				}
-				if finalStatus == agentMessageStatusFailed {
-					finalError = strings.TrimSpace(out.FinalText)
-				}
-				_ = appendAgentMessageStatus(store, strings.TrimSpace(valueString(req.Args, "inbox_session_id")), agentMessageEnvelope{
-					MessageID:       messageID,
-					Status:          finalStatus,
-					InstanceID:      strings.TrimSpace(req.InstanceID),
-					FromAgentID:     caller,
-					ToAgentID:       targetAgentID,
-					TaskID:          strings.TrimSpace(valueString(req.Args, "task_id")),
-					SourceSessionID: strings.TrimSpace(valueString(req.Args, "source_session_id")),
-					RelatedRunID:    strings.TrimSpace(out.RunID),
-					Note:            "subagent execution finished",
-					Error:           finalError,
-				})
+			if storeErr != nil {
+				return nil, storeErr
 			}
+			out, err = runAgentMessageLifecycle(ctx, runner, store, req, agentMessageEnvelope{
+				MessageID:       messageID,
+				InstanceID:      strings.TrimSpace(req.InstanceID),
+				FromAgentID:     caller,
+				ToAgentID:       targetAgentID,
+				TaskID:          strings.TrimSpace(valueString(req.Args, "task_id")),
+				SourceSessionID: strings.TrimSpace(valueString(req.Args, "source_session_id")),
+				Message:         msg,
+			}, strings.TrimSpace(valueString(req.Args, "inbox_session_id")))
+		} else {
+			out, err = runner.ExecuteSubAgent(ctx, AgentRunInput{
+				InstanceID:        strings.TrimSpace(req.InstanceID),
+				CallerAgentID:     caller,
+				TargetAgentID:     targetAgentID,
+				MessageID:         messageID,
+				ParentRunID:       strings.TrimSpace(valueString(req.Args, "parent_run_id")),
+				Message:           msg,
+				TaskID:            strings.TrimSpace(valueString(req.Args, "task_id")),
+				Source:            "subagent/" + caller,
+				ThinkingMode:      strings.TrimSpace(valueString(req.Args, "thinking_mode")),
+				AllowedTools:      stringSliceArg(req.Args, "allowed_tools"),
+				MaxToolIterations: getIntArg(req.Args, "max_tool_iterations", 0),
+				TimeoutMS:         getIntArg(req.Args, "timeout_ms", 0),
+			})
+		}
+		if err != nil {
+			return nil, err
 		}
 		return map[string]any{
 			"agent_id":      targetAgentID,
@@ -1011,6 +1029,68 @@ func appendAgentMessageStatus(store *chatstore.Store, sessionID string, envelope
 		Error:           strings.TrimSpace(envelope.Error),
 		UpdatedAt:       now,
 	})
+}
+
+func runAgentMessageLifecycle(ctx context.Context, runner AgentRunner, store *chatstore.Store, req Request, envelope agentMessageEnvelope, inboxSessionID string) (AgentRunOutput, error) {
+	if runner == nil {
+		return AgentRunOutput{}, errors.New("agent runner is not configured")
+	}
+	inboxSessionID = strings.TrimSpace(inboxSessionID)
+	_ = appendAgentMessageStatus(store, inboxSessionID, agentMessageEnvelope{
+		MessageID:       envelope.MessageID,
+		Status:          agentMessageStatusRunning,
+		InstanceID:      envelope.InstanceID,
+		FromAgentID:     envelope.FromAgentID,
+		ToAgentID:       envelope.ToAgentID,
+		Subject:         envelope.Subject,
+		TaskID:          envelope.TaskID,
+		SourceSessionID: envelope.SourceSessionID,
+		Channel:         envelope.Channel,
+		UserID:          envelope.UserID,
+		Note:            "subagent execution started",
+		SentAt:          envelope.SentAt,
+	})
+	out, err := runner.ExecuteSubAgent(ctx, AgentRunInput{
+		InstanceID:        strings.TrimSpace(envelope.InstanceID),
+		CallerAgentID:     strings.TrimSpace(envelope.FromAgentID),
+		TargetAgentID:     strings.TrimSpace(envelope.ToAgentID),
+		MessageID:         strings.TrimSpace(envelope.MessageID),
+		ParentRunID:       strings.TrimSpace(valueString(req.Args, "parent_run_id")),
+		Message:           strings.TrimSpace(envelope.Message),
+		TaskID:            strings.TrimSpace(envelope.TaskID),
+		Source:            firstNonEmptyTrimmed(strings.TrimSpace(valueString(req.Args, "source")), "message/"+strings.TrimSpace(envelope.FromAgentID)),
+		ThinkingMode:      strings.TrimSpace(valueString(req.Args, "thinking_mode")),
+		AllowedTools:      stringSliceArg(req.Args, "allowed_tools"),
+		MaxToolIterations: getIntArg(req.Args, "max_tool_iterations", 0),
+		TimeoutMS:         getIntArg(req.Args, "timeout_ms", 0),
+	})
+	status := agentMessageStatusCompleted
+	finalError := ""
+	if err != nil {
+		status = agentMessageStatusFailed
+		finalError = strings.TrimSpace(err.Error())
+	} else if strings.TrimSpace(out.Status) != "" {
+		status = strings.TrimSpace(out.Status)
+	}
+	out.Status = status
+	out.MessageID = strings.TrimSpace(envelope.MessageID)
+	_ = appendAgentMessageStatus(store, inboxSessionID, agentMessageEnvelope{
+		MessageID:       envelope.MessageID,
+		Status:          status,
+		InstanceID:      envelope.InstanceID,
+		FromAgentID:     envelope.FromAgentID,
+		ToAgentID:       envelope.ToAgentID,
+		Subject:         envelope.Subject,
+		TaskID:          envelope.TaskID,
+		SourceSessionID: envelope.SourceSessionID,
+		Channel:         envelope.Channel,
+		UserID:          envelope.UserID,
+		RelatedRunID:    strings.TrimSpace(out.RunID),
+		Note:            "subagent execution finished",
+		Error:           finalError,
+		SentAt:          envelope.SentAt,
+	})
+	return out, err
 }
 
 func stringSliceArg(args map[string]any, key string) []string {

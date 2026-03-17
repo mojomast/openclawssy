@@ -60,6 +60,30 @@ func TestRunEventBusCarriesInstanceAndAgentIdentity(t *testing.T) {
 	}
 }
 
+func TestRunEventBusSubscribeCompositePublishesBareRunID(t *testing.T) {
+	bus := NewRunEventBus(16)
+	ch, unsubscribe := bus.SubscribeComposite("instance-a", "agent-7", "run_stream_identity", 0)
+	defer unsubscribe()
+
+	bus.PublishComposite("instance-a", "agent-7", "run_stream_identity", RunEvent{Type: RunEventCompleted, InstanceID: "instance-a", AgentID: "agent-7", Data: map[string]any{"status": "completed"}})
+	bus.CloseComposite("instance-a", "agent-7", "run_stream_identity")
+
+	select {
+	case event, ok := <-ch:
+		if !ok {
+			t.Fatal("expected composite event before channel close")
+		}
+		if event.RunID != "run_stream_identity" {
+			t.Fatalf("expected public run id run_stream_identity, got %q", event.RunID)
+		}
+		if event.InstanceID != "instance-a" || event.AgentID != "agent-7" {
+			t.Fatalf("expected identity metadata, got %+v", event)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for composite event")
+	}
+}
+
 func TestRunEventBusReplaysEventsAfterLastEventID(t *testing.T) {
 	bus := NewRunEventBus(16)
 	runID := "run_stream_replay"

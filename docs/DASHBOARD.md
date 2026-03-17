@@ -96,7 +96,7 @@ All control-plane routes are hash-based under `/dashboard/#/...`.
 - Shows suite history table with expandable details: metrics cards, case-level pass/fail table, baseline regression panel, additive normalized eval identity metadata (`instance_id`, `agent_id`, `run_id`, `parent_run_id`, `root_run_id`, `source`, `task_id`, `session_id`) when present, and additive runtime metadata (`artifact_path`, `checkpoint_path`, decomposition/delegation summaries) when stored.
 - Verification notes:
   - Run `openclawssy eval run --suite basic` first so data exists.
-  - Refresh page and expand a row to verify metrics + baseline comparison blocks.
+  - Refresh page and expand a row to verify metrics, identity/delegation metadata, and baseline comparison blocks.
 
 ## Runtime and validation notes
 
@@ -105,6 +105,7 @@ All control-plane routes are hash-based under `/dashboard/#/...`.
 - Delegation run comparison depends on decision records emitted to per-agent audit logs (`.openclawssy/agents/<agent>/audit/events.jsonl`).
 - Canonical instance-scoped audits are progressively taking over under `.openclawssy/instances/<instance>/agents/<agent>/audit/events.jsonl`; dashboard decision and monitor flows now preserve `instance_id` where available while keeping compatibility with legacy audit locations.
 - Eval UI data is read from `.openclawssy/eval/results.db`; baseline comparisons use saved baselines under `.openclawssy/eval/baselines/`.
+- HTTP run SSE streams can now be subscribed with `instance_id` and `agent_id` query parameters to follow the composite event-bus identity path while legacy bare `run_id` streams remain available for compatibility.
 - Current validation commands for this control-plane surface:
 
 ```bash

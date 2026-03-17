@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -13,6 +14,22 @@ import (
 	"openclawssy/internal/policy"
 	"openclawssy/internal/tools"
 )
+
+type proactiveAgentRunner struct {
+	result tools.AgentRunOutput
+	err    error
+}
+
+func (r proactiveAgentRunner) ExecuteSubAgent(_ context.Context, input tools.AgentRunInput) (tools.AgentRunOutput, error) {
+	out := r.result
+	if out.MessageID == "" {
+		out.MessageID = input.MessageID
+	}
+	if out.Status == "" {
+		out.Status = "completed"
+	}
+	return out, r.err
+}
 
 func TestProactiveSignalFromToolOutput(t *testing.T) {
 	checkpoint := `{"result":{"new_items":[{"kind":"preference","content":"remind me every friday","importance":4}]}}`
@@ -56,7 +73,7 @@ func TestMaybeTriggerProactiveMemoryHookDispatchesAgentMessage(t *testing.T) {
 
 	enforcer := policy.NewEnforcer(e.workspaceDir, map[string][]string{"default": {"agent.message.send", "agent.message.inbox"}})
 	reg := tools.NewRegistry(enforcer, nil)
-	if err := tools.RegisterCoreWithOptions(reg, tools.CoreOptions{EnableShellExec: true, ConfigPath: cfgPath, AgentsPath: e.agentsDir, ChatstorePath: e.agentsDir, WorkspaceRoot: e.workspaceDir}); err != nil {
+	if err := tools.RegisterCoreWithOptions(reg, tools.CoreOptions{EnableShellExec: true, ConfigPath: cfgPath, AgentsPath: e.agentsDir, ChatstorePath: e.agentsDir, WorkspaceRoot: e.workspaceDir, AgentRunner: proactiveAgentRunner{result: tools.AgentRunOutput{RunID: "run-proactive", FinalText: "done", Status: "completed"}}}); err != nil {
 		t.Fatalf("register core tools: %v", err)
 	}
 
@@ -112,6 +129,9 @@ func TestMaybeTriggerProactiveMemoryHookDispatchesAgentMessage(t *testing.T) {
 	if payload["channel"] != "dashboard" || payload["user_id"] != "u-1" {
 		t.Fatalf("expected channel/user context in payload, got %#v", payload)
 	}
+	if entry["status"] != "completed" || entry["related_run_id"] != "run-proactive" {
+		t.Fatalf("expected proactive message lifecycle completion, got %#v", entry)
+	}
 }
 
 func TestProactiveHookSkipsWhenSessionIDEmpty(t *testing.T) {
@@ -134,7 +154,7 @@ func TestProactiveHookSkipsWhenSessionIDEmpty(t *testing.T) {
 
 	enforcer := policy.NewEnforcer(e.workspaceDir, map[string][]string{"default": {"agent.message.send", "agent.message.inbox"}})
 	reg := tools.NewRegistry(enforcer, nil)
-	if err := tools.RegisterCoreWithOptions(reg, tools.CoreOptions{EnableShellExec: true, ConfigPath: cfgPath, AgentsPath: e.agentsDir, ChatstorePath: e.agentsDir, WorkspaceRoot: e.workspaceDir}); err != nil {
+	if err := tools.RegisterCoreWithOptions(reg, tools.CoreOptions{EnableShellExec: true, ConfigPath: cfgPath, AgentsPath: e.agentsDir, ChatstorePath: e.agentsDir, WorkspaceRoot: e.workspaceDir, AgentRunner: proactiveAgentRunner{err: errors.New("runner failed")}}); err != nil {
 		t.Fatalf("register core tools: %v", err)
 	}
 
@@ -153,6 +173,61 @@ func TestProactiveHookSkipsWhenSessionIDEmpty(t *testing.T) {
 	typedMessages, _ := inbox["messages"].([]map[string]any)
 	if len(messages) > 0 || len(typedMessages) > 0 {
 		t.Fatalf("expected no proactive messages when session context missing, got %#v", inbox["messages"])
+	}
+}
+
+func TestMaybeTriggerProactiveMemoryHookMarksFailedLifecycleOnRunnerError(t *testing.T) {
+	root := t.TempDir()
+	e, err := NewEngine(root)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	if err := e.Init("default", false); err != nil {
+		t.Fatalf("init engine: %v", err)
+	}
+	if _, err := instances.BootstrapDefaultInstance(root); err != nil {
+		t.Fatalf("bootstrap default instance: %v", err)
+	}
+	cfgPath := filepath.Join(root, ".openclawssy", "config.json")
+	cfg := config.Default()
+	cfg.Memory.Enabled = true
+	cfg.Memory.ProactiveEnabled = true
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	enforcer := policy.NewEnforcer(e.workspaceDir, map[string][]string{"default": {"agent.message.send", "agent.message.inbox"}})
+	reg := tools.NewRegistry(enforcer, nil)
+	if err := tools.RegisterCoreWithOptions(reg, tools.CoreOptions{EnableShellExec: true, ConfigPath: cfgPath, AgentsPath: e.agentsDir, ChatstorePath: e.agentsDir, WorkspaceRoot: e.workspaceDir, AgentRunner: proactiveAgentRunner{result: tools.AgentRunOutput{RunID: "run-proactive-failed"}, err: errors.New("runner failed")}}); err != nil {
+		t.Fatalf("register core tools: %v", err)
+	}
+	session, err := e.chatStore.CreateSession(chatstore.CreateSessionInput{AgentID: "default", Channel: "dashboard", UserID: "u-1", RoomID: "room-1"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	e.maybeTriggerProactiveMemoryHook(context.Background(), cfg, reg, "default", "default", session.SessionID, "run_123", agent.ToolCallRecord{Request: agent.ToolCallRequest{Name: "memory.maintenance"}, Result: agent.ToolCallResult{Output: `{"archived_stale_count":1}`}})
+	inbox, err := reg.Execute(tools.WithRequestContext(context.Background(), tools.RequestContext{InstanceID: "default"}), "default", "agent.message.inbox", e.workspaceDir, map[string]any{"agent_id": "default", "limit": 5})
+	if err != nil {
+		t.Fatalf("agent.message.inbox: %v", err)
+	}
+	var entry map[string]any
+	if typed, ok := inbox["messages"].([]map[string]any); ok {
+		if len(typed) == 0 {
+			t.Fatalf("expected inbox messages, got %#v", inbox["messages"])
+		}
+		entry = typed[0]
+	} else {
+		rawMessages, ok := inbox["messages"].([]any)
+		if !ok || len(rawMessages) == 0 {
+			t.Fatalf("expected inbox messages, got %#v", inbox["messages"])
+		}
+		var castOK bool
+		entry, castOK = rawMessages[0].(map[string]any)
+		if !castOK {
+			t.Fatalf("expected message map, got %#v", rawMessages[0])
+		}
+	}
+	if entry["status"] != "failed" || entry["related_run_id"] != "run-proactive-failed" {
+		t.Fatalf("expected failed lifecycle entry, got %#v", entry)
 	}
 }
 

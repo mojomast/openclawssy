@@ -915,6 +915,46 @@ func TestServer_RunEventsLateSubscriberGetsTerminalReplay(t *testing.T) {
 	}
 }
 
+func TestServer_RunEventsSSESupportsCompositeIdentityQuery(t *testing.T) {
+	eventBus := NewRunEventBus(16)
+	runID := "run_stream_composite"
+	eventBus.PublishComposite("instance-a", "agent-7", runID, RunEvent{Type: RunEventCompleted, InstanceID: "instance-a", AgentID: "agent-7", Data: map[string]any{"status": "completed"}})
+	eventBus.CloseComposite("instance-a", "agent-7", runID)
+
+	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore(), EventBus: eventBus})
+	httpServer := httptest.NewServer(s.Handler())
+	defer httpServer.Close()
+
+	req, err := http.NewRequest(http.MethodGet, httpServer.URL+"/v1/runs/events/"+runID+"?instance_id=instance-a&agent_id=agent-7", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := httpServer.Client().Do(req)
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	text := string(body)
+	if !strings.Contains(text, `"instance_id":"instance-a"`) {
+		t.Fatalf("expected instance_id in composite stream payload, got %q", text)
+	}
+	if !strings.Contains(text, `"agent_id":"agent-7"`) {
+		t.Fatalf("expected agent_id in composite stream payload, got %q", text)
+	}
+	if !strings.Contains(text, `"run_id":"`+runID+`"`) {
+		t.Fatalf("expected bare run_id in composite stream payload, got %q", text)
+	}
+	if !strings.Contains(text, "event: completed") {
+		t.Fatalf("expected completed event in composite stream, got %q", text)
+	}
+}
+
 func TestServer_AuthAllowsOnlyDashboardGetHeadPathsWithoutToken(t *testing.T) {
 	s := NewServer(Config{
 		BearerToken: "secret",

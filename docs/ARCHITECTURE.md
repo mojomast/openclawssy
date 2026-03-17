@@ -28,9 +28,10 @@ Input -> ExecuteWithInput
 - Agents belong to instances.
 - Runtime identity is converging on `(instance_id, agent_id, run_id)`.
 - Bare `run_id` is still accepted in some compatibility paths, but new runtime/HTTP tracker work stores both bare and composite keys.
+- HTTP SSE/event-bus delivery now dual-publishes to bare `run_id` subscribers and composite `(instance_id, agent_id, run_id)` subscribers so consumers can migrate incrementally.
 - Delegated child runs inherit the parent `instance_id`.
 - Inter-agent messaging is same-instance by default and now persists `instance_id` explicitly.
-- Inter-agent messaging now has a first-class envelope with stable `message_id` and lifecycle states that begin with `queued` and `acknowledged`, with runtime/tooling prepared to carry later `running` / `completed` / `failed` transitions.
+- Inter-agent messaging now has a first-class envelope with stable `message_id`; `agent.message.send(auto_run=true)`, `agent.run(message_id=...)`, and proactive memory-triggered dispatch now drive shared `queued` / `acknowledged` / `running` / `completed` / `failed` lifecycle transitions.
 
 ## Control-plane layout
 
