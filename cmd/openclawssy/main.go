@@ -16,7 +16,7 @@ import (
 	"math/big"
 	"net/http"
 	"os"
-	"os/exec"
+	osexec "os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -302,7 +302,7 @@ func runRemoteBridge(ctx context.Context, cfg config.Config, authToken string, d
 		baseArgs = append(baseArgs, "--debug")
 	}
 	args := append(baseArgs, commandArgs...)
-	cmd := exec.CommandContext(ctx, binaryPath, args...)
+	cmd := osexec.CommandContext(ctx, binaryPath, args...)
 	cmd.Env = append(os.Environ(), "OPENCLAWREMOTEUSSY_AUTH_TOKEN="+authToken)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -340,7 +340,7 @@ func probeRemoteBridge(ctx context.Context, cfg config.Config, secretStore *secr
 }
 
 func runGitCommand(ctx context.Context, workdir string, args []string, stdout, stderr io.Writer) error {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := osexec.CommandContext(ctx, "git", args...)
 	if strings.TrimSpace(workdir) != "" {
 		cmd.Dir = workdir
 	}
@@ -518,8 +518,20 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 		AgentRunner:     runtime.NewSubAgentRunner(engine),
 		EffectiveConfig: &runtimeCfg,
 		RestartFunc: func() {
-			time.Sleep(200 * time.Millisecond)
-			os.Exit(0)
+			if hostname, err := os.Hostname(); err == nil {
+				hostname = strings.TrimSpace(hostname)
+				if hostname != "" {
+					go func(containerName string) {
+						time.Sleep(200 * time.Millisecond)
+						_ = osexec.Command("docker", "restart", containerName).Run()
+					}(hostname)
+					return
+				}
+			}
+			go func() {
+				time.Sleep(200 * time.Millisecond)
+				os.Exit(0)
+			}()
 		},
 	})
 	server := httpchannel.NewServer(httpchannel.Config{

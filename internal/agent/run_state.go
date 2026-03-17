@@ -45,36 +45,37 @@ const (
 
 // runState encapsulates the mutable state of a single agent run loop.
 type runState struct {
-	out                     RunOutput
-	runID                   string
-	agentID                 string
-	parentRunID             string
-	decisionLedger          *DecisionLedger
-	messages                []ChatMessage
-	toolResults             []ToolCallResult
-	toolIterations          int
-	toolCallOrdinal         int
-	usedToolCallIDs         map[string]struct{}
-	cachedToolResults       map[string]ToolCallResult
-	cachedFailedToolResults map[string]ToolCallResult
-	failedToolCallCounts    map[string]int
-	failedToolCallErrors    map[string]string
-	consecutiveToolFailures int
-	failureRecoveryActive   bool
-	failuresSinceRecovery   int
-	successesSinceRecovery  int
-	toolTimeout             time.Duration
-	noProgressIterations    int
-	allBlockedIterations    int
-	latestThinking          string
-	thinkingPresent         bool
-	toolParseFailure        bool
-	toolParseReprompts      int
-	followThroughReprompts  int
-	lastIterationMixed      bool
-	lastIterationSucceeded  []string
-	lastIterationFailed     []string
-	toolCap                 int
+	out                        RunOutput
+	runID                      string
+	agentID                    string
+	parentRunID                string
+	decisionLedger             *DecisionLedger
+	messages                   []ChatMessage
+	toolResults                []ToolCallResult
+	toolIterations             int
+	toolCallOrdinal            int
+	usedToolCallIDs            map[string]struct{}
+	cachedToolResults          map[string]ToolCallResult
+	cachedFailedToolResults    map[string]ToolCallResult
+	failedToolCallCounts       map[string]int
+	failedToolCallErrors       map[string]string
+	consecutiveToolFailures    int
+	failureRecoveryActive      bool
+	failuresSinceRecovery      int
+	successesSinceRecovery     int
+	toolTimeout                time.Duration
+	noProgressIterations       int
+	allBlockedIterations       int
+	latestThinking             string
+	thinkingPresent            bool
+	toolParseFailure           bool
+	toolParseReprompts         int
+	followThroughReprompts     int
+	lastIterationMixed         bool
+	lastIterationSucceeded     []string
+	lastIterationFailed        []string
+	toolCap                    int
+	successfulOneShotMutations map[string]struct{}
 	// repetitionPrevention tracks tool calls to detect and prevent loops
 	repetitionPrevention map[string]int // key: "tool_name|agent_id" -> count
 
@@ -138,36 +139,37 @@ func newRunState(input RunInput, r Runner) *runState {
 	}
 
 	return &runState{
-		out:                     out,
-		runID:                   strings.TrimSpace(input.RunID),
-		agentID:                 strings.TrimSpace(input.AgentID),
-		parentRunID:             strings.TrimSpace(input.ParentRunID),
-		decisionLedger:          input.DecisionLedger,
-		messages:                messages,
-		toolResults:             make([]ToolCallResult, 0),
-		usedToolCallIDs:         make(map[string]struct{}),
-		cachedToolResults:       make(map[string]ToolCallResult),
-		cachedFailedToolResults: make(map[string]ToolCallResult),
-		failedToolCallCounts:    make(map[string]int),
-		failedToolCallErrors:    make(map[string]string),
-		toolTimeout:             toolTimeout,
-		toolCap:                 toolCap,
-		repetitionPrevention:    make(map[string]int),
-		structuralBlockerCounts: make(map[string]int),
-		lastUncacheableOutputs:  make(map[string]string),
-		lastPromptTokens:        0,
-		contextWindow:           120000, // default context window
-		delegationMode:          "",
-		delegationCooldown:      0,
-		delegationActive:        false,
-		pendingSubtasks:         nil,
-		completedSubtasks:       make(map[string]string),
-		delegationArtifacts:     make(map[string]string),
-		lastModelOutput:         "",
-		recentIntents:           make([]string, 0),
-		toolRewriteCount:        0,
-		delegationLocked:        false,
-		delegationReason:        "",
+		out:                        out,
+		runID:                      strings.TrimSpace(input.RunID),
+		agentID:                    strings.TrimSpace(input.AgentID),
+		parentRunID:                strings.TrimSpace(input.ParentRunID),
+		decisionLedger:             input.DecisionLedger,
+		messages:                   messages,
+		toolResults:                make([]ToolCallResult, 0),
+		usedToolCallIDs:            make(map[string]struct{}),
+		cachedToolResults:          make(map[string]ToolCallResult),
+		cachedFailedToolResults:    make(map[string]ToolCallResult),
+		failedToolCallCounts:       make(map[string]int),
+		failedToolCallErrors:       make(map[string]string),
+		toolTimeout:                toolTimeout,
+		toolCap:                    toolCap,
+		successfulOneShotMutations: make(map[string]struct{}),
+		repetitionPrevention:       make(map[string]int),
+		structuralBlockerCounts:    make(map[string]int),
+		lastUncacheableOutputs:     make(map[string]string),
+		lastPromptTokens:           0,
+		contextWindow:              120000, // default context window
+		delegationMode:             "",
+		delegationCooldown:         0,
+		delegationActive:           false,
+		pendingSubtasks:            nil,
+		completedSubtasks:          make(map[string]string),
+		delegationArtifacts:        make(map[string]string),
+		lastModelOutput:            "",
+		recentIntents:              make([]string, 0),
+		toolRewriteCount:           0,
+		delegationLocked:           false,
+		delegationReason:           "",
 	}
 }
 
@@ -506,37 +508,66 @@ func (s *runState) prepareSystemPrompt(ctx context.Context, input RunInput) stri
 	return systemPrompt
 }
 
-func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolCallRequest, input RunInput) bool {
-	hadFreshExecution := false
+type toolExecutionOutcome struct {
+	hadFreshExecution                bool
+	blockedSuccessfulOneShotMutation bool
+}
+
+func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolCallRequest, input RunInput) toolExecutionOutcome {
+	outcome := toolExecutionOutcome{}
 	for _, incoming := range toolCalls {
 		s.toolCallOrdinal++
 		call := incoming
 		call.ID = uniqueToolCallID(call.ID, s.toolCallOrdinal, s.usedToolCallIDs)
-
-		if repetitionKey, cap, ok := repeatedCallRepetitionKey(call); ok {
-			s.repetitionPrevention[repetitionKey]++
-			if s.repetitionPrevention[repetitionKey] > cap {
-				repetitionMsg := fmt.Sprintf("repetition detected: %s has been attempted %d times in this run. Stop rewriting and provide a final response from current evidence.", repetitionKey, s.repetitionPrevention[repetitionKey])
-				if strings.HasPrefix(repetitionKey, "agent.run|") {
-					repetitionMsg = fmt.Sprintf("repetition detected: %s has been attempted %d times in this run. Do not rerun this same subagent task; move to the next required subagent or finalize with current results.", repetitionKey, s.repetitionPrevention[repetitionKey])
-				}
-				result := ToolCallResult{
-					ID:     call.ID,
-					Output: "",
-					Error:  repetitionMsg,
-				}
-				record := ToolCallRecord{
-					Request:     call,
-					Result:      result,
-					StartedAt:   time.Now().UTC(),
-					CompletedAt: time.Now().UTC(),
-				}
+		oneShotKey, hasOneShotKey := oneShotMutationRepetitionKey(call.Name, call.Arguments)
+		skipGenericRepetitionGuard := false
+		if hasOneShotKey {
+			if _, alreadySucceeded := s.successfulOneShotMutations[oneShotKey]; alreadySucceeded {
+				repetitionMsg := fmt.Sprintf("repetition detected: %s has already succeeded in this run. Do not rerun it; provide a final response from current evidence.", oneShotKey)
+				result := ToolCallResult{ID: call.ID, Output: "", Error: repetitionMsg}
+				record := ToolCallRecord{Request: call, Result: result, StartedAt: time.Now().UTC(), CompletedAt: time.Now().UTC()}
 				s.notifyToolCall(&record, input.OnToolCall)
 				s.out.ToolCalls = append(s.out.ToolCalls, record)
 				s.toolResults = append(s.toolResults, result)
 				s.registerToolOutcome(result.Error)
 				s.emitToolDecision(ctx, call, result)
+				outcome.blockedSuccessfulOneShotMutation = true
 				continue
+			}
+			skipGenericRepetitionGuard = true
+		}
+
+		if !skipGenericRepetitionGuard {
+			if repetitionKey, cap, ok := repeatedCallRepetitionKey(call); ok {
+				s.repetitionPrevention[repetitionKey]++
+				if s.repetitionPrevention[repetitionKey] > cap {
+					repetitionMsg := fmt.Sprintf("repetition detected: %s has been attempted %d times in this run. Stop rewriting and provide a final response from current evidence.", repetitionKey, s.repetitionPrevention[repetitionKey])
+					if strings.HasPrefix(repetitionKey, "agent.run|") {
+						repetitionMsg = fmt.Sprintf("repetition detected: %s has been attempted %d times in this run. Do not rerun this same subagent task; move to the next required subagent or finalize with current results.", repetitionKey, s.repetitionPrevention[repetitionKey])
+					}
+					result := ToolCallResult{
+						ID:     call.ID,
+						Output: "",
+						Error:  repetitionMsg,
+					}
+					record := ToolCallRecord{
+						Request:     call,
+						Result:      result,
+						StartedAt:   time.Now().UTC(),
+						CompletedAt: time.Now().UTC(),
+					}
+					s.notifyToolCall(&record, input.OnToolCall)
+					s.out.ToolCalls = append(s.out.ToolCalls, record)
+					s.toolResults = append(s.toolResults, result)
+					s.registerToolOutcome(result.Error)
+					s.emitToolDecision(ctx, call, result)
+					if hasOneShotKey {
+						if _, alreadySucceeded := s.successfulOneShotMutations[oneShotKey]; alreadySucceeded {
+							outcome.blockedSuccessfulOneShotMutation = true
+						}
+					}
+					continue
+				}
 			}
 		}
 
@@ -641,8 +672,11 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 
 		if callKey != "|" {
 			// Cacheable tool: mark as fresh progress and update cache.
-			hadFreshExecution = true
+			outcome.hadFreshExecution = true
 			if strings.TrimSpace(result.Error) == "" {
+				if hasOneShotKey {
+					s.successfulOneShotMutations[oneShotKey] = struct{}{}
+				}
 				s.cachedToolResults[callKey] = ToolCallResult{Output: result.Output}
 				delete(s.cachedFailedToolResults, callKey)
 				delete(s.failedToolCallCounts, callKey)
@@ -669,7 +703,10 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 			currentOutput := strings.TrimSpace(result.Output) + "\x00" + strings.TrimSpace(result.Error)
 			s.lastUncacheableOutputs[stableKey] = currentOutput
 			if !seen || prevOutput != currentOutput {
-				hadFreshExecution = true
+				outcome.hadFreshExecution = true
+				if strings.TrimSpace(result.Error) == "" && hasOneShotKey {
+					s.successfulOneShotMutations[oneShotKey] = struct{}{}
+				}
 			}
 			// If output is identical to the previous call (seen && prevOutput == currentOutput),
 			// hadFreshExecution stays false for this call, letting the no-progress counter advance.
@@ -680,7 +717,7 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 		s.toolResults = append(s.toolResults, result)
 		s.emitToolDecision(ctx, call, result)
 	}
-	return hadFreshExecution
+	return outcome
 }
 
 func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (finalOut RunOutput, finalErr error) {
@@ -1149,7 +1186,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 		// Update model output tracking
 		s.setLastModelOutput(resp.FinalText)
 
-		hadFreshExecution := s.executeTools(ctx, r, resp.ToolCalls, input)
+		toolOutcome := s.executeTools(ctx, r, resp.ToolCalls, input)
 		s.toolParseReprompts = 0
 		s.updateLastIterationOutcome(len(resp.ToolCalls))
 
@@ -1165,7 +1202,20 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 			return s.out, nil
 		}
 
-		if hadFreshExecution {
+		if toolOutcome.blockedSuccessfulOneShotMutation && len(s.toolResults) > 0 {
+			if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, input.Source, "# SUCCESSFUL_MUTATION_REPEAT_RECOVERY\n- A previous successful one-shot mutation was requested again.\n- Do not call tools in this recovery turn.\n- Finalize from the current successful tool results."); finalized != "" {
+				s.out.FinalText = finalized
+			} else {
+				s.out.FinalText = fallbackFromNoProgressToolResults(s.toolResults)
+			}
+			s.out.Thinking = s.latestThinking
+			s.out.ThinkingPresent = s.thinkingPresent
+			s.out.ToolParseFailure = s.toolParseFailure
+			s.out.CompletedAt = time.Now().UTC()
+			return s.out, nil
+		}
+
+		if toolOutcome.hadFreshExecution {
 			s.noProgressIterations = 0
 			s.allBlockedIterations = 0
 		} else {

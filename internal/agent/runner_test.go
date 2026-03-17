@@ -812,6 +812,62 @@ func TestRunnerBlocksRepeatedSchedulerAddWithoutExplicitIDAfterFirstSuccess(t *t
 	}
 }
 
+func TestRunnerFinalizesImmediatelyAfterBlockedRepeatOfSuccessfulOneShotMutation(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.mkdir", Arguments: []byte(`{"path":"journal"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.mkdir", Arguments: []byte(`{"path":"journal"}`)}}},
+	}}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Output: `{"path":"journal","summary":"created directory journal"}`},
+	}}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 8}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "set up the journal folder", AllowedTools: []string{"fs.mkdir"}})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected only first mkdir to execute, got %d", len(tools.calls))
+	}
+	if len(model.reqs) != 3 {
+		t.Fatalf("expected initial mkdir turn, blocked repeat turn, and tool-free finalization; got %d model requests", len(model.reqs))
+	}
+	if len(out.ToolCalls) != 2 {
+		t.Fatalf("expected successful mkdir plus blocked repeat record, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.FinalText, "journal") {
+		t.Fatalf("expected final text to summarize successful mkdir, got %q", out.FinalText)
+	}
+}
+
+func TestRunnerAllowsRetryOfOneShotMutationAfterFailureUntilSuccess(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "scheduler.add", Arguments: []byte(`{"schedule":"@hourly","message":"research and journal"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "scheduler.add", Arguments: []byte(`{"schedule":"@hourly","message":"research and journal"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "scheduler.add", Arguments: []byte(`{"schedule":"@hourly","message":"research and journal"}`)}}},
+		{FinalText: "done"},
+	}}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Error: "temporary scheduler failure"},
+		"2": {ID: "2", Output: `{"added":true,"id":"job_2"}`},
+	}}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 8}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "create the hourly journal job"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(tools.calls) != 2 {
+		t.Fatalf("expected failed attempt then successful retry only, got %d", len(tools.calls))
+	}
+	if len(out.ToolCalls) < 3 || !strings.Contains(out.ToolCalls[2].Result.Error, "already succeeded in this run") {
+		t.Fatalf("expected third successful-repeat scheduler.add to be blocked, got %+v", out.ToolCalls)
+	}
+}
+
 func TestRunnerBlocksRepeatedPolicyGrantAfterFirstSuccess(t *testing.T) {
 	model := &mockModel{responses: []ModelResponse{
 		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "policy.grant", Arguments: []byte(`{"agent_id":"default","capability":"http.request"}`)}}},
