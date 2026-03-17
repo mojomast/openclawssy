@@ -294,6 +294,7 @@ Progress update:
 - dashboard nav and direct-route behavior for Agent Contract and Prompt Stack now honor the shared `instance_agents` feature state, hiding disabled entries and showing deterministic disabled-state panels instead of attempting instance-scoped loads
 - Agent Monitor list/control routes and dashboard shell now honor the same shared `instance_agents` feature state, extending deterministic disabled-nav/direct-access behavior to another instance-agent-dependent operator surface
 - Sessions list/detail routes and dashboard shell now honor the same shared `instance_agents` feature state, extending deterministic disabled-nav/direct-access behavior to the transcript/inbox-facing session surface too
+- Chat now honors that same shared `instance_agents` feature state in the dashboard shell, suppressing agent/session bootstrap work and rendering a deterministic disabled-state panel instead of mixed downstream failures
 
 ## Milestone 6: Wizard
 

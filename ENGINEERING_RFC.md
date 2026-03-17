@@ -41,6 +41,7 @@ Substantial portions of Milestones 1-5 are now landed on the current branch, inc
 - Agent Contract and Prompt Stack dashboard navigation now hide when `instance_agents` is disabled, and direct page access renders explicit disabled-state panels instead of loading instance-scoped controls opportunistically
 - Agent Monitor now follows the same `instance_agents` feature-state contract end-to-end: backend routes hard-fail when disabled, nav visibility hides the page, and direct route access renders a disabled-state shell with launch/run controls suppressed
 - Sessions now follows that same `instance_agents` feature-state contract: backend session list/message routes hard-fail when disabled, nav visibility hides the page, and direct route access renders a disabled-state shell instead of live session browsing
+- Chat now follows the same `instance_agents` feature-state contract in the dashboard shell: nav visibility hides the page, direct route access renders an explicit disabled-state panel, and chat/session/agent bootstrap activity is suppressed when the feature is off
 
 Remaining work is concentrated in wizard parity, broader composite-identity rollout, and finishing first-class messaging/eval consumer convergence beyond the newly landed dashboard/CLI slices.
 

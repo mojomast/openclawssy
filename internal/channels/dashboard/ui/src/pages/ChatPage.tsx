@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { useControlPlaneFeatures } from "@/hooks/useControlPlaneFeatures"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/useToast"
 import { cn } from "@/lib/utils"
@@ -714,6 +715,7 @@ function settingsProfilePath(agentID: string): string {
 export function ChatPage() {
   const navigate = useNavigate()
   const { toast } = useToast()
+  const { features, loading: featuresLoading } = useControlPlaneFeatures()
   const transcriptRef = useRef<HTMLDivElement | null>(null)
   const transcriptPinnedRef = useRef(true)
   const transcriptScrollTopRef = useRef(0)
@@ -774,6 +776,7 @@ export function ChatPage() {
   })
 
   const stateRef = useRef(state)
+  const featureDisabled = !featuresLoading && !features.instanceAgents
   useEffect(() => {
     stateRef.current = state
   }, [state])
@@ -787,6 +790,13 @@ export function ChatPage() {
       }
     }
   }, [])
+
+  useEffect(() => {
+    if (featureDisabled && streamAbortControllerRef.current) {
+      streamAbortControllerRef.current.abort()
+      streamAbortControllerRef.current = null
+    }
+  }, [featureDisabled])
 
   useEffect(() => {
     try {
@@ -2252,6 +2262,51 @@ export function ChatPage() {
   }, [connectRunEventStream])
 
   useEffect(() => {
+    if (featuresLoading) {
+      return
+    }
+    if (featureDisabled) {
+      setState((prev) => ({
+        ...prev,
+        draft: "",
+        transcript: [],
+        sendPending: false,
+        sendError: "",
+        debugCopyStatus: "",
+        activeInstanceID: "",
+        currentRunID: "",
+        currentRunStatus: "idle",
+        currentRunInstanceID: "",
+        currentRunAgentID: "",
+        currentRunStartedAtMs: 0,
+        currentSessionID: "",
+        currentRunLastUpdatedAt: "",
+        currentRunLastOutput: "",
+        latestToolActivity: null,
+        streamToolEvents: [],
+        resumableInterruption: null,
+        lastErrorSummary: "",
+        expandedToolEntries: {},
+        expandedErrorEntries: {},
+        loopRisk: createLoopRiskDefault(),
+        polling: false,
+        runPollingEnabled: false,
+        sessionPollIntervalMS: SESSION_POLL_MS,
+        streamActive: false,
+        streamLastEventID: 0,
+        currentStreamingText: "",
+        currentStreamRunID: "",
+        streamError: "",
+        availableAgents: [CHAT_DEFAULTS.agentID],
+        selectedAgentID: CHAT_DEFAULTS.agentID,
+        activeAgentID: CHAT_DEFAULTS.agentID,
+        switchAgentPending: false,
+        switchAgentError: "",
+        agentProfileContext: null,
+        agentGlobalConfig: null,
+      }))
+      return
+    }
     let cancelled = false
     ;(async () => {
       await refreshAvailableAgents()
@@ -2272,9 +2327,12 @@ export function ChatPage() {
     return () => {
       cancelled = true
     }
-  }, [ensureCurrentSessionID, refreshAvailableAgents, refreshTranscriptFromCurrentSession])
+  }, [ensureCurrentSessionID, featureDisabled, featuresLoading, refreshAvailableAgents, refreshTranscriptFromCurrentSession])
 
   useEffect(() => {
+    if (featureDisabled) {
+      return
+    }
     if (!state.polling || !state.runPollingEnabled || !safeText(state.currentRunID)) {
       return
     }
@@ -2288,9 +2346,12 @@ export function ChatPage() {
     return () => {
       window.clearInterval(timer)
     }
-  }, [pollRunOnce, state.currentRunID, state.polling, state.runPollingEnabled])
+  }, [featureDisabled, pollRunOnce, state.currentRunID, state.polling, state.runPollingEnabled])
 
   useEffect(() => {
+    if (featureDisabled) {
+      return
+    }
     const sessionID = safeText(state.currentSessionID)
     if (!sessionID) {
       return
@@ -2306,7 +2367,7 @@ export function ChatPage() {
     return () => {
       window.clearInterval(timer)
     }
-  }, [pollSessionMessagesOnce, state.currentSessionID, state.polling, state.sessionPollIntervalMS])
+  }, [featureDisabled, pollSessionMessagesOnce, state.currentSessionID, state.polling, state.sessionPollIntervalMS])
 
   useLayoutEffect(() => {
     const transcript = transcriptRef.current
@@ -2392,6 +2453,19 @@ export function ChatPage() {
         </p>
       </div>
 
+      {featureDisabled ? (
+        <Card>
+          <CardContent className="p-4">
+            <div className="rounded-md border border-border bg-muted/30 p-4" data-testid="chat-disabled-state">
+              <p className="text-sm font-medium">Chat disabled</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Instance agent controls are disabled for this control plane.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <div
         className="grid rounded-lg border bg-card"
         style={{
@@ -2402,7 +2476,7 @@ export function ChatPage() {
         <section className="flex min-w-0 flex-col">
           <div className="flex items-center justify-between border-b px-4 py-3">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Transcript</h3>
-            <Button variant="outline" size="sm" onClick={() => void toggleToolTimelineMode()}>
+            <Button variant="outline" size="sm" onClick={() => void toggleToolTimelineMode()} disabled={featureDisabled}>
               {state.showToolActivityInTranscript ? "Tool timeline: on" : "Tool timeline: off"}
             </Button>
           </div>
@@ -2567,6 +2641,7 @@ export function ChatPage() {
                     draft: event.target.value,
                   }))
                 }}
+                disabled={featureDisabled}
               />
             </div>
 
@@ -2583,7 +2658,7 @@ export function ChatPage() {
                 aria-label="Agent picker"
                 className="h-9 rounded-md border border-input bg-background px-2 text-sm"
                 value={state.selectedAgentID}
-                disabled={state.switchAgentPending || state.sendPending}
+                disabled={featureDisabled || state.switchAgentPending || state.sendPending}
                 onChange={(event) => {
                   void switchAgent(event.target.value)
                 }}
@@ -2599,7 +2674,7 @@ export function ChatPage() {
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={state.switchAgentPending}
+                disabled={featureDisabled || state.switchAgentPending}
                 onClick={() => void refreshAvailableAgents()}
               >
                 <RefreshCw className="h-3.5 w-3.5" />
@@ -2610,7 +2685,7 @@ export function ChatPage() {
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={state.sendPending || !safeText(state.lastPrompt)}
+                disabled={featureDisabled || state.sendPending || !safeText(state.lastPrompt)}
                 onClick={retryLastPrompt}
               >
                 Retry
@@ -2620,7 +2695,7 @@ export function ChatPage() {
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={state.sendPending || !shouldOfferContinueAction}
+                disabled={featureDisabled || state.sendPending || !shouldOfferContinueAction}
                 onClick={sendContinuationPrompt}
               >
                 Resume interrupted run
@@ -2630,13 +2705,13 @@ export function ChatPage() {
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={stopButtonDisabled}
+                disabled={featureDisabled || stopButtonDisabled}
                 onClick={() => void cancelCurrentChatRun()}
               >
                 {stopButtonLabel}
               </Button>
 
-              <Button type="submit" size="sm" disabled={sendDisabled}>
+              <Button type="submit" size="sm" disabled={featureDisabled || sendDisabled}>
                 {state.sendPending ? "Sending..." : "Send"}
               </Button>
             </div>
@@ -2669,7 +2744,7 @@ export function ChatPage() {
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
                 <p className="text-destructive">{state.streamError}</p>
-                <Button variant="outline" size="sm" onClick={retryStreamConnection}>
+                <Button variant="outline" size="sm" onClick={retryStreamConnection} disabled={featureDisabled}>
                   Retry stream
                 </Button>
               </CardContent>
@@ -2733,7 +2808,7 @@ export function ChatPage() {
                 Last updated: {state.currentRunLastUpdatedAt ? formatDateTime(state.currentRunLastUpdatedAt) : "-"}
               </p>
               <div className="flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" onClick={() => void copyDebugBundle()}>
+                <Button variant="outline" size="sm" onClick={() => void copyDebugBundle()} disabled={featureDisabled}>
                   Copy debug bundle
                 </Button>
               </div>
@@ -2778,7 +2853,7 @@ export function ChatPage() {
                 {state.lastErrorSummary || "No recent errors."}
               </p>
               {shouldOfferContinueAction ? (
-                <Button size="sm" variant="outline" onClick={sendContinuationPrompt}>
+                <Button size="sm" variant="outline" onClick={sendContinuationPrompt} disabled={featureDisabled}>
                   Resume interrupted run
                 </Button>
               ) : null}
@@ -2807,6 +2882,7 @@ export function ChatPage() {
                       variant="outline"
                       className="mt-2"
                       onClick={() => void cancelObservedSubagentRun(item.runID)}
+                      disabled={featureDisabled}
                     >
                       Stop subagent
                     </Button>

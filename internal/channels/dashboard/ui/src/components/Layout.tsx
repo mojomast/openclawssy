@@ -138,6 +138,9 @@ export function Layout() {
       if (item.path === '/sessions') {
         return !featuresLoading && features.instanceAgents
       }
+      if (item.path === '/chat') {
+        return !featuresLoading && features.instanceAgents
+      }
       if (item.path === '/agent-contract' || item.path === '/prompt-stack') {
         return !featuresLoading && features.instanceAgents
       }

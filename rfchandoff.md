@@ -203,6 +203,7 @@ Current capabilities:
 - dashboard inbox list/detail handlers now merge sparse lifecycle rows by `message_id`, preserving original message envelope/task/source data while surfacing the latest status and related run metadata
 - chat queue/request/response types now carry additive `instance_id` and `agent_id`
 - dashboard chat send, run polling, SSE subscribe, and cancel flows now thread composite identity through the operator UI
+- chat nav/direct-access behavior now honors the shared `instance_agents` feature state, suppressing agent/session bootstrap work and rendering an explicit disabled-state panel with disabled controls when the feature is off
 
 ### 2.11 Dashboard eval metadata consumer adoption
 
@@ -313,6 +314,8 @@ Verified:
 - `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/monitor.spec.ts --reporter=line`
 - `go test ./internal/channels/dashboard -run 'TestListChatSessionsEndpoint|TestListChatSessionsEndpointPagination|TestChatSessionMessagesEndpoint|TestChatSessionMessagesEndpointIncludesToolMetadata|TestChatSessionMessagesEndpointIncludesLifecycleMetadata|TestChatSessionMessagesEndpointPreservesMultiStepOrder|TestSessionsRoutesRequireInstanceAgentsFeature|TestListChatSessionsEndpointInvalidLimit' -count=1`
 - `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/sessions.spec.ts --reporter=line`
+- `go test ./internal/channels/dashboard -run TestIntegrationDashboardPagesUseSharedShadcnUIComponents -count=1`
+- `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/chat.spec.ts --reporter=line`
 
 Note: one broader `go test ./internal/runtime ./...` package pass exposed an existing flaky/unrelated failure in `TestEngineExecuteIngestsMemoryEventsWhenEnabled`, but the focused rerun of that test passed immediately and the targeted package suites for the changed slices passed.
 
@@ -478,6 +481,7 @@ Status update:
 - shared feature-state presentation now also covers disabled nav/direct access behavior for Agent Contract and Prompt Stack; remaining UI work should push the same determinism into other instance-agent-dependent pages
 - shared feature-state presentation now also covers Monitor, Contract, and Prompt Stack; remaining UI work should push the same determinism into more instance-agent-dependent pages and read-only surfaces
 - shared feature-state presentation now also covers Sessions, Monitor, Contract, and Prompt Stack; remaining UI work should push the same determinism into Chat and other instance-agent-dependent pages
+- shared feature-state presentation now also covers Chat, Sessions, Monitor, Contract, and Prompt Stack; remaining UI work should push the same determinism into additional instance-agent-dependent pages and remaining backend guardrails where useful
 
 Do not:
 

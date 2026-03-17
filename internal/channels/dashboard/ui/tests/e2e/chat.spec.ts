@@ -11,6 +11,10 @@ type RouteState = {
   streamRequests: Record<string, number>
   runPolls: Record<string, number>
   runStatuses: Record<string, string>
+  agentGetCalls: number
+  sessionListCalls: number
+  sessionMessagesCalls: number
+  monitorControlCalls: number
 }
 
 function sseFrame(event: { id?: number; event?: string; data: unknown }): string {
@@ -31,6 +35,7 @@ async function installChatRoutes(
     initialMessages?: Array<Record<string, unknown>>
     onStreamRequest?: (runID: string, attempt: number) => { status: number; body?: string }
     onRunPoll?: (runID: string, attempt: number, state: RouteState) => Record<string, unknown> | null
+    instanceAgentsEnabled?: boolean
   } = {}
 ): Promise<RouteState> {
   const state: RouteState = {
@@ -41,6 +46,10 @@ async function installChatRoutes(
     streamRequests: {},
     runPolls: {},
     runStatuses: {},
+    agentGetCalls: 0,
+    sessionListCalls: 0,
+    sessionMessagesCalls: 0,
+    monitorControlCalls: 0,
   }
 
   const sessionID = "sess_chat_1"
@@ -65,12 +74,25 @@ async function installChatRoutes(
       return
     }
 
+    if (pathname === "/api/admin/control-plane/features" && method === "GET") {
+      await json({
+        features: {
+          instance_control: true,
+          instance_agents: options.instanceAgentsEnabled ?? true,
+          wizard: true,
+          eval: true,
+        },
+      })
+      return
+    }
+
     if (pathname === "/api/admin/instances/active" && method === "GET") {
       await json({ instance: { id: state.activeInstanceID, name: "Instance A" } })
       return
     }
 
     if (pathname === "/api/admin/agents" && method === "GET") {
+      state.agentGetCalls += 1
       await json({
         agents: ["default", "research"],
         active_agent: state.selectedAgent,
@@ -120,6 +142,7 @@ async function installChatRoutes(
     }
 
     if (pathname === "/api/admin/chat/sessions" && method === "GET") {
+      state.sessionListCalls += 1
       await json({
         sessions: [
           {
@@ -135,6 +158,7 @@ async function installChatRoutes(
     }
 
     if (pathname === `/api/admin/chat/sessions/${sessionID}/messages` && method === "GET") {
+      state.sessionMessagesCalls += 1
       await json({ session_id: sessionID, messages })
       return
     }
@@ -190,6 +214,7 @@ async function installChatRoutes(
     }
 
     if (pathname === "/api/admin/monitor/runs/control" && method === "POST") {
+      state.monitorControlCalls += 1
       await json({ cancelled: true })
       return
     }
@@ -567,4 +592,28 @@ test("shows SSE connection error indicator with retry and resume button for inte
   await expect(page.getByText("Recovered response")).toBeVisible()
 
   expect(state.chatPosts.at(-1)?.message).toBe(RESUME_INTERRUPTED_RUN_MESSAGE)
+})
+
+test("Chat hides nav entry and shows disabled state when instance agents feature is off", async ({ page }) => {
+  const state = await installChatRoutes(page, { instanceAgentsEnabled: false })
+
+  await page.goto("/dashboard#/chat")
+
+  await expect(page.getByRole("link", { name: /^Chat/ })).toHaveCount(0)
+  await expect(page.getByRole("link", { name: "Sessions" })).toHaveCount(0)
+  await expect(page.getByTestId("chat-disabled-state")).toContainText("Chat disabled")
+  await expect(page.getByTestId("chat-disabled-state")).toContainText("Instance agent controls are disabled")
+  await expect(page.getByLabel("Message composer")).toBeDisabled()
+  await expect(page.getByLabel("Agent picker")).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Refresh agents" })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Retry" })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Resume interrupted run" }).first()).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Stop current run" })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Send" })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Copy debug bundle" })).toBeDisabled()
+  await expect.poll(() => state.agentGetCalls).toBe(0)
+  await expect.poll(() => state.sessionListCalls).toBe(0)
+  await expect.poll(() => state.sessionMessagesCalls).toBe(0)
+  await expect.poll(() => state.chatPosts.length).toBe(0)
+  await expect.poll(() => state.monitorControlCalls).toBe(0)
 })
