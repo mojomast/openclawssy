@@ -20,6 +20,7 @@ import {
   // New pages (control plane)
   AgentContractPage,
   PromptStackPage,
+  WizardPage,
   RoleTemplatePage,
   DelegationPage,
   EvalPage,
@@ -50,6 +51,7 @@ function App() {
           <Route path="dashboards" element={<DashboardsPage />} />
 
           {/* 5 new control plane pages */}
+          <Route path="wizard" element={<WizardPage />} />
           <Route path="agent-contract" element={<AgentContractPage />} />
           <Route path="prompt-stack" element={<PromptStackPage />} />
           <Route path="roles" element={<RoleTemplatePage />} />

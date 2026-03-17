@@ -298,6 +298,7 @@ Progress update:
 - `/api/admin/agents` now uses the active/requested instance projection and instance-scoped pointer keys, so Chat/Monitor agent selection aligns with the same instance-aware contract instead of leaking root-config/global pointer behavior
 - Docs and Skills now honor that same shared `instance_agents` feature state across both dashboard UI and admin routes, hiding disabled nav/direct access and suppressing legacy doc/skill API activity when instance-agent controls are off
 - Role Templates now honors that same shared `instance_agents` feature state across both dashboard UI and admin routes, hiding disabled nav/direct access and suppressing role template API activity when instance-agent controls are off
+- Wizard now has an initial dashboard route/nav/template-catalog shell wired to the existing wizard backend, including disabled-nav/direct-access behavior when the `wizard` feature is off
 
 ## Milestone 6: Wizard
 

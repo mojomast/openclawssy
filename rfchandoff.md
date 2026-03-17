@@ -184,6 +184,7 @@ Current capabilities:
 - `/api/admin/agents` now also returns structured `403` errors when `instance_agents` is disabled, so agent selection/bootstrap matches the rest of the instance-agent control plane
 - `/api/admin/agent/docs` and `/api/admin/skills` now also return structured `403` errors when `instance_agents` is disabled, so those remaining legacy agent surfaces follow the same feature contract
 - `/api/admin/roles` and `/api/admin/roles/{name}` now also return structured `403` errors when `instance_agents` is disabled, so role template management follows that same feature contract too
+- wizard backend routes were already present, and the dashboard now has a first-class `/wizard` route that consumes `/api/admin/wizard/templates` while honoring `feature.wizard_disabled` in nav and direct-route behavior
 
 ### 2.10 Dashboard inbox lifecycle APIs and chat identity threading
 
@@ -210,6 +211,7 @@ Current capabilities:
 - `/api/admin/agents` now resolves against the active or explicitly requested instance config and keeps dashboard active-agent pointers isolated per instance-scoped room, so Chat/Monitor selection no longer leaks root-config/global pointer behavior across instances
 - Docs and Skills nav/direct-access behavior now honors the same shared `instance_agents` feature state, hiding both entries, rendering disabled-state panels on direct access, and suppressing doc/skill API calls when the feature is off
 - Role Templates nav/direct-access behavior now honors that same shared `instance_agents` feature state, hiding the nav entry, rendering a disabled-state panel on direct access, and suppressing role-template API calls when the feature is off
+- Wizard nav/direct-access behavior now honors the shared `wizard` feature state too, and the dashboard shell can now browse instance/agent template catalogs through the existing wizard backend as a foundation for the remaining plan/create flows
 
 ### 2.11 Dashboard eval metadata consumer adoption
 

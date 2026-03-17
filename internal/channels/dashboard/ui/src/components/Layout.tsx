@@ -41,6 +41,7 @@ const navSections: NavSection[] = [
   {
     title: 'Control Plane',
     items: [
+      { path: '/wizard', label: 'Wizard' },
       { path: '/agent-contract', label: 'Agent Contract' },
       { path: '/prompt-stack', label: 'Prompt Stack' },
       { path: '/roles', label: 'Role Templates' },
@@ -131,6 +132,9 @@ export function Layout() {
     items: section.items.filter((item) => {
       if (item.path === '/eval') {
         return !featuresLoading && features.eval
+      }
+      if (item.path === '/wizard') {
+        return !featuresLoading && features.wizard
       }
       if (item.path === '/docs' || item.path === '/skills' || item.path === '/roles') {
         return !featuresLoading && features.instanceAgents
