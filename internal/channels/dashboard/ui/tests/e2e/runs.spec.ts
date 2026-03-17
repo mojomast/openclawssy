@@ -2,12 +2,17 @@ import { expect, test, type Page, type Route } from "@playwright/test"
 
 type MockRun = {
   id: string
+  instance_id?: string
   agent_id: string
+  parent_run_id?: string
+  session_id?: string
   source: string
   status: string
   updated_at: string
   provider?: string
   model?: string
+  artifact_path?: string
+  decomposition_plan?: Record<string, unknown>
 }
 
 type RunsMockOptions = {
@@ -20,8 +25,8 @@ type RunsMockOptions = {
 
 type RunsMockState = {
   listQueries: Array<Record<string, string>>
-  detailRequests: string[]
-  traceRequests: string[]
+  detailRequests: Array<{ runID: string; query: Record<string, string> }>
+  traceRequests: Array<{ runID: string; query: Record<string, string> }>
 }
 
 function json(route: Route, body: unknown, status = 200) {
@@ -105,7 +110,7 @@ async function installRunsMocks(page: Page, options: RunsMockOptions): Promise<R
       }
 
       const runID = decodeURIComponent(pathname.replace("/v1/runs/", ""))
-      state.detailRequests.push(runID)
+      state.detailRequests.push({ runID, query: Object.fromEntries(searchParams.entries()) })
 
       const detail = options.detailsByID?.[runID]
       if (detail) {
@@ -125,7 +130,7 @@ async function installRunsMocks(page: Page, options: RunsMockOptions): Promise<R
 
     if (pathname.startsWith("/api/admin/debug/runs/") && pathname.endsWith("/trace") && method === "GET") {
       const runID = decodeURIComponent(pathname.replace("/api/admin/debug/runs/", "").replace("/trace", ""))
-      state.traceRequests.push(runID)
+      state.traceRequests.push({ runID, query: Object.fromEntries(searchParams.entries()) })
       const trace = options.traceByID?.[runID]
       if (trace) {
         await json(route, trace)
@@ -233,23 +238,33 @@ test("opening a run shows summary, payload JSON, model steps, timeline, and clic
     runs: [
       {
         id: "run_1",
+        instance_id: "lab",
         agent_id: "default",
+        parent_run_id: "run_parent",
+        session_id: "session-123",
         source: "chat",
         status: "failed",
         updated_at: "2026-03-14T12:10:00Z",
         provider: "hatz",
         model: "glm-4.5",
+        artifact_path: "artifacts/run_1",
+        decomposition_plan: { delegation_mode: "approve_plan", tasks: [{ task_id: "task-1" }, { task_id: "task-2" }] },
       },
     ],
     detailsByID: {
       run_1: {
         id: "run_1",
+        instance_id: "lab",
         agent_id: "default",
+        parent_run_id: "run_parent",
+        session_id: "session-123",
         source: "chat",
         status: "failed",
         updated_at: "2026-03-14T12:10:00Z",
         provider: "hatz",
         model: "glm-4.5",
+        artifact_path: "artifacts/run_1",
+        decomposition_plan: { delegation_mode: "approve_plan", tasks: [{ task_id: "task-1" }, { task_id: "task-2" }] },
       },
     },
     traceByID: {
@@ -296,6 +311,11 @@ test("opening a run shows summary, payload JSON, model steps, timeline, and clic
 
   await expect(page).toHaveURL(/#\/runs\/run_1$/)
   await expect(page.getByText("hatz / glm-4.5")).toBeVisible()
+  await expect(page.locator("[data-testid='run-identity-summary']")).toContainText("lab")
+  await expect(page.locator("[data-testid='run-identity-summary']")).toContainText("run_parent")
+  await expect(page.locator("[data-testid='run-identity-summary']")).toContainText("session-123")
+  await expect(page.locator("[data-testid='run-identity-summary']")).toContainText("artifacts/run_1")
+  await expect(page.locator("[data-testid='run-identity-summary']")).toContainText("approve_plan - 2 tasks")
   await expect(page.getByText("Full payload")).toBeVisible()
   await expect(page.locator("[data-testid='run-payload-json'] pre")).toContainText('"id": "run_1"')
 
@@ -353,8 +373,8 @@ test("deep link /#/runs/{id} loads run detail and shows loading states", async (
   await expect(page.locator("[data-testid='run-detail-loading']")).toBeVisible()
 
   await expect(page.getByText("run_deep")).toBeVisible()
-  await expect.poll(() => state.detailRequests).toContain("run_deep")
-  await expect.poll(() => state.traceRequests).toContain("run_deep")
+  await expect.poll(() => state.detailRequests.map((entry) => entry.runID)).toContain("run_deep")
+  await expect.poll(() => state.traceRequests.map((entry) => entry.runID)).toContain("run_deep")
 })
 
 test("deep link /#/runs?run={id} loads run detail from hash params", async ({ page }) => {
@@ -391,6 +411,48 @@ test("deep link /#/runs?run={id} loads run detail from hash params", async ({ pa
   await page.goto("/dashboard#/runs?run=run_query")
 
 	await expect(page.locator("[data-testid='run-detail-panel']")).toContainText("run_query")
-  await expect.poll(() => state.detailRequests).toContain("run_query")
-  await expect.poll(() => state.traceRequests).toContain("run_query")
+  await expect.poll(() => state.detailRequests.map((entry) => entry.runID)).toContain("run_query")
+  await expect.poll(() => state.traceRequests.map((entry) => entry.runID)).toContain("run_query")
+})
+
+test("run detail threads composite identity into detail and trace requests", async ({ page }) => {
+  const state = await installRunsMocks(page, {
+    runs: [
+      {
+        id: "run_dup",
+        instance_id: "instance-a",
+        agent_id: "agent-7",
+        source: "chat",
+        status: "completed",
+        updated_at: "2026-03-14T13:40:00Z",
+      },
+    ],
+    detailsByID: {
+      run_dup: {
+        id: "run_dup",
+        instance_id: "instance-a",
+        agent_id: "agent-7",
+        source: "chat",
+        status: "completed",
+        updated_at: "2026-03-14T13:40:00Z",
+      },
+    },
+    traceByID: {
+      run_dup: {
+        trace: {
+          run_id: "run_dup",
+          model_inputs: [],
+          tool_execution_results: [],
+        },
+      },
+    },
+  })
+
+  await page.goto("/dashboard#/runs")
+  await page.getByRole("button", { name: "Open" }).click()
+
+  await expect.poll(() => state.detailRequests.at(-1)?.query.instance_id).toBe("instance-a")
+  await expect.poll(() => state.detailRequests.at(-1)?.query.agent_id).toBe("agent-7")
+  await expect.poll(() => state.traceRequests.at(-1)?.query.instance_id).toBe("instance-a")
+  await expect.poll(() => state.traceRequests.at(-1)?.query.agent_id).toBe("agent-7")
 })

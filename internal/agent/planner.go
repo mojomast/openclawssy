@@ -41,6 +41,8 @@ type DecompositionPlan struct {
 type DelegationEvent struct {
 	Timestamp      time.Time `json:"timestamp"`
 	TaskID         string    `json:"task_id,omitempty"`
+	MessageID      string    `json:"message_id,omitempty"`
+	RelatedRunID   string    `json:"related_run_id,omitempty"`
 	TriggerReason  string    `json:"trigger_reason"`
 	SelectedRole   string    `json:"selected_role"`
 	Confidence     float64   `json:"confidence"`

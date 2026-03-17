@@ -183,8 +183,23 @@ func TestControlPlaneFeaturesAndWizardEndpoints(t *testing.T) {
 	templatesReq := httptest.NewRequest(http.MethodGet, "/api/admin/wizard/templates", nil)
 	templatesRR := httptest.NewRecorder()
 	mux.ServeHTTP(templatesRR, templatesReq)
-	if templatesRR.Code != http.StatusOK {
-		t.Fatalf("expected templates status %d, got %d (%s)", http.StatusOK, templatesRR.Code, templatesRR.Body.String())
+	if templatesRR.Code != http.StatusForbidden {
+		t.Fatalf("expected templates status %d, got %d (%s)", http.StatusForbidden, templatesRR.Code, templatesRR.Body.String())
+	}
+	assertDashboardErrorCode(t, templatesRR.Body.Bytes(), "feature.wizard_disabled")
+
+	getFeaturesReq := httptest.NewRequest(http.MethodGet, "/api/admin/control-plane/features", nil)
+	getFeaturesRR := httptest.NewRecorder()
+	mux.ServeHTTP(getFeaturesRR, getFeaturesReq)
+	if getFeaturesRR.Code != http.StatusOK {
+		t.Fatalf("expected control plane features status %d, got %d (%s)", http.StatusOK, getFeaturesRR.Code, getFeaturesRR.Body.String())
+	}
+
+	patchFeaturesReq = httptest.NewRequest(http.MethodPatch, "/api/admin/control-plane/features", bytes.NewBufferString(`{"wizard":true}`))
+	patchFeaturesRR = httptest.NewRecorder()
+	mux.ServeHTTP(patchFeaturesRR, patchFeaturesReq)
+	if patchFeaturesRR.Code != http.StatusOK {
+		t.Fatalf("expected patch features re-enable status %d, got %d (%s)", http.StatusOK, patchFeaturesRR.Code, patchFeaturesRR.Body.String())
 	}
 
 	instanceWizardBody := `{"template_id":"chat-assistant","instance_id":"wizard-one","name":"Wizard One","default_agent_id":"assistant","model_provider":"openrouter","model_name":"moonshot/test"}`
@@ -280,6 +295,36 @@ func TestControlPlaneFeaturesAndWizardEndpoints(t *testing.T) {
 		t.Fatalf("expected invalid template status %d, got %d (%s)", http.StatusBadRequest, invalidRR.Code, invalidRR.Body.String())
 	}
 	assertDashboardErrorCode(t, invalidRR.Body.Bytes(), "wizard.unknown_instance_template")
+}
+
+func TestInstanceFeatureFlagEnforcement(t *testing.T) {
+	root := t.TempDir()
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	patchReq := httptest.NewRequest(http.MethodPatch, "/api/admin/control-plane/features", bytes.NewBufferString(`{"instance_control":false,"instance_agents":false}`))
+	patchRR := httptest.NewRecorder()
+	mux.ServeHTTP(patchRR, patchReq)
+	if patchRR.Code != http.StatusOK {
+		t.Fatalf("expected feature patch status %d, got %d (%s)", http.StatusOK, patchRR.Code, patchRR.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/instances", nil)
+	listRR := httptest.NewRecorder()
+	mux.ServeHTTP(listRR, listReq)
+	if listRR.Code != http.StatusForbidden {
+		t.Fatalf("expected instances list status %d, got %d (%s)", http.StatusForbidden, listRR.Code, listRR.Body.String())
+	}
+	assertDashboardErrorCode(t, listRR.Body.Bytes(), "feature.instance_control_disabled")
+
+	agentReq := httptest.NewRequest(http.MethodGet, "/api/admin/instances/alpha/agents", nil)
+	agentRR := httptest.NewRecorder()
+	mux.ServeHTTP(agentRR, agentReq)
+	if agentRR.Code != http.StatusForbidden {
+		t.Fatalf("expected instance agents status %d, got %d (%s)", http.StatusForbidden, agentRR.Code, agentRR.Body.String())
+	}
+	assertDashboardErrorCode(t, agentRR.Body.Bytes(), "feature.instance_agents_disabled")
 }
 
 func assertDashboardErrorCode(t *testing.T, body []byte, want string) {

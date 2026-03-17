@@ -1857,6 +1857,8 @@ func (s *runState) appendDelegationEvent(event DelegationEvent) {
 	event.TaskAssignment = strings.TrimSpace(event.TaskAssignment)
 	event.Rationale = strings.TrimSpace(event.Rationale)
 	event.Outcome = strings.TrimSpace(event.Outcome)
+	event.MessageID = strings.TrimSpace(event.MessageID)
+	event.RelatedRunID = strings.TrimSpace(event.RelatedRunID)
 	s.out.DelegationEvents = append(s.out.DelegationEvents, event)
 }
 
@@ -1865,6 +1867,8 @@ func (s *runState) recordDelegationEvent(ctx context.Context, event DelegationEv
 
 	payload := map[string]any{
 		"task_id":           strings.TrimSpace(event.TaskID),
+		"message_id":        strings.TrimSpace(event.MessageID),
+		"related_run_id":    strings.TrimSpace(event.RelatedRunID),
 		"trigger_reason":    strings.TrimSpace(event.TriggerReason),
 		"selected_role":     strings.TrimSpace(event.SelectedRole),
 		"confidence":        event.Confidence,

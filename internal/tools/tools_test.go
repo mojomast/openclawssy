@@ -3515,6 +3515,10 @@ func (f *fakeRunTracker) Cancel(runID string) error {
 	return nil
 }
 
+func (f *fakeRunTracker) CancelComposite(instanceID, agentID, runID string) error {
+	return f.Cancel(instanceID + ":" + agentID + ":" + runID)
+}
+
 func TestRunCancelTool_Success(t *testing.T) {
 	tracker := &fakeRunTracker{cancels: map[string]bool{"run-123": false}}
 	reg := NewRegistry(fakePolicy{}, nil)
@@ -3555,6 +3559,48 @@ func TestRunCancelTool_NotFound(t *testing.T) {
 	}
 	if cancelled, _ := res["cancelled"].(bool); cancelled {
 		t.Fatalf("expected cancelled=false for nonexistent run, got %#v", res)
+	}
+}
+
+func TestRunCancelTool_CompositeIdentity(t *testing.T) {
+	tracker := &fakeRunTracker{cancels: map[string]bool{"lab:agent-7:run-123": false}}
+	reg := NewRegistry(fakePolicy{}, nil)
+	if err := registerRunCancelTool(reg, tracker); err != nil {
+		t.Fatalf("register run.cancel: %v", err)
+	}
+
+	res, err := reg.Execute(context.Background(), "agent", "run.cancel", ".", map[string]any{
+		"run_id":      "run-123",
+		"instance_id": "lab",
+		"agent_id":    "agent-7",
+	})
+	if err != nil {
+		t.Fatalf("run.cancel: %v", err)
+	}
+	if !tracker.cancels["lab:agent-7:run-123"] {
+		t.Fatal("expected composite cancel to be called on tracker")
+	}
+	if res["instance_id"] != "lab" || res["agent_id"] != "agent-7" {
+		t.Fatalf("expected composite identity in result, got %#v", res)
+	}
+}
+
+func TestRunCancelTool_RejectsPartialCompositeIdentity(t *testing.T) {
+	tracker := &fakeRunTracker{cancels: map[string]bool{}}
+	reg := NewRegistry(fakePolicy{}, nil)
+	if err := registerRunCancelTool(reg, tracker); err != nil {
+		t.Fatalf("register run.cancel: %v", err)
+	}
+
+	_, err := reg.Execute(context.Background(), "agent", "run.cancel", ".", map[string]any{
+		"run_id":      "run-123",
+		"instance_id": "lab",
+	})
+	if err == nil {
+		t.Fatal("expected partial composite identity to be rejected")
+	}
+	if !strings.Contains(err.Error(), "instance_id and agent_id must be provided together") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

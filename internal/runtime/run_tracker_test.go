@@ -44,6 +44,38 @@ func TestRunTracker_Cancel_NotFound(t *testing.T) {
 	}
 }
 
+func TestRunTracker_TrackCompositeCancelAndRemove(t *testing.T) {
+	rt := NewRunTracker()
+	ctx, cancel := createTestContext()
+	defer cancel()
+
+	rt.TrackComposite("instance-a", "agent-1", "run-1", cancel)
+	if !rt.IsTrackedComposite("instance-a", "agent-1", "run-1") {
+		t.Fatal("expected composite run to be tracked")
+	}
+
+	if err := rt.CancelComposite("instance-a", "agent-1", "run-1"); err != nil {
+		t.Fatalf("unexpected composite cancel error: %v", err)
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected composite context to be cancelled")
+	}
+
+	rt.RemoveComposite("instance-a", "agent-1", "run-1")
+	if rt.IsTrackedComposite("instance-a", "agent-1", "run-1") {
+		t.Fatal("expected composite run to be removed")
+	}
+}
+
+func TestRunTracker_CancelComposite_NotFound(t *testing.T) {
+	rt := NewRunTracker()
+	if err := rt.CancelComposite("instance-a", "agent-1", "run-missing"); err != ErrRunNotFound {
+		t.Fatalf("expected ErrRunNotFound, got %v", err)
+	}
+}
+
 func TestRunTracker_Remove(t *testing.T) {
 	rt := NewRunTracker()
 	_, cancel := createTestContext()

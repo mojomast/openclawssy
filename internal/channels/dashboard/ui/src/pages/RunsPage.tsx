@@ -26,12 +26,17 @@ const TOOL_ERROR_KEY_CHARS = 260
 
 type RunItem = {
   id: string
+  instanceID: string
   agentID: string
+  parentRunID: string
+  sessionID: string
   source: string
   status: string
   updatedAt: string
   provider: string
   model: string
+  artifactPath: string
+  decompositionPlan: Record<string, unknown> | null
   trace: Record<string, unknown> | null
   payload: Record<string, unknown>
 }
@@ -185,15 +190,53 @@ function normalizeRun(value: unknown): RunItem | null {
   const trace = asRecord(raw.trace)
   return {
     id,
+    instanceID: asText(raw.instance_id).trim(),
     agentID: asText(raw.agent_id).trim(),
+    parentRunID: asText(raw.parent_run_id).trim(),
+    sessionID: asText(raw.session_id).trim(),
     source: asText(raw.source).trim(),
     status: asText(raw.status).trim(),
     updatedAt: asText(raw.updated_at).trim(),
     provider: asText(raw.provider).trim(),
     model: asText(raw.model).trim(),
+    artifactPath: asText(raw.artifact_path).trim(),
+    decompositionPlan: asRecord(raw.decomposition_plan) || asRecord(trace?.decomposition_plan),
     trace,
     payload: raw,
   }
+}
+
+function buildIdentityQuery(run: RunItem | null): string {
+  if (!run) {
+    return ""
+  }
+  const params = new URLSearchParams()
+  if (run.instanceID) {
+    params.set("instance_id", run.instanceID)
+  }
+  if (run.agentID) {
+    params.set("agent_id", run.agentID)
+  }
+  const query = params.toString()
+  return query ? `?${query}` : ""
+}
+
+function summarizeDecompositionPlan(plan: Record<string, unknown> | null): string {
+  if (!plan) {
+    return "-"
+  }
+  const mode = asText(plan.delegation_mode).trim()
+  const tasks = Array.isArray(plan.tasks) ? plan.tasks.length : 0
+  if (mode && tasks > 0) {
+    return `${mode} - ${tasks} task${tasks === 1 ? "" : "s"}`
+  }
+  if (mode) {
+    return mode
+  }
+  if (tasks > 0) {
+    return `${tasks} task${tasks === 1 ? "" : "s"}`
+  }
+  return "-"
 }
 
 function normalizeRuns(value: unknown): RunItem[] {
@@ -451,7 +494,9 @@ export function RunsPage() {
     setDecisionRecords([])
 
     try {
-      const runPayload = await api.get<unknown>(`/v1/runs/${encodeURIComponent(runID)}`)
+      const runIdentity = runs.find((item) => item.id === runID) || null
+      const query = buildIdentityQuery(runIdentity)
+      const runPayload = await api.get<unknown>(`/v1/runs/${encodeURIComponent(runID)}${query}`)
       const normalizedRun = normalizeRun(runPayload)
       if (!normalizedRun) {
         throw new Error("Run payload is missing required fields.")
@@ -460,7 +505,7 @@ export function RunsPage() {
       let tracePayload: RunTraceResponse | null = null
       let traceErrorMessage = ""
       try {
-        tracePayload = await api.get<RunTraceResponse>(`/api/admin/debug/runs/${encodeURIComponent(runID)}/trace`)
+        tracePayload = await api.get<RunTraceResponse>(`/api/admin/debug/runs/${encodeURIComponent(runID)}/trace${buildIdentityQuery(normalizedRun || runIdentity)}`)
       } catch (error) {
         const maybeApiError = error as ApiError
         if (!(maybeApiError instanceof ApiError) || maybeApiError.status !== 404) {
@@ -492,7 +537,7 @@ export function RunsPage() {
     } finally {
       setDetailLoading(false)
     }
-  }, [])
+  }, [runs])
 
   const loadRunDecisions = useCallback(async (runID: string) => {
     const targetRunID = runID.trim()
@@ -506,7 +551,8 @@ export function RunsPage() {
     setDecisionError("")
 
     try {
-      const payload = await api.get<unknown>(`/api/admin/runs/${encodeURIComponent(targetRunID)}/decisions`)
+      const runIdentity = selectedRun && selectedRun.id === targetRunID ? selectedRun : runs.find((item) => item.id === targetRunID) || null
+      const payload = await api.get<unknown>(`/api/admin/runs/${encodeURIComponent(targetRunID)}/decisions${buildIdentityQuery(runIdentity)}`)
       const root = parseRunDecisionNode(payload)
       if (!root) {
         setDecisionRecords([])
@@ -520,7 +566,7 @@ export function RunsPage() {
     } finally {
       setDecisionLoading(false)
     }
-  }, [])
+  }, [runs, selectedRun])
 
   useEffect(() => {
     void loadRuns()
@@ -836,6 +882,37 @@ export function RunsPage() {
                       ? `${selectedRun.provider || "unknown"} / ${selectedRun.model || "unknown"}`
                       : "-"}
                   </p>
+                </div>
+              </section>
+
+              <section className="grid gap-3 rounded-md border p-4 sm:grid-cols-2 xl:grid-cols-3" data-testid="run-identity-summary">
+                <div>
+                  <p className="text-xs text-muted-foreground">Instance</p>
+                  <p className="text-sm font-medium">{selectedRun.instanceID || "-"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Agent</p>
+                  <p className="text-sm font-medium">{selectedRun.agentID || "-"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Parent run</p>
+                  <p className="text-sm font-medium">{selectedRun.parentRunID || "-"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Source</p>
+                  <p className="text-sm font-medium">{selectedRun.source || "-"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Session</p>
+                  <p className="text-sm font-medium">{selectedRun.sessionID || "-"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Artifact path</p>
+                  <p className="text-sm font-medium break-all">{selectedRun.artifactPath || "-"}</p>
+                </div>
+                <div className="sm:col-span-2 xl:col-span-3">
+                  <p className="text-xs text-muted-foreground">Delegation plan</p>
+                  <p className="text-sm font-medium">{summarizeDecompositionPlan(selectedRun.decompositionPlan)}</p>
                 </div>
               </section>
 

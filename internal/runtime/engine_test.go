@@ -2552,6 +2552,9 @@ func TestSubAgentAdapterPassesDefaultRestrictions(t *testing.T) {
 	if input.InstanceID != "instance-a" {
 		t.Fatalf("expected InstanceID=instance-a, got %q", input.InstanceID)
 	}
+	if input.MessageID != "delegated_task-1_research" {
+		t.Fatalf("expected delegated message id, got %q", input.MessageID)
+	}
 	if len(input.AllowedTools) != 2 || input.AllowedTools[0] != "fs.read" || input.AllowedTools[1] != "fs.list" {
 		t.Fatalf("expected default AllowedTools [fs.read, fs.list], got %v", input.AllowedTools)
 	}
@@ -2721,6 +2724,28 @@ func TestSubAgentAdapterTaskThinkingModeOverridesConfig(t *testing.T) {
 	input := mock.inputs[0]
 	if input.ThinkingMode != "always" {
 		t.Fatalf("expected task ThinkingMode=always to override config default, got %q", input.ThinkingMode)
+	}
+}
+
+func TestSubAgentAdapterReturnsMessageIDInOutput(t *testing.T) {
+	mock := &mockAgentRunner{output: tools.AgentRunOutput{RunID: "run-msg", MessageID: "delegated_task-msg_default", FinalText: "ok"}}
+	adapter := &agentSubAgentRunnerAdapter{
+		runner:     mock,
+		instanceID: "instance-h",
+		subAgentDefaults: config.SubAgentRestrictions{
+			AllowedTools:      []string{"fs.read"},
+			MaxToolIterations: 10,
+			ThinkingMode:      "never",
+		},
+		subAgentOverrides: map[string]config.SubAgentRestrictions{},
+	}
+
+	out, err := adapter.ExecuteSubAgent(context.Background(), agent.DecomposedTask{TaskID: "task-msg", AgentID: "default", Message: "inspect"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.MessageID != "delegated_task-msg_default" {
+		t.Fatalf("expected message id in output, got %+v", out)
 	}
 }
 

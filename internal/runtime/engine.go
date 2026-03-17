@@ -309,9 +309,8 @@ resolvedRuntime:
 	if e.runTracker != nil {
 		e.runTracker.Track(runID, cancelRun)
 		if instanceID != "" {
-			compositeRunID := instancesRunKey(instanceID, agentID, runID)
-			e.runTracker.Track(compositeRunID, cancelRun)
-			defer e.runTracker.Remove(compositeRunID)
+			e.runTracker.TrackComposite(instanceID, agentID, runID, cancelRun)
+			defer e.runTracker.RemoveComposite(instanceID, agentID, runID)
 		}
 		defer e.runTracker.Remove(runID)
 	}
@@ -1327,10 +1326,6 @@ func (e *Engine) loadPromptDocsForRuntime(rt instances.EffectiveRuntime, userMes
 	return docs, nil
 }
 
-func instancesRunKey(instanceID, agentID, runID string) string {
-	return strings.TrimSpace(instanceID) + ":" + strings.TrimSpace(agentID) + ":" + strings.TrimSpace(runID)
-}
-
 // messageIsToolInvocation returns true when the user message looks like a direct
 // tool call (e.g. "becomussy.resume", "memory.search", "fs.read") rather than
 // conversational text. This lets agent.run invocations skip identity bootstrap.
@@ -2210,10 +2205,13 @@ func (a *agentSubAgentRunnerAdapter) ExecuteSubAgent(ctx context.Context, task a
 		defer cancel()
 	}
 
+	messageID := delegatedMessageID(task.TaskID, task.AgentID)
+
 	result, err := a.runner.ExecuteSubAgent(execCtx, tools.AgentRunInput{
 		InstanceID:        strings.TrimSpace(a.instanceID),
 		CallerAgentID:     a.parentAgentID,
 		TargetAgentID:     task.AgentID,
+		MessageID:         messageID,
 		ParentRunID:       strings.TrimSpace(task.ParentRunID),
 		Message:           task.Message,
 		TaskID:            task.TaskID,
@@ -2224,11 +2222,12 @@ func (a *agentSubAgentRunnerAdapter) ExecuteSubAgent(ctx context.Context, task a
 		TimeoutMS:         restrictions.TimeoutMS,
 	})
 	if err != nil {
-		return agent.SubAgentOutput{Success: false, Error: err.Error()}, err
+		return agent.SubAgentOutput{RunID: result.RunID, MessageID: result.MessageID, Success: false, Error: err.Error()}, err
 	}
 	if interruptionErr := subAgentInterruptionError(result.FinalText); interruptionErr != "" {
 		return agent.SubAgentOutput{
 			RunID:     result.RunID,
+			MessageID: result.MessageID,
 			FinalText: result.FinalText,
 			Success:   false,
 			Error:     interruptionErr,
@@ -2236,9 +2235,32 @@ func (a *agentSubAgentRunnerAdapter) ExecuteSubAgent(ctx context.Context, task a
 	}
 	return agent.SubAgentOutput{
 		RunID:     result.RunID,
+		MessageID: result.MessageID,
 		FinalText: result.FinalText,
 		Success:   true,
 	}, nil
+}
+
+func delegatedMessageID(taskID, agentID string) string {
+	taskID = strings.TrimSpace(taskID)
+	agentID = strings.TrimSpace(agentID)
+	if taskID == "" || agentID == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(taskID) + len(agentID) + len("delegated__"))
+	b.WriteString("delegated_")
+	for _, r := range taskID + "_" + agentID {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+		case r == '-' || r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 func subAgentInterruptionError(finalText string) string {

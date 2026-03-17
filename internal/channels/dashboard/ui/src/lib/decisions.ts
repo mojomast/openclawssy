@@ -3,6 +3,7 @@ type UnknownRecord = Record<string, unknown>
 export type DecisionRecordItem = {
   timestamp: string
   runID: string
+  instanceID: string
   agentID: string
   recordType: string
   humanSummary: string
@@ -11,6 +12,7 @@ export type DecisionRecordItem = {
 
 export type RunDecisionNode = {
   runID: string
+  instanceID: string
   agentID: string
   records: DecisionRecordItem[]
   subagents: RunDecisionNode[]
@@ -49,6 +51,7 @@ function parseDecisionRecord(value: unknown): DecisionRecordItem | null {
   return {
     timestamp: asText(raw.timestamp).trim(),
     runID,
+    instanceID: asText(raw.instance_id).trim(),
     agentID: asText(raw.agent_id).trim(),
     recordType,
     humanSummary: asText(raw.human_summary).trim(),
@@ -77,6 +80,7 @@ function parseNode(value: unknown): RunDecisionNode | null {
 
   return {
     runID,
+    instanceID: asText(raw.instance_id).trim(),
     agentID: asText(raw.agent_id).trim(),
     records,
     subagents,

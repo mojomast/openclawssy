@@ -3,12 +3,14 @@ package tools
 import (
 	"context"
 	"errors"
+	"strings"
 )
 
 // RunCanceller is the interface for canceling runs.
 // This is typically implemented by *runtime.RunTracker.
 type RunCanceller interface {
 	Cancel(runID string) error
+	CancelComposite(instanceID, agentID, runID string) error
 }
 
 var ErrRunNotFound = errors.New("run not found")
@@ -19,7 +21,11 @@ func registerRunCancelTool(reg *Registry, tracker RunCanceller) error {
 		Name:        "run.cancel",
 		Description: "Cancel an active run by ID",
 		Required:    []string{"run_id"},
-		ArgTypes:    map[string]ArgType{"run_id": ArgTypeString},
+		ArgTypes: map[string]ArgType{
+			"run_id":      ArgTypeString,
+			"instance_id": ArgTypeString,
+			"agent_id":    ArgTypeString,
+		},
 	}, func(ctx context.Context, req Request) (map[string]any, error) {
 		return runCancel(ctx, req, tracker)
 	})
@@ -31,27 +37,48 @@ func runCancel(_ context.Context, req Request, tracker RunCanceller) (map[string
 	if err != nil {
 		return nil, err
 	}
+	instanceID := strings.TrimSpace(valueString(req.Args, "instance_id"))
+	agentID := strings.TrimSpace(valueString(req.Args, "agent_id"))
+	if (instanceID == "") != (agentID == "") {
+		return nil, errors.New("instance_id and agent_id must be provided together")
+	}
 
 	if tracker == nil {
 		return nil, errors.New("run tracker not configured")
 	}
 
 	cancelErr := tracker.Cancel(runID)
+	if instanceID != "" {
+		cancelErr = tracker.CancelComposite(instanceID, agentID, runID)
+		if errors.Is(cancelErr, ErrRunNotFound) {
+			cancelErr = tracker.Cancel(runID)
+		}
+	}
 	if cancelErr != nil {
 		if errors.Is(cancelErr, ErrRunNotFound) {
-			return map[string]any{
+			res := map[string]any{
 				"run_id":  runID,
 				"found":   false,
 				"summary": "Run not found or already completed",
-			}, nil
+			}
+			if instanceID != "" {
+				res["instance_id"] = instanceID
+				res["agent_id"] = agentID
+			}
+			return res, nil
 		}
 		return nil, cancelErr
 	}
 
-	return map[string]any{
+	res := map[string]any{
 		"run_id":    runID,
 		"found":     true,
 		"cancelled": true,
 		"summary":   "Run cancellation requested",
-	}, nil
+	}
+	if instanceID != "" {
+		res["instance_id"] = instanceID
+		res["agent_id"] = agentID
+	}
+	return res, nil
 }
