@@ -1582,21 +1582,18 @@ func TestAdminAgentsEndpointListAndSetActive(t *testing.T) {
 	if payload["active_agent"] != "alpha" {
 		t.Fatalf("expected active_agent alpha, got %#v", payload["active_agent"])
 	}
-	if payload["selected_agent"] != "alpha" {
-		t.Fatalf("expected selected_agent alpha, got %#v", payload["selected_agent"])
+	if payload["selected_agent"] != "default" {
+		t.Fatalf("expected selected_agent default while active pointer is alpha, got %#v", payload["selected_agent"])
 	}
 	profileContext, ok := payload["profile_context"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected profile_context object, got %#v", payload["profile_context"])
 	}
-	if profileContext["agent_id"] != "alpha" || profileContext["exists"] != true {
+	if profileContext["agent_id"] != "default" || profileContext["exists"] != false {
 		t.Fatalf("unexpected profile context header: %#v", profileContext)
 	}
-	if profileContext["model_provider"] != "openai" || profileContext["model_name"] != "gpt-4.1-mini" {
-		t.Fatalf("expected profile model override fields, got %#v", profileContext)
-	}
-	if profileContext["model_timeout_ms"] != float64(180000) {
-		t.Fatalf("expected profile timeout override field, got %#v", profileContext)
+	if profileContext["model_provider"] != "" || profileContext["model_name"] != "" || profileContext["model_timeout_ms"] != float64(0) {
+		t.Fatalf("expected no profile model override fields for default fallback, got %#v", profileContext)
 	}
 	agentsConfig, ok := payload["agents_config"].(map[string]any)
 	if !ok {
@@ -1652,8 +1649,8 @@ func TestAdminAgentsEndpointUsesActiveInstanceConfigAndInstanceScopedPointers(t 
 	if listed["instance_id"] != "lab" {
 		t.Fatalf("expected instance_id lab, got %#v", listed["instance_id"])
 	}
-	if listed["selected_agent"] != "default" {
-		t.Fatalf("expected selected_agent default fallback, got %#v", listed["selected_agent"])
+	if listed["selected_agent"] != "builder" {
+		t.Fatalf("expected selected_agent builder fallback, got %#v", listed["selected_agent"])
 	}
 	agents, ok := listed["agents"].([]any)
 	if !ok {
@@ -1663,8 +1660,8 @@ func TestAdminAgentsEndpointUsesActiveInstanceConfigAndInstanceScopedPointers(t 
 	for _, item := range agents {
 		seen[strings.TrimSpace(fmt.Sprint(item))] = true
 	}
-	if !seen["builder"] || !seen["reviewer"] || !seen["default"] {
-		t.Fatalf("expected lab/default agents in list, got %#v", listed["agents"])
+	if !seen["builder"] || !seen["reviewer"] {
+		t.Fatalf("expected lab agents in list, got %#v", listed["agents"])
 	}
 	if seen["discord-bot"] {
 		t.Fatalf("did not expect legacy root-config agent in lab instance list, got %#v", listed["agents"])
@@ -1704,6 +1701,61 @@ func TestAdminAgentsEndpointUsesActiveInstanceConfigAndInstanceScopedPointers(t 
 	}
 	if defaultPointer != "default" {
 		t.Fatalf("expected default pointer to remain default, got %q", defaultPointer)
+	}
+}
+
+func TestAdminAgentsEndpointFallsBackToInstanceDefaultAgentWhenDefaultManifestMissing(t *testing.T) {
+	root := t.TempDir()
+	if _, err := instances.BootstrapDefaultInstance(root); err != nil {
+		t.Fatalf("bootstrap default instance: %v", err)
+	}
+	instance := instances.DefaultInstanceManifest("ussyone")
+	instance.Runtime.DefaultAgentID = "ussy1"
+	instance.Runtime.EnabledAgentIDs = []string{"ussy1"}
+	instance.Channels = map[string]instances.ChannelRoute{"dashboard": {DefaultAgentID: "ussy1"}}
+	if err := instances.SaveInstanceManifest(root, instance); err != nil {
+		t.Fatalf("save instance manifest: %v", err)
+	}
+	if err := instances.SaveInstanceChannels(root, "ussyone", instance.Channels); err != nil {
+		t.Fatalf("save instance channels: %v", err)
+	}
+	if err := instances.SaveAgentManifest(root, "ussyone", instances.DefaultAgentManifest("ussy1")); err != nil {
+		t.Fatalf("save instance agent: %v", err)
+	}
+	if err := instances.SaveActiveInstanceID(root, "ussyone"); err != nil {
+		t.Fatalf("save active instance id: %v", err)
+	}
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/agents?channel=dashboard&user_id=dashboard_user&room_id=dashboard", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected list agents status 200, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode list payload: %v", err)
+	}
+	if payload["instance_id"] != "ussyone" {
+		t.Fatalf("expected instance_id ussyone, got %#v", payload["instance_id"])
+	}
+	if payload["selected_agent"] != "ussy1" || payload["active_agent"] != "ussy1" {
+		t.Fatalf("expected ussy1 selected/active fallback, got %#v", payload)
+	}
+	profileContext, ok := payload["profile_context"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected profile_context object, got %#v", payload["profile_context"])
+	}
+	if profileContext["agent_id"] != "ussy1" || profileContext["exists"] != true {
+		t.Fatalf("expected ussy1 profile context, got %#v", profileContext)
+	}
+	agents, ok := payload["agents"].([]any)
+	if !ok || len(agents) != 1 || fmt.Sprint(agents[0]) != "ussy1" {
+		t.Fatalf("expected single ussy1 agent entry, got %#v", payload["agents"])
 	}
 }
 

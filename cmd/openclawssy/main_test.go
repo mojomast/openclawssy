@@ -82,7 +82,7 @@ func TestChatAdaptersRouteBySource(t *testing.T) {
 		t.Fatalf("unexpected telegram run id: %q", tgResp.ID)
 	}
 
-	adapter := scopedChatAdapter{connector: connector, source: "dashboard", defaultAgentID: "default"}
+	adapter := scopedChatAdapter{connector: connector, source: "dashboard", rootDir: t.TempDir(), defaultAgentID: "default"}
 	httpResp, err := adapter.HandleMessage(context.Background(), httpchannel.ChatMessage{UserID: "u1", RoomID: "dashboard", Message: "hello", ThinkingMode: "on_error"})
 	if err != nil {
 		t.Fatalf("dashboard adapter error: %v", err)
@@ -170,6 +170,7 @@ func TestScopedChatAdapterRateLimitIncludesCooldown(t *testing.T) {
 	adapter := scopedChatAdapter{
 		connector:      connector,
 		source:         "dashboard",
+		rootDir:        t.TempDir(),
 		defaultAgentID: "default",
 	}
 
@@ -210,6 +211,44 @@ func TestBuildDashboardChatConnectorDefaultsAllowUsersToDashboardUser(t *testing
 	}
 	if adapter.allow.MessageAllowed("someone_else", "dashboard") {
 		t.Fatal("expected non-dashboard users to be denied by default")
+	}
+	if adapter.rootDir != "." {
+		t.Fatalf("expected dashboard adapter root dir '.', got %q", adapter.rootDir)
+	}
+}
+
+func TestScopedChatAdapterPreservesRequestedAgentForNonDefaultInstance(t *testing.T) {
+	store, err := chatstore.NewStore(filepath.Join(t.TempDir(), ".openclawssy", "agents"))
+	if err != nil {
+		t.Fatalf("new chat store: %v", err)
+	}
+	connector := &chat.Connector{
+		Store:          store,
+		DefaultAgentID: "default",
+		Queue: func(ctx context.Context, instanceID, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (chat.QueuedRun, error) {
+			_ = ctx
+			_ = message
+			_ = contentParts
+			_ = source
+			_ = sessionID
+			_ = thinkingMode
+			if instanceID != "ussyone" {
+				t.Fatalf("expected instance ussyone, got %q", instanceID)
+			}
+			if agentID != "ussy1" {
+				t.Fatalf("expected agent ussy1, got %q", agentID)
+			}
+			return chat.QueuedRun{InstanceID: instanceID, AgentID: agentID, ID: "run-1", Status: "queued"}, nil
+		},
+	}
+	adapter := scopedChatAdapter{connector: connector, source: "dashboard", defaultAgentID: "default"}
+
+	resp, err := adapter.HandleMessage(context.Background(), httpchannel.ChatMessage{InstanceID: "ussyone", UserID: "u1", RoomID: "dashboard", AgentID: "ussy1", Message: "hello"})
+	if err != nil {
+		t.Fatalf("adapter returned error: %v", err)
+	}
+	if resp.InstanceID != "ussyone" || resp.AgentID != "ussy1" {
+		t.Fatalf("expected composite response identity, got %+v", resp)
 	}
 }
 

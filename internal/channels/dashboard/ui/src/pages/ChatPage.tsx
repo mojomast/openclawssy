@@ -133,6 +133,18 @@ type AgentsPayload = {
   instance_id?: unknown
 }
 
+function preferredAgentID(selected: string, fallback: string, availableAgents: string[]): string {
+  const normalizedSelected = safeText(selected)
+  if (normalizedSelected && availableAgents.includes(normalizedSelected)) {
+    return normalizedSelected
+  }
+  const normalizedFallback = safeText(fallback)
+  if (normalizedFallback && availableAgents.includes(normalizedFallback)) {
+    return normalizedFallback
+  }
+  return availableAgents[0] || normalizedSelected || normalizedFallback || CHAT_DEFAULTS.agentID
+}
+
 type SessionMessage = {
   role?: unknown
   content?: unknown
@@ -912,7 +924,7 @@ export function ChatPage() {
     sessionBootstrapInFlightRef.current = true
     try {
       const params = new URLSearchParams({
-        agent_id: safeText(stateRef.current.selectedAgentID) || CHAT_DEFAULTS.agentID,
+        agent_id: preferredAgentID(safeText(stateRef.current.selectedAgentID), safeText(stateRef.current.activeAgentID), stateRef.current.availableAgents),
         user_id: CHAT_DEFAULTS.userID,
         room_id: CHAT_DEFAULTS.roomID,
         channel: "dashboard",
@@ -1091,18 +1103,14 @@ export function ChatPage() {
       setState((prev) => {
         const activeAgent = safeText(payload?.active_agent)
         const selected = safeText(payload?.selected_agent) || activeAgent
+        const nextAvailableAgents = agents.length ? agents : prev.availableAgents
+        const nextSelectedAgentID = preferredAgentID(selected, prev.selectedAgentID, nextAvailableAgents)
         return {
           ...prev,
           activeInstanceID: safeText(payload.instance_id) || prev.activeInstanceID,
-          availableAgents: agents.length ? agents : prev.availableAgents,
-          activeAgentID: activeAgent || prev.activeAgentID,
-          selectedAgentID:
-            selected ||
-            (agents.length
-              ? agents.includes(prev.selectedAgentID)
-                ? prev.selectedAgentID
-                : agents[0]
-              : prev.selectedAgentID),
+          availableAgents: nextAvailableAgents,
+          activeAgentID: preferredAgentID(activeAgent, nextSelectedAgentID, nextAvailableAgents),
+          selectedAgentID: nextSelectedAgentID,
           agentProfileContext:
             payload?.profile_context && typeof payload.profile_context === "object"
               ? (payload.profile_context as Record<string, unknown>)
@@ -1856,17 +1864,17 @@ export function ChatPage() {
 
       try {
         const instanceID = await resolveActiveInstanceID()
-        const payload = await api.post<Record<string, unknown>>("/v1/chat/messages", {
+      const payload = await api.post<Record<string, unknown>>("/v1/chat/messages", {
           instance_id: instanceID,
           user_id: CHAT_DEFAULTS.userID,
           room_id: CHAT_DEFAULTS.roomID,
-          agent_id: safeText(stateRef.current.selectedAgentID) || CHAT_DEFAULTS.agentID,
+          agent_id: preferredAgentID(safeText(stateRef.current.selectedAgentID), safeText(stateRef.current.activeAgentID), stateRef.current.availableAgents),
           message,
         })
 
         const runID = safeText(payload.id)
         const runInstanceID = safeText(payload.instance_id) || instanceID
-        const runAgentID = safeText(payload.agent_id) || safeText(stateRef.current.selectedAgentID) || CHAT_DEFAULTS.agentID
+        const runAgentID = preferredAgentID(safeText(payload.agent_id), safeText(stateRef.current.selectedAgentID), stateRef.current.availableAgents)
         const sessionID = safeText(payload.session_id)
         const runStatus = normalizeRunStatus(payload.status) || "queued"
         if (runID) {
@@ -1962,7 +1970,7 @@ export function ChatPage() {
         context: {
           user_id: CHAT_DEFAULTS.userID,
           room_id: CHAT_DEFAULTS.roomID,
-          selected_agent_id: safeText(stateRef.current.selectedAgentID) || CHAT_DEFAULTS.agentID,
+          selected_agent_id: preferredAgentID(safeText(stateRef.current.selectedAgentID), safeText(stateRef.current.activeAgentID), stateRef.current.availableAgents),
           active_agent_id: safeText(stateRef.current.activeAgentID),
         },
         run: {
@@ -2135,14 +2143,18 @@ export function ChatPage() {
         const agents = Array.isArray(payload?.agents)
           ? payload.agents.map((item) => safeText(item)).filter(Boolean)
           : []
-        const selectedAgentID =
-          safeText(payload?.selected_agent) || safeText(payload?.active_agent) || agentID
-        const activeAgentID = safeText(payload?.active_agent) || selectedAgentID
+        const nextAvailableAgents = agents.length ? agents : [agentID]
+        const selectedAgentID = preferredAgentID(
+          safeText(payload?.selected_agent),
+          safeText(payload?.active_agent) || agentID,
+          nextAvailableAgents
+        )
+        const activeAgentID = preferredAgentID(safeText(payload?.active_agent), selectedAgentID, nextAvailableAgents)
 
         setState((prev) => ({
           ...prev,
           activeInstanceID: safeText(payload.instance_id) || safeText(stateRef.current.activeInstanceID),
-          availableAgents: agents.length ? agents : prev.availableAgents,
+          availableAgents: nextAvailableAgents,
           selectedAgentID,
           activeAgentID,
           switchAgentPending: false,

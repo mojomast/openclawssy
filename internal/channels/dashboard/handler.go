@@ -1362,6 +1362,18 @@ func (h *Handler) listChatSessions(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 	agentID := strings.TrimSpace(q.Get("agent_id"))
+	instanceID := strings.TrimSpace(q.Get("instance_id"))
+	if instanceID == "" {
+		resolvedInstanceID, err := h.resolveDashboardAgentInstanceID("")
+		if err == nil {
+			instanceID = resolvedInstanceID
+		}
+	}
+	if agentID == "" {
+		if cfg, err := h.loadDashboardConfigForInstance(instanceID); err == nil {
+			agentID = dashboardConfigDefaultAgentID(cfg, "")
+		}
+	}
 	if agentID == "" {
 		agentID = "default"
 	}
@@ -1521,7 +1533,8 @@ func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
 		writeDashboardError(w, http.StatusInternalServerError, "config.load_failed", err.Error(), nil)
 		return
 	}
-	agentIDs := listDashboardAgentIDsForConfig(cfg)
+	requestedAgentID := selectedAgentID
+	agentIDs := h.listDashboardAgentIDsForInstance(resolvedInstanceID, cfg)
 	pointerRoomID := dashboardAgentPointerRoomID(resolvedInstanceID, roomID)
 
 	if r.Method == http.MethodPost {
@@ -1564,11 +1577,12 @@ func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
 	if active != "" && !containsString(agentIDs, active) {
 		active = ""
 	}
-	if selectedAgentID == "" {
-		selectedAgentID = active
+	selectedAgentID = preferredDashboardAgentID(cfg, agentIDs, selectedAgentID, active)
+	if requestedAgentID != "" && !containsString(agentIDs, requestedAgentID) {
+		selectedAgentID = preferredDashboardAgentID(cfg, agentIDs, "", active)
 	}
-	if selectedAgentID == "" || !containsString(agentIDs, selectedAgentID) {
-		selectedAgentID = "default"
+	if active == "" {
+		active = selectedAgentID
 	}
 
 	profileContext := map[string]any{
@@ -1707,6 +1721,34 @@ func listDashboardAgentIDsForConfig(cfg config.Config) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func (h *Handler) listDashboardAgentIDsForInstance(instanceID string, cfg config.Config) []string {
+	if strings.TrimSpace(instanceID) != "" {
+		agents, err := instances.ListAgents(h.rootDir, instanceID)
+		if err == nil && len(agents) > 0 {
+			ids := make([]string, 0, len(agents))
+			for _, agent := range agents {
+				ids = append(ids, agent.AgentID)
+			}
+			sort.Strings(ids)
+			return ids
+		}
+	}
+	return listDashboardAgentIDsForConfig(cfg)
+}
+
+func preferredDashboardAgentID(cfg config.Config, agentIDs []string, requestedAgentID, activeAgentID string) string {
+	for _, candidate := range []string{requestedAgentID, activeAgentID, dashboardConfigDefaultAgentID(cfg, "")} {
+		normalized, err := normalizeDashboardAgentID(candidate)
+		if err == nil && containsString(agentIDs, normalized) {
+			return normalized
+		}
+	}
+	if len(agentIDs) > 0 {
+		return agentIDs[0]
+	}
+	return normalizeDashboardDefaultAgentID(cfg.Chat.DefaultAgentID)
 }
 
 func normalizeDashboardDefaultAgentID(raw string) string {

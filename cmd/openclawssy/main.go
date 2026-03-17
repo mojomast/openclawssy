@@ -30,6 +30,7 @@ import (
 	"openclawssy/internal/channels/telegram"
 	"openclawssy/internal/chatstore"
 	"openclawssy/internal/config"
+	"openclawssy/internal/instances"
 	"openclawssy/internal/logger"
 	"openclawssy/internal/messagecontent"
 	"openclawssy/internal/runtime"
@@ -1005,6 +1006,7 @@ func buildDashboardChatConnector(cfg config.Config, connector *chat.Connector) h
 	return scopedChatAdapter{
 		connector:      connector,
 		source:         "dashboard",
+		rootDir:        ".",
 		instanceID:     "",
 		defaultAgentID: cfg.Chat.DefaultAgentID,
 		allow:          chat.NewAllowlist(allowUsers, cfg.Chat.AllowRooms),
@@ -1137,6 +1139,7 @@ func queueChannelMessage(ctx context.Context, connector *chat.Connector, instanc
 type scopedChatAdapter struct {
 	connector      *chat.Connector
 	source         string
+	rootDir        string
 	instanceID     string
 	defaultAgentID string
 	allow          *chat.Allowlist
@@ -1153,12 +1156,20 @@ func (a scopedChatAdapter) HandleMessage(ctx context.Context, msg httpchannel.Ch
 		}
 	}
 	agentID := strings.TrimSpace(msg.AgentID)
-	if agentID == "" {
-		agentID = strings.TrimSpace(a.defaultAgentID)
-	}
 	instanceID := strings.TrimSpace(msg.InstanceID)
 	if instanceID == "" {
 		instanceID = strings.TrimSpace(a.instanceID)
+	}
+	if agentID == "" && instanceID != "" {
+		if manifest, err := instances.LoadInstanceManifest(a.rootDir, instanceID); err == nil {
+			agentID = strings.TrimSpace(manifest.Runtime.DefaultAgentID)
+			if agentID == "" {
+				agentID = strings.TrimSpace(manifest.Channels["dashboard"].DefaultAgentID)
+			}
+		}
+	}
+	if agentID == "" {
+		agentID = strings.TrimSpace(a.defaultAgentID)
 	}
 	queued, err := a.connector.HandleMessage(ctx, chat.Message{InstanceID: instanceID, UserID: msg.UserID, RoomID: msg.RoomID, AgentID: agentID, Source: a.source, Text: msg.Message, ContentParts: append([]messagecontent.Part(nil), msg.ContentParts...), ThinkingMode: msg.ThinkingMode})
 	if err != nil {

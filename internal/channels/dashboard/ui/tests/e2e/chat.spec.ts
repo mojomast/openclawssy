@@ -455,6 +455,61 @@ test("agent picker switches active agent and subsequent send uses the selected a
   expect(state.chatPosts[0]?.agent_id).toBe("research")
 })
 
+test("new-instance chat falls back to the only available agent instead of default", async ({ page }) => {
+  const state = await installChatRoutes(page)
+  state.activeInstanceID = "ussyone"
+  state.selectedAgent = "ussy1"
+
+  await page.route("**/api/admin/instances/active", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json; charset=utf-8",
+      body: JSON.stringify({ instance: { id: "ussyone", name: "Ussy One" } }),
+    })
+  })
+
+  await page.route("**/api/admin/agents?**", async (route) => {
+    state.agentGetCalls += 1
+    state.agentGetURLs.push(route.request().url())
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json; charset=utf-8",
+      body: JSON.stringify({
+        instance_id: "ussyone",
+        agents: ["ussy1"],
+        active_agent: "ussy1",
+        selected_agent: "ussy1",
+        profile_context: {
+          agent_id: "ussy1",
+          exists: true,
+          enabled: true,
+          self_improvement: false,
+          model_provider: "zai",
+          model_name: "GLM-5",
+          model_max_tokens: 0,
+          model_timeout_ms: 0,
+        },
+        agents_config: {
+          allow_agent_model_overrides: true,
+          allow_inter_agent_messaging: true,
+          self_improvement_enabled: false,
+          enabled_agent_ids: ["ussy1"],
+        },
+      }),
+    })
+  })
+
+  await page.goto("/dashboard#/chat")
+  await expect(page.getByText("Selected: ussy1")).toBeVisible()
+
+  await page.getByLabel("Message composer").fill("hello ussyone")
+  await page.getByRole("button", { name: "Send" }).click()
+
+  await expect.poll(() => state.chatPosts.length).toBe(1)
+  expect(state.chatPosts[0]?.instance_id).toBe("ussyone")
+  expect(state.chatPosts[0]?.agent_id).toBe("ussy1")
+})
+
 test("stop current run shows cancel progress and reaches canceled terminal state", async ({ page }) => {
   const state = await installChatRoutes(page, {
     onStreamRequest: () =>
