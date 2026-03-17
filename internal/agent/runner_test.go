@@ -67,15 +67,37 @@ func (m *toolThenNoChoicesModel) Generate(_ context.Context, _ ModelRequest) (Mo
 
 type toolThenTransientWithRecoveryModel struct {
 	attempts int
+	reqs     []ModelRequest
 }
 
 func (m *toolThenTransientWithRecoveryModel) Generate(_ context.Context, req ModelRequest) (ModelResponse, error) {
+	m.reqs = append(m.reqs, req)
 	m.attempts++
 	if len(req.ToolResults) == 0 {
 		return ModelResponse{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.list", Arguments: []byte(`{"path":"."}`)}}}, nil
 	}
 	if len(req.AllowedTools) == 0 {
 		return ModelResponse{FinalText: "Recovered summary from tool results."}, nil
+	}
+	return ModelResponse{}, errors.New("provider stream interrupted after partial output: context deadline exceeded")
+}
+
+type mkdirThenWriteThenTransientModel struct {
+	attempts int
+	reqs     []ModelRequest
+}
+
+func (m *mkdirThenWriteThenTransientModel) Generate(_ context.Context, req ModelRequest) (ModelResponse, error) {
+	m.reqs = append(m.reqs, req)
+	m.attempts++
+	if len(req.ToolResults) == 0 {
+		return ModelResponse{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.mkdir", Arguments: []byte(`{"path":"testing"}`)}}}, nil
+	}
+	if len(req.ToolResults) == 1 {
+		return ModelResponse{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.write", Arguments: []byte(`{"path":"testing/research_resume.md","content":"# done"}`)}}}, nil
+	}
+	if len(req.AllowedTools) == 0 {
+		return ModelResponse{FinalText: "Created testing/research_resume.md successfully."}, nil
 	}
 	return ModelResponse{}, errors.New("provider stream interrupted after partial output: context deadline exceeded")
 }
@@ -220,6 +242,92 @@ func TestRunnerRecoversWhenModelReturnsEmptyFinalTextAfterTools(t *testing.T) {
 	}
 	if !strings.Contains(out.FinalText, "README.md") {
 		t.Fatalf("expected latest tool results in fallback final text, got %q", out.FinalText)
+	}
+}
+
+func TestRunnerFinalizesImmediatelyAfterTransientModelErrorOnceToolResultsExist(t *testing.T) {
+	model := &toolThenTransientWithRecoveryModel{}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Output: `{"entries":["README.md"]}`},
+	}}
+
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 8}
+	out, err := runner.Run(context.Background(), RunInput{Message: "list files", AllowedTools: []string{"fs.list"}})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "Recovered summary from tool results." {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected one tool execution, got %d", len(tools.calls))
+	}
+	if len(model.reqs) != 3 {
+		t.Fatalf("expected initial tool call, interrupted follow-up, then tool-free finalize request; got %d", len(model.reqs))
+	}
+	if len(model.reqs[1].AllowedTools) == 0 {
+		t.Fatalf("expected interrupted request to still be tool-enabled")
+	}
+	if len(model.reqs[2].AllowedTools) != 0 {
+		t.Fatalf("expected finalization request to disable tools, got %#v", model.reqs[2].AllowedTools)
+	}
+}
+
+func TestRunnerDoesNotReplayMkdirAfterSuccessfulWriteWhenStreamInterrupts(t *testing.T) {
+	model := &mkdirThenWriteThenTransientModel{}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Output: `{"path":"testing","summary":"created directory testing"}`},
+		"2": {ID: "2", Output: `{"path":"testing/research_resume.md","summary":"wrote file"}`},
+	}}
+
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 8}
+	out, err := runner.Run(context.Background(), RunInput{Message: "create a folder and write the resume", AllowedTools: []string{"fs.mkdir", "fs.write"}})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if !strings.Contains(out.FinalText, "Created testing/research_resume.md successfully.") {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(tools.calls) != 2 {
+		t.Fatalf("expected mkdir then write only, got %d tool executions", len(tools.calls))
+	}
+	if tools.calls[0].Name != "fs.mkdir" || tools.calls[1].Name != "fs.write" {
+		t.Fatalf("unexpected tool sequence: %#v", tools.calls)
+	}
+	if len(model.reqs) != 4 {
+		t.Fatalf("expected mkdir turn, write turn, interrupted turn, then tool-free finalization; got %d", len(model.reqs))
+	}
+	if len(model.reqs[3].AllowedTools) != 0 {
+		t.Fatalf("expected finalization request to disable tools, got %#v", model.reqs[3].AllowedTools)
+	}
+}
+
+func TestRunnerBlocksRepeatedFsMkdirForSamePath(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "fs.mkdir", Arguments: []byte(`{"path":"testing"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "fs.mkdir", Arguments: []byte(`{"path":"testing"}`)}}},
+		{FinalText: "done"},
+	}}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Output: `{"path":"testing","summary":"created directory testing"}`},
+	}}
+
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 8}
+	out, err := runner.Run(context.Background(), RunInput{Message: "make testing", AllowedTools: []string{"fs.mkdir"}})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected only the first mkdir to execute, got %d calls", len(tools.calls))
+	}
+	if len(out.ToolCalls) != 2 {
+		t.Fatalf("expected two tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[1].Result.Error, "repetition detected") {
+		t.Fatalf("expected repetition guard on second mkdir, got %+v", out.ToolCalls[1].Result)
 	}
 }
 

@@ -910,6 +910,9 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 				break
 			}
 			if isProviderNoChoicesError(err) {
+				if len(s.toolResults) > 0 {
+					break
+				}
 				if attempt >= noChoicesRetryCap {
 					break
 				}
@@ -917,6 +920,9 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 				continue
 			}
 			if isTransientProviderModelError(err) {
+				if len(s.toolResults) > 0 {
+					break
+				}
 				if attempt >= transientModelRetryCap {
 					break
 				}
@@ -1435,6 +1441,13 @@ func repeatedCallRepetitionKey(call ToolCallRequest) (string, int, bool) {
 			path = "."
 		}
 		return name + "|" + path, defaultRepeatedFileListCap, true
+	}
+	if name == "fs.mkdir" {
+		path := extractPathFromToolArgs(call.Arguments)
+		if path == "" {
+			path = "."
+		}
+		return name + "|" + path, stateMutationRepetitionCap, true
 	}
 
 	if name != "fs.write" && name != "fs.append" && name != "fs.read" && name != "shell.exec" {
