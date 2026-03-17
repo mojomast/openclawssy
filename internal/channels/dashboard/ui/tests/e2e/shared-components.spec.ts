@@ -28,6 +28,34 @@ test.describe('Shared Components', () => {
       })
     })
 
+    await page.route('**/api/admin/control-plane/features', async (route) => {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          features: {
+            instance_control: true,
+            instance_agents: true,
+            wizard: true,
+            eval: true,
+          },
+        }),
+      })
+    })
+
+    await page.route('**/api/admin/instances/active', async (route) => {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          instance: {
+            id: 'alpha',
+            name: 'Alpha',
+          },
+        }),
+      })
+    })
+
     await page.goto('/dashboard#/help')
   })
 
@@ -35,6 +63,7 @@ test.describe('Shared Components', () => {
     await expect(page.getByRole('heading', { name: 'Openclawssy Dashboard', exact: true })).toBeVisible()
     await expect(page.getByText('React')).toBeVisible()
     await expect(page.getByText('Runtime Active')).toBeVisible()
+    await expect(page.getByTestId('header-active-instance')).toContainText('Instance: Alpha (alpha)')
 
     await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Operations', exact: true })).toBeVisible()
@@ -43,7 +72,7 @@ test.describe('Shared Components', () => {
     await expect(page.locator('.border-l.bg-card').getByRole('heading', { name: 'Inspector', exact: true })).toBeVisible()
 
     await expect(page.locator('footer').getByText('Dashboard active', { exact: true })).toBeVisible()
-    await expect(page.locator('footer').getByText('18 routes configured', { exact: true })).toBeVisible()
+    await expect(page.locator('footer').getByText('20 routes configured', { exact: true })).toBeVisible()
   })
 
   test('Nav sidebar shows links for all routes', async ({ page }) => {
@@ -143,7 +172,7 @@ test.describe('Shared Components', () => {
 
   test('Footer displays React-only status and route count', async ({ page }) => {
     await expect(page.locator('footer').getByText('Dashboard active', { exact: true })).toBeVisible()
-    await expect(page.locator('footer').getByText('18 routes configured', { exact: true })).toBeVisible()
+    await expect(page.locator('footer').getByText('20 routes configured', { exact: true })).toBeVisible()
     await expect(page.locator('footer').getByText('Press ? for keyboard shortcuts', { exact: true })).toBeVisible()
   })
 

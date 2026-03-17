@@ -12,6 +12,7 @@ import (
 
 var expectedDashboardPaths = []string{
 	"/help",
+	"/instances",
 	"/workspace",
 	"/secrets",
 	"/docs",
@@ -24,6 +25,7 @@ var expectedDashboardPaths = []string{
 	"/scheduler",
 	"/sandbox",
 	"/dashboards",
+	"/wizard",
 	"/agent-contract",
 	"/prompt-stack",
 	"/roles",

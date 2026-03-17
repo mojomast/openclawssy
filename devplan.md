@@ -304,6 +304,7 @@ Progress update:
 - Wizard now includes same-session instance->agent handoff, targeted preview/create parity coverage, and in-page disabled-state handling for `instance_control`, making the wizard milestone materially closer to exit criteria
 - Wizard backend preview/create now also shares canonical projection logic for instance flows, closing another remaining parity gap between preview output and persisted manifests
 - The dashboard now also exposes a dedicated Instances page for active-instance visibility and activation, closing one of the lingering operator UX gaps around canonical instance context after the wizard work
+- The dashboard header now also surfaces the active instance globally, which closes another small but important operator-context gap after the Instances page slice
 
 ## Milestone 6: Wizard
 

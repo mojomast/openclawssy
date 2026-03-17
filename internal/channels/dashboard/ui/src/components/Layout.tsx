@@ -8,6 +8,7 @@ import { useState, useEffect } from 'react'
 import { Sun, Moon, Menu, X, HelpCircle, Search, ChevronLeft, ChevronRight, PanelRightOpen } from 'lucide-react'
 import { Input } from './ui/input'
 import { useControlPlaneFeatures } from '../hooks/useControlPlaneFeatures'
+import { useActiveInstance } from '../hooks/useActiveInstance'
 
 interface NavSection {
   title: string
@@ -56,6 +57,7 @@ export function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
   const { features, loading: featuresLoading } = useControlPlaneFeatures()
+  const { instance: activeInstance } = useActiveInstance(!featuresLoading && features.instanceControl)
   const { theme, setTheme, sidebar, inspector, setSidebarOpen, setInspectorOpen, setSidebarWidth, setInspectorWidth } = useUIStore()
   const [isMobile, setIsMobile] = useState(false)
   const [showMobileNav, setShowMobileNav] = useState(false)
@@ -194,6 +196,11 @@ export function Layout() {
           <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded hidden sm:inline">
             Runtime Active
           </span>
+          {!featuresLoading && features.instanceControl && activeInstance ? (
+            <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded hidden md:inline" data-testid="header-active-instance">
+              Instance: {activeInstance.name} ({activeInstance.id})
+            </span>
+          ) : null}
         </div>
         <div className="flex items-center gap-2">
           <div className="relative hidden sm:block">
@@ -378,7 +385,7 @@ export function Layout() {
         <span>Dashboard active</span>
         <div className="flex items-center gap-4">
           <span className="hidden sm:inline">Press ? for keyboard shortcuts</span>
-          <span>18 routes configured</span>
+          <span>20 routes configured</span>
         </div>
       </footer>
 

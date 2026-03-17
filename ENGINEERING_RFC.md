@@ -51,6 +51,7 @@ Substantial portions of Milestones 1-5 are now landed on the current branch, inc
 - Wizard now supports same-session handoff from instance creation into agent targeting, plus targeted preview/create parity regression coverage and in-page instance-control disabled states so the milestone is substantially end-to-end instead of catalog-only
 - Wizard preview/create now converges through the same canonical instance projection path too, reducing drift between previewed instance config and persisted manifests while keeping wizard UI response shapes stable
 - The dashboard now has a dedicated Instances page backed by canonical instance APIs, so operators can see the active instance clearly, review available instances, activate another instance, and get a deterministic disabled-state shell when `instance_control` is off
+- The dashboard shell now also shows the active instance globally in the header, reducing instance-context ambiguity without requiring operators to navigate into the Instances page first
 
 Remaining work is concentrated in wizard parity, broader composite-identity rollout, and finishing first-class messaging/eval consumer convergence beyond the newly landed dashboard/CLI slices.
 
