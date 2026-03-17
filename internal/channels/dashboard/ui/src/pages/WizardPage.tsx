@@ -390,6 +390,13 @@ export function WizardPage() {
   }, [instanceForm.templateID, instanceTemplates])
   const instanceConfigPreview = useMemo(() => prettyJSON(instancePlan?.instance.config ?? {}), [instancePlan])
   const showDefaultAgentField = instanceForm.templateID === "chat-assistant"
+  const instancePlanTemplateLabel = useMemo(() => {
+    const plannedTemplate = asText(instancePlan?.instance.template).trim()
+    if (!plannedTemplate || plannedTemplate === "custom") {
+      return selectedInstanceTemplate?.name || instanceForm.templateID
+    }
+    return plannedTemplate
+  }, [instanceForm.templateID, instancePlan?.instance.template, selectedInstanceTemplate])
   const selectedAgentTemplate = useMemo(() => {
     return agentTemplates.find((template) => template.id === agentForm.templateID) || null
   }, [agentForm.templateID, agentTemplates])
@@ -863,7 +870,7 @@ export function WizardPage() {
                   <div className="grid gap-3 rounded-md border border-border bg-muted/20 p-3 md:grid-cols-2" data-testid="wizard-instance-plan-summary">
                     <div>
                       <p className="text-xs uppercase tracking-wide text-muted-foreground">Template</p>
-                      <p className="text-sm font-medium">{asText(instancePlan.instance.template) || instanceForm.templateID}</p>
+                      <p className="text-sm font-medium">{instancePlanTemplateLabel}</p>
                     </div>
                     <div>
                       <p className="text-xs uppercase tracking-wide text-muted-foreground">Instance ID</p>

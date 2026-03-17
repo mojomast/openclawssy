@@ -49,6 +49,7 @@ Substantial portions of Milestones 1-5 are now landed on the current branch, inc
 - Wizard instance flows now support plan/create directly from the dashboard shell: operators can select a template, preview planned instance config and operations, and create instances in-place while wizard routes also enforce the underlying `instance_control` feature guard
 - Wizard agent flows now also support existing-instance plan/create from the dashboard shell: operators can target a canonical instance, preview normalized agent profiles and operations, avoid duplicate agent IDs, and create agents in-place while wizard agent routes enforce `instance_agents`
 - Wizard now supports same-session handoff from instance creation into agent targeting, plus targeted preview/create parity regression coverage and in-page instance-control disabled states so the milestone is substantially end-to-end instead of catalog-only
+- Wizard preview/create now converges through the same canonical instance projection path too, reducing drift between previewed instance config and persisted manifests while keeping wizard UI response shapes stable
 
 Remaining work is concentrated in wizard parity, broader composite-identity rollout, and finishing first-class messaging/eval consumer convergence beyond the newly landed dashboard/CLI slices.
 

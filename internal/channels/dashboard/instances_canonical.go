@@ -51,7 +51,26 @@ func (h *Handler) loadProjectedInstance(instanceID string) (dashboardInstance, e
 }
 
 func (h *Handler) projectDashboardInstance(manifest instances.InstanceManifest) (dashboardInstance, error) {
-	cfg, err := h.projectDashboardConfig(manifest)
+	agents, err := instances.ListAgents(h.rootDir, manifest.InstanceID)
+	if err != nil {
+		return dashboardInstance{}, err
+	}
+	roleTemplates, err := instances.LoadInstanceRoles(h.rootDir, manifest.InstanceID)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return dashboardInstance{}, err
+	}
+	channels, err := instances.LoadInstanceChannels(h.rootDir, manifest.InstanceID)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return dashboardInstance{}, err
+	}
+	if len(channels) == 0 {
+		channels = manifest.Channels
+	}
+	return h.projectDashboardInstanceFromCanonical(manifest, agents, roleTemplates, channels)
+}
+
+func (h *Handler) projectDashboardInstanceFromCanonical(manifest instances.InstanceManifest, agents []instances.AgentManifest, roleTemplates []roles.RoleTemplate, channels map[string]instances.ChannelRoute) (dashboardInstance, error) {
+	cfg, err := h.projectDashboardConfigFromCanonical(manifest, agents, roleTemplates, channels)
 	if err != nil {
 		return dashboardInstance{}, err
 	}
@@ -71,6 +90,25 @@ func (h *Handler) projectDashboardInstance(manifest instances.InstanceManifest) 
 }
 
 func (h *Handler) projectDashboardConfig(manifest instances.InstanceManifest) (config.Config, error) {
+	agents, err := instances.ListAgents(h.rootDir, manifest.InstanceID)
+	if err != nil {
+		return config.Config{}, err
+	}
+	roleTemplates, err := instances.LoadInstanceRoles(h.rootDir, manifest.InstanceID)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return config.Config{}, err
+	}
+	channels, err := instances.LoadInstanceChannels(h.rootDir, manifest.InstanceID)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return config.Config{}, err
+	}
+	if len(channels) == 0 {
+		channels = manifest.Channels
+	}
+	return h.projectDashboardConfigFromCanonical(manifest, agents, roleTemplates, channels)
+}
+
+func (h *Handler) projectDashboardConfigFromCanonical(manifest instances.InstanceManifest, agents []instances.AgentManifest, roleTemplates []roles.RoleTemplate, channels map[string]instances.ChannelRoute) (config.Config, error) {
 	cfg, err := h.loadDashboardConfig()
 	if err != nil {
 		cfg = config.Default()
@@ -86,14 +124,7 @@ func (h *Handler) projectDashboardConfig(manifest instances.InstanceManifest) (c
 	cfg.Agents.DelegationThreshold = manifest.Delegation.Threshold
 	cfg.Agents.DelegationAgentID = manifest.Delegation.DelegationAgentID
 	cfg.Agents.DelegationCooldownIter = manifest.Delegation.CooldownIterations
-	roleTemplates, err := instances.LoadInstanceRoles(h.rootDir, manifest.InstanceID)
-	if err == nil {
-		cfg.Agents.CustomRoleTemplates = roleTemplates
-	}
-	channels, err := instances.LoadInstanceChannels(h.rootDir, manifest.InstanceID)
-	if err != nil || len(channels) == 0 {
-		channels = manifest.Channels
-	}
+	cfg.Agents.CustomRoleTemplates = append([]roles.RoleTemplate(nil), roleTemplates...)
 	defaultAgentID := firstNonEmpty(channelDefaultAgentID(channels, "dashboard"), manifest.Runtime.DefaultAgentID)
 	if defaultAgentID != "" {
 		cfg.Chat.DefaultAgentID = defaultAgentID
@@ -103,10 +134,6 @@ func (h *Handler) projectDashboardConfig(manifest instances.InstanceManifest) (c
 	}
 	if telegramID := firstNonEmpty(channelDefaultAgentID(channels, "telegram"), defaultAgentID); telegramID != "" {
 		cfg.Telegram.DefaultAgentID = telegramID
-	}
-	agents, err := instances.ListAgents(h.rootDir, manifest.InstanceID)
-	if err != nil {
-		return config.Config{}, err
 	}
 	profiles := make(map[string]config.AgentProfile, len(agents))
 	for _, agent := range agents {
@@ -123,6 +150,14 @@ func (h *Handler) projectDashboardConfig(manifest instances.InstanceManifest) (c
 	cfg.Agents.Profiles = profiles
 	cfg.ApplyDefaults()
 	return cfg, nil
+}
+
+func (h *Handler) canonicalizeWizardInstance(instance dashboardInstance) (dashboardInstance, error) {
+	manifest, agentManifests, roleTemplates, channels, err := h.instanceProjectionToCanonical(instance)
+	if err != nil {
+		return dashboardInstance{}, err
+	}
+	return h.projectDashboardInstanceFromCanonical(manifest, agentManifests, roleTemplates, channels)
 }
 
 func (h *Handler) saveProjectedInstance(instance dashboardInstance) error {
@@ -262,9 +297,15 @@ func (h *Handler) agentManifestsFromDashboardConfig(instanceID string, cfg confi
 				manifest.Enabled = containsString(enabledAgentIDs, agentID)
 			}
 			manifest.Model = profile.Model
+			if agentID == defaultAgentID {
+				manifest.Model = mergeDefaultAgentDashboardModel(cfg.Model, manifest.Model)
+			}
 			manifest.Behavior.SelfImprovement = profile.SelfImprovement
 		} else {
 			manifest.Enabled = containsString(enabledAgentIDs, agentID)
+			if agentID == defaultAgentID {
+				manifest.Model = mergeDefaultAgentDashboardModel(cfg.Model, manifest.Model)
+			}
 		}
 		out = append(out, manifest)
 	}
@@ -358,6 +399,26 @@ func mergeDashboardModel(base, override config.ModelConfig) config.ModelConfig {
 	}
 	if override.TimeoutMS > 0 {
 		merged.TimeoutMS = override.TimeoutMS
+	}
+	return merged
+}
+
+func mergeDefaultAgentDashboardModel(base, override config.ModelConfig) config.ModelConfig {
+	merged := override
+	if strings.TrimSpace(merged.Provider) == "" && strings.TrimSpace(base.Provider) != "" {
+		merged.Provider = strings.TrimSpace(base.Provider)
+	}
+	if strings.TrimSpace(merged.Name) == "" && strings.TrimSpace(base.Name) != "" {
+		merged.Name = strings.TrimSpace(base.Name)
+	}
+	if merged.Temperature == 0 && base.Temperature != 0 {
+		merged.Temperature = base.Temperature
+	}
+	if merged.TimeoutMS == 0 && base.TimeoutMS > 0 {
+		merged.TimeoutMS = base.TimeoutMS
+	}
+	if merged.MaxTokens == 0 && base.MaxTokens > 0 && base.MaxTokens <= 20000 {
+		merged.MaxTokens = base.MaxTokens
 	}
 	return merged
 }

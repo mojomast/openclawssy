@@ -1316,7 +1316,12 @@ func (h *Handler) handleWizardInstancePlan(w http.ResponseWriter, r *http.Reques
 		h.writeWizardError(w, err)
 		return
 	}
-	writeJSON(w, map[string]any{"plan": map[string]any{"instance": instancePayload(plan.Instance, ""), "operations": plan.Operations}})
+	canonicalPreview, err := h.canonicalizeWizardInstance(plan.Instance)
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "instances.load_failed", err.Error(), nil)
+		return
+	}
+	writeJSON(w, map[string]any{"plan": map[string]any{"instance": instancePayload(canonicalPreview, ""), "operations": plan.Operations}})
 }
 
 func (h *Handler) handleWizardInstanceCreate(w http.ResponseWriter, r *http.Request) {
@@ -1340,7 +1345,12 @@ func (h *Handler) handleWizardInstanceCreate(w http.ResponseWriter, r *http.Requ
 		h.writeWizardError(w, err)
 		return
 	}
-	exists, err := h.projectedInstanceExists(plan.Instance.ID)
+	canonicalInstance, err := h.canonicalizeWizardInstance(plan.Instance)
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "instances.load_failed", err.Error(), nil)
+		return
+	}
+	exists, err := h.projectedInstanceExists(canonicalInstance.ID)
 	if err != nil {
 		writeDashboardError(w, http.StatusInternalServerError, "instances.load_failed", err.Error(), nil)
 		return
@@ -1349,12 +1359,12 @@ func (h *Handler) handleWizardInstanceCreate(w http.ResponseWriter, r *http.Requ
 		writeDashboardError(w, http.StatusConflict, "instances.duplicate_id", "instance already exists", nil)
 		return
 	}
-	if err := h.saveProjectedInstance(plan.Instance); err != nil {
+	if err := h.saveProjectedInstance(canonicalInstance); err != nil {
 		writeDashboardError(w, http.StatusInternalServerError, "instances.save_failed", err.Error(), nil)
 		return
 	}
 	activeInstanceID, _ := instances.LoadActiveInstanceID(h.rootDir)
-	projected, err := h.loadProjectedInstance(plan.Instance.ID)
+	projected, err := h.loadProjectedInstance(canonicalInstance.ID)
 	if err != nil {
 		writeDashboardError(w, http.StatusInternalServerError, "instances.load_failed", err.Error(), nil)
 		return

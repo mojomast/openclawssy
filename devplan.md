@@ -302,6 +302,7 @@ Progress update:
 - Wizard now also supports the first guided create path in the dashboard shell: instance template selection, plan preview, in-place create, duplicate-id handling, and matching feature enforcement for `instance_control`
 - Wizard now also supports existing-instance agent plan/create in the dashboard shell, including active-instance selection, normalized profile previews, duplicate-agent avoidance, and matching feature enforcement for `instance_agents`
 - Wizard now includes same-session instance->agent handoff, targeted preview/create parity coverage, and in-page disabled-state handling for `instance_control`, making the wizard milestone materially closer to exit criteria
+- Wizard backend preview/create now also shares canonical projection logic for instance flows, closing another remaining parity gap between preview output and persisted manifests
 
 ## Milestone 6: Wizard
 

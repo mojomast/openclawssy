@@ -234,6 +234,9 @@ func TestControlPlaneFeaturesAndWizardEndpoints(t *testing.T) {
 	if !ok || model["provider"] != "openrouter" {
 		t.Fatalf("expected planned model provider openrouter, got %#v", planConfig)
 	}
+	if template, _ := planPayload.Plan.Instance["template"].(string); template != "custom" {
+		t.Fatalf("expected canonicalized preview template custom, got %#v", planPayload.Plan.Instance["template"])
+	}
 	var createdPayload struct {
 		Instance map[string]any `json:"instance"`
 	}
@@ -255,8 +258,8 @@ func TestControlPlaneFeaturesAndWizardEndpoints(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected model in create payload config, got %#v", createdConfig)
 	}
-	if createdModel["provider"] == "" || createdModel["name"] == "" {
-		t.Fatalf("expected created model provider/name to be populated, got %#v", createdModel)
+	if createdModel["provider"] != model["provider"] || createdModel["name"] != model["name"] {
+		t.Fatalf("expected created model provider/name to match planned preview\nplan=%#v\ncreate=%#v", model, createdModel)
 	}
 
 	agentWizardBody := `{"instance_id":"wizard-one","agent_id":"researcher","template_id":"research","model_provider":"openai","model_name":"gpt-4.1-mini"}`

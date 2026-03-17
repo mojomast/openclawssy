@@ -188,6 +188,7 @@ Current capabilities:
 - wizard instance plan/create routes now also require `instance_control`, and the dashboard shell can preview/create instances in-place from template-backed wizard forms without leaving `/wizard`
 - wizard agent plan/create routes now also require `instance_agents`, and the dashboard shell can target existing instances, preview normalized agent profiles, and create agents in-place with duplicate-agent conflict handling
 - wizard now also carries operators from successful instance creation into agent targeting within the same page, and focused parity tests now assert that wizard previews and creates stay aligned on key instance/agent runtime fields
+- wizard instance preview/create now also uses the same canonical projection path before persistence, so dashboard previews match the persisted control-plane shape more closely without introducing a separate manifest format in the UI
 
 ### 2.10 Dashboard inbox lifecycle APIs and chat identity threading
 
