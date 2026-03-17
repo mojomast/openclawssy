@@ -84,7 +84,40 @@ async function installSandboxMocks(page: Page): Promise<SandboxMockState> {
     const { pathname } = url
 
     if (pathname === "/api/admin/status") {
-      await json(route, { ok: true, model: { provider: "hatz", name: "glm-4.5" }, run_count: 2 })
+      await json(route, {
+        ok: true,
+        model: { provider: "hatz", name: "glm-4.5" },
+        run_count: 2,
+        runtime: {
+          sandbox: { active: true, provider: "docker" },
+          shell: { enable_exec: true },
+        },
+      })
+      return
+    }
+
+    if (pathname === "/api/admin/control-plane/features" && method === "GET") {
+      await json(route, {
+        features: {
+          instance_control: true,
+          instance_agents: true,
+          wizard: true,
+          eval: true,
+        },
+      })
+      return
+    }
+
+    if (pathname === "/api/admin/config" && method === "PATCH") {
+      const payload = request.postDataJSON() as Record<string, any>
+      const sandbox = payload.sandbox || {}
+      const shell = payload.shell || {}
+      state.status.status = sandbox.active ? state.status.status : "stopped"
+      await json(route, {
+        ok: true,
+        sandbox,
+        shell,
+      })
       return
     }
 
@@ -207,12 +240,21 @@ test("create, stop, and reset container actions work with reset confirmation", a
   await expect(page.getByTestId("sandbox-running-badge")).toHaveText("stopped")
 
   page.once("dialog", (dialog) => {
-    expect(dialog.message()).toContain("destroy all files")
+    expect(dialog.message()).toContain("recreate the container")
     dialog.accept()
   })
   await page.getByRole("button", { name: "Reset container" }).click()
   await expect.poll(() => state.resetCalls).toBe(1)
   await expect(page.getByText("Reset container succeeded.")).toBeVisible()
+})
+
+test("workspace mode selector saves local/docker mode and shows runtime summary", async ({ page }) => {
+  await installSandboxMocks(page)
+  await gotoSandbox(page)
+
+  await expect(page.getByTestId("sandbox-mode-summary")).toContainText("provider `docker`")
+  await page.getByTestId("sandbox-mode-select").selectOption("local")
+  await expect(page.getByText("Saved sandbox mode: local.")).toBeVisible()
 })
 
 test("pull image and refresh image table", async ({ page }) => {

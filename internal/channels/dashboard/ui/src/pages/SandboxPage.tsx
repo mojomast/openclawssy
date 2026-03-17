@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { useControlPlaneFeatures } from "@/hooks/useControlPlaneFeatures"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { ApiError, api } from "@/lib/api"
@@ -32,6 +33,11 @@ type SandboxVolume = {
   name: string
   driver: string
   mountpoint: string
+}
+
+type RuntimeStatus = {
+  sandbox?: unknown
+  shell?: unknown
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -158,9 +164,16 @@ function toShortContainerID(value: string): string {
 }
 
 export function SandboxPage() {
+  const { features, loading: featuresLoading } = useControlPlaneFeatures()
   const [status, setStatus] = useState<SandboxStatus | null>(null)
   const [images, setImages] = useState<SandboxImage[] | null>(null)
   const [volumes, setVolumes] = useState<SandboxVolume[] | null>(null)
+  const [runtimeProvider, setRuntimeProvider] = useState("none")
+  const [runtimeSandboxActive, setRuntimeSandboxActive] = useState(false)
+  const [runtimeShellExec, setRuntimeShellExec] = useState(false)
+  const [modePending, setModePending] = useState(false)
+  const [modeError, setModeError] = useState("")
+  const [modeSuccess, setModeSuccess] = useState("")
 
   const [statusLoading, setStatusLoading] = useState(false)
   const [imagesLoading, setImagesLoading] = useState(false)
@@ -229,9 +242,56 @@ export function SandboxPage() {
     }
   }, [])
 
+  const loadRuntimeMode = useCallback(async () => {
+    try {
+      const payload = await api.get<{ runtime?: RuntimeStatus }>("/api/admin/status")
+      const runtime = asRecord(payload.runtime)
+      const sandbox = asRecord(runtime?.sandbox)
+      const shell = asRecord(runtime?.shell)
+      setRuntimeProvider(asText(sandbox?.provider).trim() || "none")
+      setRuntimeSandboxActive(asBoolean(sandbox?.active))
+      setRuntimeShellExec(asBoolean(shell?.enable_exec))
+    } catch {
+      setRuntimeProvider("none")
+      setRuntimeSandboxActive(false)
+      setRuntimeShellExec(false)
+    }
+  }, [])
+
   useEffect(() => {
-    void Promise.allSettled([loadStatus(), loadImages(), loadVolumes()])
-  }, [loadStatus, loadImages, loadVolumes])
+    void Promise.allSettled([loadStatus(), loadImages(), loadVolumes(), loadRuntimeMode()])
+  }, [loadImages, loadRuntimeMode, loadStatus, loadVolumes])
+
+  const updateMode = useCallback(async (provider: string) => {
+    setModePending(true)
+    setModeError("")
+    setModeSuccess("")
+
+    try {
+      const nextProvider = provider.trim()
+      const active = nextProvider !== "none"
+      await api.request("/api/admin/config", {
+        method: "PATCH",
+        body: {
+          sandbox: {
+            active,
+            provider: nextProvider,
+          },
+          shell: {
+            enable_exec: active,
+          },
+        },
+      })
+      setRuntimeProvider(nextProvider)
+      setRuntimeSandboxActive(active)
+      setRuntimeShellExec(active)
+      setModeSuccess(`Saved sandbox mode: ${nextProvider}. Restart Openclawssy to apply runtime changes.`)
+    } catch (error) {
+      setModeError(extractErrorMessage(error))
+    } finally {
+      setModePending(false)
+    }
+  }, [])
 
   const runContainerAction = useCallback(
     async (label: string, action: () => Promise<void>) => {
@@ -269,7 +329,7 @@ export function SandboxPage() {
   }, [runContainerAction])
 
   const onResetContainer = useCallback(async () => {
-    const confirmed = window.confirm("This will destroy all files in the container volume. Are you sure?")
+    const confirmed = window.confirm("This will recreate the container but keep the Docker volume data. Are you sure?")
     if (!confirmed) {
       return
     }
@@ -352,6 +412,36 @@ export function SandboxPage() {
 
       <Card>
         <CardHeader>
+          <CardTitle className="text-base">Workspace mode</CardTitle>
+          <CardDescription>Switch between local filesystem access and Docker-isolated workspace mode.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <label className="space-y-1 text-sm">
+            <span>Effective mode</span>
+            <select
+              className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+              value={runtimeProvider}
+              data-testid="sandbox-mode-select"
+              disabled={modePending || featuresLoading || !features.instanceControl}
+              onChange={(event) => {
+                void updateMode(event.target.value)
+              }}
+            >
+              <option value="none">none</option>
+              <option value="local">local</option>
+              <option value="docker">docker</option>
+            </select>
+          </label>
+          <p className="text-sm text-muted-foreground" data-testid="sandbox-mode-summary">
+            Runtime currently reports provider `{runtimeProvider}`, sandbox {runtimeSandboxActive ? "enabled" : "disabled"}, shell execution {runtimeShellExec ? "enabled" : "disabled"}.
+          </p>
+          {modeError ? <p className="text-sm text-destructive">Failed to save mode: {modeError}</p> : null}
+          {modeSuccess ? <p className="text-sm text-muted-foreground">{modeSuccess}</p> : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="text-base">Container status</CardTitle>
             <Button type="button" variant="outline" size="sm" onClick={() => void loadStatus()} disabled={statusLoading}>
@@ -426,7 +516,7 @@ export function SandboxPage() {
           </div>
 
           <p className="text-sm text-muted-foreground">
-            Reset destroys all files in the container volume and recreates it from scratch.
+            Reset recreates the container but preserves the Docker volume, so workspace data survives unless you delete the volume separately.
           </p>
 
           {actionError ? <p className="text-sm text-destructive">Action failed: {actionError}</p> : null}

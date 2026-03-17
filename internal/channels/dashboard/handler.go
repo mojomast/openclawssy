@@ -493,6 +493,13 @@ func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request) {
 		"workspace": map[string]any{
 			"root": effective.Workspace.Root,
 		},
+		"sandbox": map[string]any{
+			"active":   effective.Sandbox.Active,
+			"provider": effective.Sandbox.Provider,
+		},
+		"shell": map[string]any{
+			"enable_exec": effective.Shell.EnableExec,
+		},
 		"output": map[string]any{
 			"thinking_mode": effective.Output.ThinkingMode,
 		},

@@ -1532,7 +1532,21 @@ func oneShotMutationRepetitionKey(name string, argsJSON []byte) (string, bool) {
 	case "scheduler.add":
 		id := strings.ToLower(firstTrimmedStringFromMap(args, "id"))
 		if id == "" {
-			return "", false
+			schedule := strings.ToLower(strings.TrimSpace(firstTrimmedStringFromMap(args, "schedule")))
+			schedule = normalizeSchedulerScheduleForRepetition(schedule)
+			message := strings.ToLower(strings.TrimSpace(firstTrimmedStringFromMap(args, "message", "prompt", "content")))
+			agentID := strings.ToLower(firstTrimmedStringFromMap(args, "agent_id"))
+			if agentID == "" {
+				agentID = "default"
+			}
+			channel := strings.ToLower(firstTrimmedStringFromMap(args, "channel"))
+			userID := strings.ToLower(firstTrimmedStringFromMap(args, "user_id"))
+			roomID := strings.ToLower(firstTrimmedStringFromMap(args, "room_id"))
+			sessionID := strings.ToLower(firstTrimmedStringFromMap(args, "session_id"))
+			if schedule == "" || message == "" {
+				return "", false
+			}
+			return canonicalName + "|semantic|" + schedule + "|" + agentID + "|" + channel + "|" + userID + "|" + roomID + "|" + sessionID + "|" + firstN(message, 160), true
 		}
 		return canonicalName + "|" + id, true
 	case "scheduler.remove", "scheduler.pause", "scheduler.resume":
@@ -1742,6 +1756,18 @@ func normalizeTaskIDForRepetition(taskID string) string {
 	// all normalize to "task-name".
 	value = repetitionSuffixPattern.ReplaceAllString(value, "")
 	return value
+}
+
+func normalizeSchedulerScheduleForRepetition(schedule string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(schedule))
+	switch trimmed {
+	case "@hourly", "hourly", "0 * * * *":
+		return "@every 1h"
+	case "@daily", "daily", "0 0 * * *":
+		return "@every 24h"
+	default:
+		return trimmed
+	}
 }
 
 func looksLaneTaskID(value string) bool {

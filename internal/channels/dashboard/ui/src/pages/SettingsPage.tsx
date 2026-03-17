@@ -52,6 +52,7 @@ const CATEGORY_DEFINITIONS: CategoryDefinition[] = [
 ]
 
 const MODEL_PROVIDERS = ["openai", "openrouter", "requesty", "hatz", "zai", "generic"]
+const SANDBOX_PROVIDERS = ["none", "local", "docker"]
 
 function deepClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -238,6 +239,8 @@ export function SettingsPage() {
       const runtime = isRecord(status.runtime) ? status.runtime : null
       const runtimeServer = isRecord(runtime?.server) ? runtime.server : null
       const runtimeWorkspace = isRecord(runtime?.workspace) ? runtime.workspace : null
+      const runtimeSandbox = isRecord(runtime?.sandbox) ? runtime.sandbox : null
+      const runtimeShell = isRecord(runtime?.shell) ? runtime.shell : null
       const runtimeOutput = isRecord(runtime?.output) ? runtime.output : null
       const runtimeEngine = isRecord(runtime?.engine) ? runtime.engine : null
       if (runtimeServer) {
@@ -251,6 +254,19 @@ export function SettingsPage() {
         cloned.workspace = {
           ...(isRecord(cloned.workspace) ? cloned.workspace : {}),
           root: readPath(runtimeWorkspace, "root", readPath(cloned, "workspace.root", "")),
+        }
+      }
+      if (runtimeSandbox) {
+        cloned.sandbox = {
+          ...(isRecord(cloned.sandbox) ? cloned.sandbox : {}),
+          active: readPath(runtimeSandbox, "active", readPath(cloned, "sandbox.active", false)),
+          provider: readPath(runtimeSandbox, "provider", readPath(cloned, "sandbox.provider", "none")),
+        }
+      }
+      if (runtimeShell) {
+        cloned.shell = {
+          ...(isRecord(cloned.shell) ? cloned.shell : {}),
+          enable_exec: readPath(runtimeShell, "enable_exec", readPath(cloned, "shell.enable_exec", false)),
         }
       }
       if (runtimeOutput) {
@@ -390,6 +406,16 @@ export function SettingsPage() {
   const selectedProvider = String(readPath(withDraftRecord, "model.provider", "hatz") || "hatz").trim() || "hatz"
   const selectedModelValue = String(readPath(withDraftRecord, "model.name", "") || "")
   const selectableModels = Array.from(new Set([selectedModelValue, ...(providerModels[selectedProvider] || [])].filter(Boolean)))
+  const savedSandboxActive = Boolean(readPath(config, "sandbox.active", false))
+  const savedSandboxProvider = String(readPath(config, "sandbox.provider", "none") || "none")
+  const savedShellExecEnabled = Boolean(readPath(config, "shell.enable_exec", false))
+  const effectiveSandboxActive = Boolean(readPath(draft, "sandbox.active", false))
+  const effectiveSandboxProvider = String(readPath(draft, "sandbox.provider", "none") || "none")
+  const effectiveShellExecEnabled = Boolean(readPath(draft, "shell.enable_exec", false))
+  const runtimeOverrideNotice =
+    savedSandboxActive !== effectiveSandboxActive ||
+    savedSandboxProvider !== effectiveSandboxProvider ||
+    savedShellExecEnabled !== effectiveShellExecEnabled
 
   const saveConfig = useCallback(async (): Promise<boolean> => {
     if (!draft) {
@@ -1069,11 +1095,17 @@ export function SettingsPage() {
                 </label>
                 <label className="settings-field">
                   <span className="settings-field-title">Sandbox provider</span>
-                  <input
+                  <select
                     className="settings-input"
                     value={String(readPath(draft, "sandbox.provider", "none"))}
                     onChange={(event) => setDraftPath("sandbox.provider", event.target.value)}
-                  />
+                  >
+                    {SANDBOX_PROVIDERS.map((provider) => (
+                      <option key={provider} value={provider}>
+                        {provider}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <label className="settings-field">
                   <span className="settings-field-title">Shell execution enabled</span>
@@ -1083,6 +1115,17 @@ export function SettingsPage() {
                     onChange={(event) => setDraftPath("shell.enable_exec", event.target.checked)}
                   />
                 </label>
+                <div className="settings-field settings-field--full">
+                  <span className="settings-field-title">Effective runtime mode</span>
+                  <p className="settings-help" data-testid="settings-runtime-sandbox-mode">
+                    Current runtime is using `{effectiveSandboxProvider}` with sandbox {effectiveSandboxActive ? "enabled" : "disabled"} and shell execution {effectiveShellExecEnabled ? "enabled" : "disabled"}.
+                  </p>
+                  {runtimeOverrideNotice ? (
+                    <p className="settings-help" data-testid="settings-runtime-sandbox-override">
+                      Saved config differs from the current runtime, which usually means the server was started with CLI overrides or an older config and needs a restart to match the saved values.
+                    </p>
+                  ) : null}
+                </div>
               </>
             )}
 

@@ -119,7 +119,19 @@ async function routeSettingsApi(page: Page, state: SettingsApiState) {
     }
 
     if (pathname === "/api/admin/status") {
-      await json({ ok: true, model: { provider: "hatz", name: "glm-4.5" }, run_count: 1 })
+      await json({
+        ok: true,
+        model: { provider: "hatz", name: "glm-4.5" },
+        run_count: 1,
+        runtime: {
+          server: { bind_address: "127.0.0.1", port: 8080 },
+          workspace: { root: "/app/workspace" },
+          sandbox: { active: true, provider: "docker" },
+          shell: { enable_exec: true },
+          output: { thinking_mode: "on_error" },
+          engine: { max_concurrent_runs: 64 },
+        },
+      })
       return
     }
 
@@ -317,6 +329,21 @@ test("provider test and model discovery actions render connectivity and discover
 
   await hatzCard.getByRole("button", { name: "glm-4.7" }).click()
   await expect(page.locator("label.settings-field:has-text('Model name') select")).toHaveValue("glm-4.7")
+})
+
+test("sandbox settings show effective runtime mode and use a constrained provider selector", async ({ page }) => {
+  const state = createState()
+  await routeSettingsApi(page, state)
+
+  await page.goto("/dashboard#/settings?category=sandbox")
+
+  await expect(page.locator("label.settings-field:has-text('Sandbox provider') select")).toHaveValue("docker")
+  await expect(page.getByTestId("settings-runtime-sandbox-mode")).toContainText("`docker`")
+  await expect(page.getByTestId("settings-runtime-sandbox-mode")).toContainText("sandbox enabled")
+
+  await page.locator("label.settings-field:has-text('Sandbox provider') select").selectOption("local")
+  await expect(page.getByTestId("settings-runtime-sandbox-override")).toBeVisible()
+  await expect(page.locator(".settings-diff-table code", { hasText: "sandbox.provider" })).toBeVisible()
 })
 
 test("agents category renders profile editor model override controls and subagent defaults", async ({ page }) => {

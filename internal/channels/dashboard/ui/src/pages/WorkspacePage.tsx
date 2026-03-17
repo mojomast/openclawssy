@@ -28,6 +28,7 @@ type WorkspaceFile = {
 
 type WorkspaceEntriesResponse = {
   workspace_root?: string
+  workspace_mode?: unknown
   path?: string
   parent_path?: string
   entries?: WorkspaceEntryResponseItem[]
@@ -43,6 +44,7 @@ type WorkspaceEntryResponseItem = {
 }
 
 type WorkspaceFileResponse = {
+  workspace_mode?: unknown
   path?: string
   name?: string
   size_bytes?: number
@@ -106,6 +108,7 @@ function normalizeEntry(entry: WorkspaceEntryResponseItem): WorkspaceEntry | nul
 
 export function WorkspacePage() {
   const [workspaceRoot, setWorkspaceRoot] = useState("")
+  const [workspaceMode, setWorkspaceMode] = useState("")
   const [currentPath, setCurrentPath] = useState(".")
   const [parentPath, setParentPath] = useState("")
   const [entries, setEntries] = useState<WorkspaceEntry[]>([])
@@ -160,6 +163,7 @@ export function WorkspacePage() {
       const resolvedPath = asText(payload.path) || "."
       currentPathRef.current = resolvedPath
       setWorkspaceRoot(asText(payload.workspace_root))
+      setWorkspaceMode(asText(payload.workspace_mode))
       setCurrentPath(resolvedPath)
       setParentPath(asText(payload.parent_path))
       setEntries(normalizedEntries)
@@ -293,6 +297,9 @@ export function WorkspacePage() {
         <h2 className="text-2xl font-semibold tracking-tight">Workspace</h2>
         <p className="text-sm text-muted-foreground">
           Browse the active workspace, inspect folders, and preview text files without leaving the dashboard.
+        </p>
+        <p className="text-sm text-muted-foreground" data-testid="workspace-mode-summary">
+          Viewing `{workspaceRoot || "/workspace"}` via {workspaceMode || "runtime"} workspace mode.
         </p>
       </div>
 

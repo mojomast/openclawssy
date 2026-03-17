@@ -103,7 +103,7 @@ test("shows directory listing, filter, breadcrumbs, and file preview", async ({ 
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, workspace_mode: "docker" }),
     })
   })
 
@@ -127,6 +127,7 @@ test("shows directory listing, filter, breadcrumbs, and file preview", async ({ 
   await page.goto("/dashboard#/workspace")
 
   await expect(page.getByRole("heading", { name: "Workspace", level: 2 })).toBeVisible()
+  await expect(page.getByTestId("workspace-mode-summary")).toContainText("via docker workspace mode")
   await expect(page.getByText("Entries (3)")).toBeVisible()
   await expect(page.getByRole("button", { name: "workspace" })).toBeVisible()
 
@@ -151,7 +152,7 @@ test("clicking directories, breadcrumb segments, and Up navigates correctly", as
       await route.fulfill({ status: 404, body: "not found" })
       return
     }
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(payload) })
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...payload, workspace_mode: "docker" }) })
   })
 
   await page.route("**/api/admin/workspace/file?**", async (route) => {
@@ -186,7 +187,7 @@ test("Refresh button reloads and auto-refresh polls every 4 seconds", async ({ p
       await route.fulfill({ status: 404, body: "not found" })
       return
     }
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(payload) })
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...payload, workspace_mode: "docker" }) })
   })
 
   await page.route("**/api/admin/workspace/file?**", async (route) => {

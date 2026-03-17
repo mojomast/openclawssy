@@ -783,6 +783,35 @@ func TestRunnerBlocksRepeatedSchedulerAddAfterFirstSuccess(t *testing.T) {
 	}
 }
 
+func TestRunnerBlocksRepeatedSchedulerAddWithoutExplicitIDAfterFirstSuccess(t *testing.T) {
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "scheduler.add", Arguments: []byte(`{"schedule":"@hourly","message":"research and journal","agent_id":"default"}`)}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "scheduler.add", Arguments: []byte(`{"message":"research and journal","agent_id":"default","schedule":"0 * * * *"}`)}}},
+		{FinalText: "done"},
+	}}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Output: `{"added":true,"id":"job_1"}`},
+	}}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 8}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "create the hourly journal job"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected only first id-less scheduler.add to execute, got %d", len(tools.calls))
+	}
+	if len(out.ToolCalls) != 2 {
+		t.Fatalf("expected two tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[1].Result.Error, "scheduler.add|semantic|@every 1h") {
+		t.Fatalf("expected semantic scheduler repetition key, got %+v", out.ToolCalls[1].Result)
+	}
+}
+
 func TestRunnerBlocksRepeatedPolicyGrantAfterFirstSuccess(t *testing.T) {
 	model := &mockModel{responses: []ModelResponse{
 		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "policy.grant", Arguments: []byte(`{"agent_id":"default","capability":"http.request"}`)}}},

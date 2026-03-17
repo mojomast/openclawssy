@@ -480,6 +480,9 @@ func TestAdminStatusIncludesEffectiveRuntimeConfig(t *testing.T) {
 	effective.Server.BindAddress = "0.0.0.0"
 	effective.Server.Port = 8082
 	effective.Workspace.Root = "/app/workspace"
+	effective.Sandbox.Active = true
+	effective.Sandbox.Provider = "docker"
+	effective.Shell.EnableExec = true
 	effective.Output.ThinkingMode = config.ThinkingModeNever
 	effective.Engine.MaxConcurrentRuns = 64
 
@@ -508,6 +511,14 @@ func TestAdminStatusIncludesEffectiveRuntimeConfig(t *testing.T) {
 	}
 	if gotPort, ok := serverPayload["port"].(float64); !ok || int(gotPort) != 8082 {
 		t.Fatalf("expected runtime server port 8082, got %#v", serverPayload["port"])
+	}
+	sandboxPayload, ok := runtimePayload["sandbox"].(map[string]any)
+	if !ok || sandboxPayload["provider"] != "docker" || sandboxPayload["active"] != true {
+		t.Fatalf("expected runtime sandbox payload, got %#v", runtimePayload["sandbox"])
+	}
+	shellPayload, ok := runtimePayload["shell"].(map[string]any)
+	if !ok || shellPayload["enable_exec"] != true {
+		t.Fatalf("expected runtime shell payload, got %#v", runtimePayload["shell"])
 	}
 }
 
