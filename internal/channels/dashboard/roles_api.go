@@ -13,6 +13,9 @@ import (
 )
 
 func (h *Handler) handleRoles(w http.ResponseWriter, r *http.Request) {
+	if !h.requireInstanceAgentsFeature(w) {
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		h.listRoleTemplates(w)
@@ -24,6 +27,9 @@ func (h *Handler) handleRoles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleRoleByName(w http.ResponseWriter, r *http.Request) {
+	if !h.requireInstanceAgentsFeature(w) {
+		return
+	}
 	name, err := parseRoleTemplateNameFromPath(r.URL.Path)
 	if err != nil {
 		writeDashboardError(w, http.StatusBadRequest, "roles.invalid_name", err.Error(), nil)

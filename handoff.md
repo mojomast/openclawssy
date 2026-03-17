@@ -44,6 +44,7 @@ Date: 2026-03-16
 - Chat now matches that same `instance_agents` feature gating contract in the dashboard shell, including hidden nav, disabled direct-route shell, and suppressed agent/session bootstrap activity when disabled.
 - `/api/admin/agents` now matches the instance-aware control-plane contract too: it is feature-gated, resolves agents from the active/requested instance config, and isolates dashboard active-agent pointers by instance-scoped room key.
 - Docs and Skills now match that same `instance_agents` feature gating contract too: their admin routes are feature-gated, nav entries hide when disabled, direct-route shells render explicit disabled panels, and legacy doc/skill API work is suppressed.
+- Role Templates now matches that same `instance_agents` feature gating contract too: role admin routes are feature-gated, the nav entry hides when disabled, direct-route shells render an explicit disabled panel, and role-template API work is suppressed.
 
 ## Validation completed
 

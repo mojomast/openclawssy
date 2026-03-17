@@ -132,7 +132,7 @@ export function Layout() {
       if (item.path === '/eval') {
         return !featuresLoading && features.eval
       }
-      if (item.path === '/docs' || item.path === '/skills') {
+      if (item.path === '/docs' || item.path === '/skills' || item.path === '/roles') {
         return !featuresLoading && features.instanceAgents
       }
       if (item.path === '/monitor') {

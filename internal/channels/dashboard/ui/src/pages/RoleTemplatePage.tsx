@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { ApiError, api } from "@/lib/api"
+import { useControlPlaneFeatures } from "@/hooks/useControlPlaneFeatures"
 import { useToast } from "@/hooks/useToast"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -377,6 +378,7 @@ function RoleFormFields({
 }
 
 export function RoleTemplatePage() {
+  const { features, loading: featuresLoading } = useControlPlaneFeatures()
   const { toast } = useToast()
 
   const [roles, setRoles] = useState<RoleTemplate[]>([])
@@ -396,8 +398,13 @@ export function RoleTemplatePage() {
   const [deleting, setDeleting] = useState(false)
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const featureDisabled = !featuresLoading && !features.instanceAgents
 
   const loadRoles = useCallback(async (preferredRoleName = "") => {
+    if (featureDisabled) {
+      setLoading(false)
+      return
+    }
     setLoading(true)
     setLoadingError("")
     try {
@@ -423,11 +430,29 @@ export function RoleTemplatePage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [featureDisabled])
 
   useEffect(() => {
+    if (featuresLoading) {
+      return
+    }
+    if (featureDisabled) {
+      setRoles([])
+      setSelectedRoleName("")
+      setCreateForm(emptyRoleForm())
+      setEditForm(emptyRoleForm())
+      setLoading(false)
+      setLoadingError("")
+      setCreateError("")
+      setEditError("")
+      setCreating(false)
+      setSaving(false)
+      setDeleting(false)
+      setDeleteDialogOpen(false)
+      return
+    }
     void loadRoles()
-  }, [loadRoles])
+  }, [featureDisabled, featuresLoading, loadRoles])
 
   const selectedRole = useMemo(
     () => roles.find((role) => role.name === selectedRoleName) || null,
@@ -435,12 +460,15 @@ export function RoleTemplatePage() {
   )
 
   const onSelectRole = useCallback((name: string) => {
+    if (featureDisabled) {
+      return
+    }
     const role = roles.find((entry) => entry.name === name)
     setSelectedRoleName(name)
     setEditError("")
     setDeleteDialogOpen(false)
     setEditForm(role ? roleToForm(role) : emptyRoleForm())
-  }, [roles])
+  }, [featureDisabled, roles])
 
   const updateCreateForm = useCallback((key: keyof RoleFormState, value: string) => {
     setCreateError("")
@@ -453,6 +481,9 @@ export function RoleTemplatePage() {
   }, [])
 
   const createRole = useCallback(async () => {
+    if (featureDisabled) {
+      return
+    }
     setCreateError("")
     setCreating(true)
     try {
@@ -467,9 +498,12 @@ export function RoleTemplatePage() {
     } finally {
       setCreating(false)
     }
-  }, [createForm, loadRoles, toast])
+  }, [createForm, featureDisabled, loadRoles, toast])
 
   const saveRole = useCallback(async () => {
+    if (featureDisabled) {
+      return
+    }
     if (!selectedRole) {
       return
     }
@@ -485,9 +519,12 @@ export function RoleTemplatePage() {
     } finally {
       setSaving(false)
     }
-  }, [editForm, loadRoles, selectedRole, toast])
+  }, [editForm, featureDisabled, loadRoles, selectedRole, toast])
 
   const deleteRole = useCallback(async () => {
+    if (featureDisabled) {
+      return
+    }
     if (!selectedRole) {
       return
     }
@@ -503,7 +540,7 @@ export function RoleTemplatePage() {
     } finally {
       setDeleting(false)
     }
-  }, [loadRoles, selectedRole, toast])
+  }, [featureDisabled, loadRoles, selectedRole, toast])
 
   return (
     <div className="space-y-4 p-6" data-testid="role-templates-page">
@@ -514,10 +551,26 @@ export function RoleTemplatePage() {
         </p>
       </div>
 
+      {featureDisabled ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Role Templates unavailable</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="rounded-md border border-border bg-muted/30 p-4" data-testid="roles-disabled-state">
+              <p className="text-sm font-medium">Role Templates disabled</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Instance agent controls are disabled for this control plane.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       {loadingError ? (
         <div className="rounded-md border border-destructive/50 bg-destructive/5 p-3">
           <p className="text-sm text-destructive">{loadingError}</p>
-          <Button className="mt-2" size="sm" variant="outline" onClick={() => void loadRoles(selectedRoleName)}>
+          <Button className="mt-2" size="sm" variant="outline" disabled={featureDisabled} onClick={() => void loadRoles(selectedRoleName)}>
             Retry
           </Button>
         </div>
@@ -543,6 +596,7 @@ export function RoleTemplatePage() {
                     ? "border-primary bg-primary/10"
                     : "hover:bg-muted"
                 }`}
+                disabled={featureDisabled}
                 onClick={() => onSelectRole(role.name)}
               >
                 <div className="flex items-center justify-between gap-2">
@@ -563,17 +617,17 @@ export function RoleTemplatePage() {
               <CardTitle className="text-base">Create custom role template</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              <RoleFormFields
-                prefix="create"
-                form={createForm}
-                disabled={creating}
-                includeName
-                onChange={updateCreateForm}
-              />
+                <RoleFormFields
+                  prefix="create"
+                  form={createForm}
+                  disabled={featureDisabled || creating}
+                  includeName
+                  onChange={updateCreateForm}
+                />
 
               {createError ? <p className="text-sm text-destructive">{createError}</p> : null}
 
-              <Button data-testid="create-role-submit" disabled={creating} onClick={() => void createRole()}>
+              <Button data-testid="create-role-submit" disabled={featureDisabled || creating} onClick={() => void createRole()}>
                 {creating ? "Creating…" : "Create role"}
               </Button>
             </CardContent>
@@ -605,7 +659,7 @@ export function RoleTemplatePage() {
                   <RoleFormFields
                     prefix="edit"
                     form={editForm}
-                    disabled={selectedRole.isBuiltin || saving || deleting}
+                    disabled={featureDisabled || selectedRole.isBuiltin || saving || deleting}
                     includeName={false}
                     onChange={updateEditForm}
                   />
@@ -614,13 +668,13 @@ export function RoleTemplatePage() {
 
                   {!selectedRole.isBuiltin ? (
                     <div className="flex flex-wrap gap-2">
-                      <Button data-testid="edit-role-submit" disabled={saving || deleting} onClick={() => void saveRole()}>
+                      <Button data-testid="edit-role-submit" disabled={featureDisabled || saving || deleting} onClick={() => void saveRole()}>
                         {saving ? "Saving…" : "Save role"}
                       </Button>
                       <Button
                         data-testid="edit-role-delete"
                         variant="destructive"
-                        disabled={saving || deleting}
+                        disabled={featureDisabled || saving || deleting}
                         onClick={() => setDeleteDialogOpen(true)}
                       >
                         Delete role
@@ -649,7 +703,7 @@ export function RoleTemplatePage() {
             <Button
               data-testid="delete-role-confirm-submit"
               variant="destructive"
-              disabled={deleting}
+              disabled={featureDisabled || deleting}
               onClick={() => void deleteRole()}
             >
               {deleting ? "Deleting…" : "Delete"}

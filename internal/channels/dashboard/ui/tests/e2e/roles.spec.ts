@@ -22,6 +22,7 @@ type RolesState = {
   createRequests: string[]
   updateRequests: string[]
   deleteRequests: string[]
+  listRequests: number
 }
 
 function clone<T>(value: T): T {
@@ -147,10 +148,12 @@ function createRolesState(): RolesState {
     createRequests: [],
     updateRequests: [],
     deleteRequests: [],
+    listRequests: 0,
   }
 }
 
-async function installRolesMocks(page: Page, state: RolesState): Promise<void> {
+async function installRolesMocks(page: Page, state: RolesState, options?: { instanceAgentsEnabled?: boolean }): Promise<void> {
+  const instanceAgentsEnabled = options?.instanceAgentsEnabled ?? true
   await page.route("**/*", async (route: Route) => {
     const request = route.request()
     const method = request.method()
@@ -170,7 +173,20 @@ async function installRolesMocks(page: Page, state: RolesState): Promise<void> {
       return
     }
 
+    if (pathname === "/api/admin/control-plane/features" && method === "GET") {
+      await json({
+        features: {
+          instance_control: true,
+          instance_agents: instanceAgentsEnabled,
+          wizard: true,
+          eval: true,
+        },
+      })
+      return
+    }
+
     if (pathname === "/api/admin/roles" && method === "GET") {
+      state.listRequests += 1
       await json({ roles: clone(state.roles), count: state.roles.length })
       return
     }
@@ -322,4 +338,17 @@ test("Role Templates page deletes custom role with confirmation dialog", async (
 
   await expect.poll(() => state.deleteRequests.length).toBe(1)
   await expect(page.getByTestId("role-item-analyst")).toHaveCount(0)
+})
+
+test("Role Templates hides nav and skips role API work when instance agents are disabled", async ({ page }) => {
+  const state = createRolesState()
+  await installRolesMocks(page, state, { instanceAgentsEnabled: false })
+
+  await page.goto("/dashboard#/roles")
+
+  await expect(page.getByTestId("roles-disabled-state")).toContainText("Role Templates disabled")
+  await expect(page.getByTestId("roles-disabled-state")).toContainText("Instance agent controls are disabled")
+  await expect(page.getByRole("link", { name: "Role Templates" })).toHaveCount(0)
+  await expect.poll(() => state.listRequests).toBe(0)
+  await expect(page.getByTestId("create-role-submit")).toBeDisabled()
 })

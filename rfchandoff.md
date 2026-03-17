@@ -183,6 +183,7 @@ Current capabilities:
 - control-plane feature introspection remains ungated so operators can still discover disabled features
 - `/api/admin/agents` now also returns structured `403` errors when `instance_agents` is disabled, so agent selection/bootstrap matches the rest of the instance-agent control plane
 - `/api/admin/agent/docs` and `/api/admin/skills` now also return structured `403` errors when `instance_agents` is disabled, so those remaining legacy agent surfaces follow the same feature contract
+- `/api/admin/roles` and `/api/admin/roles/{name}` now also return structured `403` errors when `instance_agents` is disabled, so role template management follows that same feature contract too
 
 ### 2.10 Dashboard inbox lifecycle APIs and chat identity threading
 
@@ -208,6 +209,7 @@ Current capabilities:
 - chat nav/direct-access behavior now honors the shared `instance_agents` feature state, suppressing agent/session bootstrap work and rendering an explicit disabled-state panel with disabled controls when the feature is off
 - `/api/admin/agents` now resolves against the active or explicitly requested instance config and keeps dashboard active-agent pointers isolated per instance-scoped room, so Chat/Monitor selection no longer leaks root-config/global pointer behavior across instances
 - Docs and Skills nav/direct-access behavior now honors the same shared `instance_agents` feature state, hiding both entries, rendering disabled-state panels on direct access, and suppressing doc/skill API calls when the feature is off
+- Role Templates nav/direct-access behavior now honors that same shared `instance_agents` feature state, hiding the nav entry, rendering a disabled-state panel on direct access, and suppressing role-template API calls when the feature is off
 
 ### 2.11 Dashboard eval metadata consumer adoption
 

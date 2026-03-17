@@ -208,3 +208,52 @@ func TestRolesDeleteBuiltInRejected(t *testing.T) {
 		t.Fatalf("expected error code roles.builtin_immutable, got %q", payload.Error.Code)
 	}
 }
+
+func TestRolesRoutesRequireInstanceAgentsFeature(t *testing.T) {
+	root := t.TempDir()
+	if err := config.Save(filepath.Join(root, ".openclawssy", "config.json"), config.Default()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	store := defaultControlPlaneStore()
+	store.Features.InstanceAgents = false
+	if err := h.saveControlPlaneStore(store); err != nil {
+		t.Fatalf("save control plane store: %v", err)
+	}
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "list", method: http.MethodGet, path: "/api/admin/roles"},
+		{name: "create", method: http.MethodPost, path: "/api/admin/roles", body: `{"name":"analyst"}`},
+		{name: "update", method: http.MethodPut, path: "/api/admin/roles/analyst", body: `{"name":"analyst"}`},
+		{name: "delete", method: http.MethodDelete, path: "/api/admin/roles/analyst"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var body *bytes.Buffer
+			if tc.body != "" {
+				body = bytes.NewBufferString(tc.body)
+			} else {
+				body = bytes.NewBuffer(nil)
+			}
+			req := httptest.NewRequest(tc.method, tc.path, body)
+			if tc.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			rr := httptest.NewRecorder()
+			mux.ServeHTTP(rr, req)
+			if rr.Code != http.StatusForbidden {
+				t.Fatalf("expected %d, got %d (%s)", http.StatusForbidden, rr.Code, rr.Body.String())
+			}
+			assertDashboardErrorCode(t, rr.Body.Bytes(), "feature.instance_agents_disabled")
+		})
+	}
+}

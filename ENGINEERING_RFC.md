@@ -44,6 +44,7 @@ Substantial portions of Milestones 1-5 are now landed on the current branch, inc
 - Chat now follows the same `instance_agents` feature-state contract in the dashboard shell: nav visibility hides the page, direct route access renders an explicit disabled-state panel, and chat/session/agent bootstrap activity is suppressed when the feature is off
 - `/api/admin/agents` now follows the same instance-aware contract: the route hard-fails when `instance_agents` is disabled, resolves against the active or requested instance config, and keeps agent pointers isolated per instance-scoped dashboard room
 - Docs and Skills now follow that same `instance_agents` feature-state contract: their admin routes hard-fail when disabled, nav visibility hides both entries, and direct route access renders explicit disabled-state panels with doc/skill API work suppressed
+- Role Templates now follows that same `instance_agents` feature-state contract too: role admin routes hard-fail when disabled, nav visibility hides the page, and direct route access renders an explicit disabled-state panel with role API work suppressed
 
 Remaining work is concentrated in wizard parity, broader composite-identity rollout, and finishing first-class messaging/eval consumer convergence beyond the newly landed dashboard/CLI slices.
 
