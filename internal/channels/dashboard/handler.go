@@ -2386,6 +2386,9 @@ func firstMonitorTimestamp(record monitorRunRecord) string {
 }
 
 func (h *Handler) handleAgentDocs(w http.ResponseWriter, r *http.Request) {
+	if !h.requireInstanceAgentsFeature(w) {
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		h.getAgentDocs(w, r)
@@ -2465,6 +2468,9 @@ func (h *Handler) setAgentDoc(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleSkills(w http.ResponseWriter, r *http.Request) {
+	if !h.requireInstanceAgentsFeature(w) {
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		h.getSkills(w, r)

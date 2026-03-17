@@ -1069,6 +1069,52 @@ func TestAdminSkillsInstallAndActivation(t *testing.T) {
 	}
 }
 
+func TestDocsAndSkillsRoutesRequireInstanceAgentsFeature(t *testing.T) {
+	root := t.TempDir()
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	store := defaultControlPlaneStore()
+	store.Features.InstanceAgents = false
+	if err := h.saveControlPlaneStore(store); err != nil {
+		t.Fatalf("save control plane store: %v", err)
+	}
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	docsListReq := httptest.NewRequest(http.MethodGet, "/api/admin/agent/docs?agent_id=default", nil)
+	docsListRR := httptest.NewRecorder()
+	mux.ServeHTTP(docsListRR, docsListReq)
+	if docsListRR.Code != http.StatusForbidden {
+		t.Fatalf("expected docs list status %d, got %d (%s)", http.StatusForbidden, docsListRR.Code, docsListRR.Body.String())
+	}
+	assertDashboardErrorCode(t, docsListRR.Body.Bytes(), "feature.instance_agents_disabled")
+
+	docsSetReq := httptest.NewRequest(http.MethodPost, "/api/admin/agent/docs", bytes.NewBufferString(`{"agent_id":"default","name":"SOUL.md","content":"x"}`))
+	docsSetReq.Header.Set("Content-Type", "application/json")
+	docsSetRR := httptest.NewRecorder()
+	mux.ServeHTTP(docsSetRR, docsSetReq)
+	if docsSetRR.Code != http.StatusForbidden {
+		t.Fatalf("expected docs set status %d, got %d (%s)", http.StatusForbidden, docsSetRR.Code, docsSetRR.Body.String())
+	}
+	assertDashboardErrorCode(t, docsSetRR.Body.Bytes(), "feature.instance_agents_disabled")
+
+	skillsListReq := httptest.NewRequest(http.MethodGet, "/api/admin/skills?agent_id=default", nil)
+	skillsListRR := httptest.NewRecorder()
+	mux.ServeHTTP(skillsListRR, skillsListReq)
+	if skillsListRR.Code != http.StatusForbidden {
+		t.Fatalf("expected skills list status %d, got %d (%s)", http.StatusForbidden, skillsListRR.Code, skillsListRR.Body.String())
+	}
+	assertDashboardErrorCode(t, skillsListRR.Body.Bytes(), "feature.instance_agents_disabled")
+
+	skillsPostReq := httptest.NewRequest(http.MethodPost, "/api/admin/skills", bytes.NewBufferString(`{"action":"install","name":"playwrite","agent_id":"default"}`))
+	skillsPostReq.Header.Set("Content-Type", "application/json")
+	skillsPostRR := httptest.NewRecorder()
+	mux.ServeHTTP(skillsPostRR, skillsPostReq)
+	if skillsPostRR.Code != http.StatusForbidden {
+		t.Fatalf("expected skills post status %d, got %d (%s)", http.StatusForbidden, skillsPostRR.Code, skillsPostRR.Body.String())
+	}
+	assertDashboardErrorCode(t, skillsPostRR.Body.Bytes(), "feature.instance_agents_disabled")
+}
+
 func TestDebugRunTraceEndpointReturnsNotFoundWithoutTrace(t *testing.T) {
 	store := httpchannel.NewInMemoryRunStore()
 	_, err := store.Create(context.Background(), httpchannel.Run{ID: "run_2", AgentID: "default", Message: "hello", Status: "completed", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()})

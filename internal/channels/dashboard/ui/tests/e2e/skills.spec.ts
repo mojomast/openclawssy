@@ -120,6 +120,23 @@ async function routeSkillsApi(page: Page, state: SkillsApiState) {
   })
 }
 
+async function routeInstanceAgentsFeature(page: Page, enabled: boolean) {
+  await page.route("**/api/admin/control-plane/features", async (route: Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        features: {
+          instance_control: true,
+          instance_agents: enabled,
+          wizard: true,
+          eval: true,
+        },
+      }),
+    })
+  })
+}
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem("openclawssy.dashboard.bearer", "e2e-token")
@@ -140,6 +157,7 @@ test("renders agent selector, installable skills, and activation controls", asyn
   }
 
   await routeSkillsApi(page, state)
+  await routeInstanceAgentsFeature(page, true)
   await page.goto("/dashboard#/skills")
 
   await expect(page.getByRole("heading", { name: "Skills", level: 2 })).toBeVisible()
@@ -168,6 +186,7 @@ test("installs skills and activates/deactivates per selected agent", async ({ pa
   }
 
   await routeSkillsApi(page, state)
+  await routeInstanceAgentsFeature(page, true)
   await page.goto("/dashboard#/skills")
 
   const installableSection = page.locator("section", { has: page.getByRole("heading", { name: "Installable Skills" }) })
@@ -206,6 +225,7 @@ test("reload button refetches and displays load/action errors", async ({ page })
   }
 
   await routeSkillsApi(page, state)
+  await routeInstanceAgentsFeature(page, true)
   await page.goto("/dashboard#/skills")
 
   await expect(page.getByText("Failed to load skills: skills list failed")).toBeVisible()
@@ -220,4 +240,28 @@ test("reload button refetches and displays load/action errors", async ({ page })
 
   await page.locator("article", { hasText: "scrutiny" }).getByRole("button", { name: "Activate" }).click()
   await expect(page.getByText("Failed to update scrutiny: activate failed")).toBeVisible()
+})
+
+test("hides skills nav and skips skills API work when instance agents are disabled", async ({ page }) => {
+  const state: SkillsApiState = {
+    availableAgents: ["default"],
+    installableCatalog: ["playwrite", "scrutiny"],
+    installedSkills: ["playwrite"],
+    activatedByAgent: { default: ["playwrite"] },
+    getCount: 0,
+    failNextGet: false,
+    failNextInstall: false,
+    failNextActivate: false,
+    failNextDeactivate: false,
+  }
+
+  await routeSkillsApi(page, state)
+  await routeInstanceAgentsFeature(page, false)
+  await page.goto("/dashboard#/skills")
+
+  await expect(page.getByTestId("skills-disabled-state")).toContainText("Skills disabled")
+  await expect(page.getByTestId("skills-disabled-state")).toContainText("Instance agent controls are disabled")
+  await expect(page.getByRole("link", { name: "Skills" })).toHaveCount(0)
+  await expect.poll(() => state.getCount).toBe(0)
+  await expect(page.getByRole("button", { name: "Reload" })).toBeDisabled()
 })

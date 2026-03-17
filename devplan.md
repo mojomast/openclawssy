@@ -296,6 +296,7 @@ Progress update:
 - Sessions list/detail routes and dashboard shell now honor the same shared `instance_agents` feature state, extending deterministic disabled-nav/direct-access behavior to the transcript/inbox-facing session surface too
 - Chat now honors that same shared `instance_agents` feature state in the dashboard shell, suppressing agent/session bootstrap work and rendering a deterministic disabled-state panel instead of mixed downstream failures
 - `/api/admin/agents` now uses the active/requested instance projection and instance-scoped pointer keys, so Chat/Monitor agent selection aligns with the same instance-aware contract instead of leaking root-config/global pointer behavior
+- Docs and Skills now honor that same shared `instance_agents` feature state across both dashboard UI and admin routes, hiding disabled nav/direct access and suppressing legacy doc/skill API activity when instance-agent controls are off
 
 ## Milestone 6: Wizard
 

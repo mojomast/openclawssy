@@ -17,10 +17,10 @@ interface NavSection {
 const navSections: NavSection[] = [
   {
     title: 'Dashboard',
-    items: [
-      { path: '/help', label: 'Help' },
-      { path: '/workspace', label: 'Workspace' },
-      { path: '/secrets', label: 'Secrets' },
+      items: [
+        { path: '/help', label: 'Help' },
+        { path: '/workspace', label: 'Workspace' },
+        { path: '/secrets', label: 'Secrets' },
       { path: '/docs', label: 'Docs' },
       { path: '/skills', label: 'Skills' },
       { path: '/chat', label: 'Chat', shortcut: 'g+c' },
@@ -131,6 +131,9 @@ export function Layout() {
     items: section.items.filter((item) => {
       if (item.path === '/eval') {
         return !featuresLoading && features.eval
+      }
+      if (item.path === '/docs' || item.path === '/skills') {
+        return !featuresLoading && features.instanceAgents
       }
       if (item.path === '/monitor') {
         return !featuresLoading && features.instanceAgents

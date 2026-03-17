@@ -1,5 +1,6 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
+import { useControlPlaneFeatures } from "@/hooks/useControlPlaneFeatures"
 import { api } from "@/lib/api"
 
 type SkillsResponse = {
@@ -55,6 +56,7 @@ function normalizeInstallable(values: unknown): InstallableSkill[] {
 }
 
 export function SkillsPage() {
+  const { features, loading: featuresLoading } = useControlPlaneFeatures()
   const [loading, setLoading] = useState(true)
   const [actionPending, setActionPending] = useState(false)
   const [agentID, setAgentID] = useState("default")
@@ -64,6 +66,7 @@ export function SkillsPage() {
   const [activatedSkills, setActivatedSkills] = useState<string[]>([])
   const [statusText, setStatusText] = useState("")
   const [statusKind, setStatusKind] = useState<"" | "success" | "error">("")
+  const featureDisabled = !featuresLoading && !features.instanceAgents
 
   const setStatus = useCallback((text: string, kind: "" | "success" | "error" = "") => {
     setStatusText(text)
@@ -74,6 +77,10 @@ export function SkillsPage() {
     requestedAgent: string,
     options?: { keepStatus?: boolean; preserveStatusOnSuccess?: boolean },
   ) => {
+    if (featureDisabled) {
+      setLoading(false)
+      return
+    }
     const keepStatus = Boolean(options?.keepStatus)
     const preserveStatusOnSuccess = Boolean(options?.preserveStatusOnSuccess)
     const targetAgent = normalizeName(requestedAgent) || "default"
@@ -114,11 +121,26 @@ export function SkillsPage() {
     } finally {
       setLoading(false)
     }
-  }, [setStatus])
+  }, [featureDisabled, setStatus])
 
   useEffect(() => {
+    if (featuresLoading) {
+      return
+    }
+    if (featureDisabled) {
+      setLoading(false)
+      setActionPending(false)
+      setAgentID("default")
+      setAvailableAgents(["default"])
+      setInstallable([])
+      setInstalledSkills([])
+      setActivatedSkills([])
+      setStatusText("")
+      setStatusKind("")
+      return
+    }
     void loadSkills("default")
-  }, [loadSkills])
+  }, [featureDisabled, featuresLoading, loadSkills])
 
   const isInstalled = useCallback((name: string) => installedSkills.includes(normalizeName(name)), [installedSkills])
   const isActivated = useCallback((name: string) => activatedSkills.includes(normalizeName(name)), [activatedSkills])
@@ -132,16 +154,25 @@ export function SkillsPage() {
   }, [agentID, availableAgents])
 
   const handleAgentChange = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
+    if (featureDisabled) {
+      return
+    }
     const selected = normalizeName(event.target.value) || "default"
     setAgentID(selected)
     void loadSkills(selected)
-  }, [loadSkills])
+  }, [featureDisabled, loadSkills])
 
   const handleReload = useCallback(() => {
+    if (featureDisabled) {
+      return
+    }
     void loadSkills(agentID)
-  }, [agentID, loadSkills])
+  }, [agentID, featureDisabled, loadSkills])
 
   const installSkill = useCallback(async (name: string) => {
+    if (featureDisabled) {
+      return
+    }
     const skill = normalizeName(name)
     if (!skill) {
       return
@@ -163,9 +194,12 @@ export function SkillsPage() {
     } finally {
       setActionPending(false)
     }
-  }, [agentID, loadSkills, setStatus])
+  }, [agentID, featureDisabled, loadSkills, setStatus])
 
   const setActivation = useCallback(async (name: string, enabled: boolean) => {
+    if (featureDisabled) {
+      return
+    }
     const skill = normalizeName(name)
     if (!skill) {
       return
@@ -187,7 +221,7 @@ export function SkillsPage() {
     } finally {
       setActionPending(false)
     }
-  }, [agentID, loadSkills, setStatus])
+  }, [agentID, featureDisabled, loadSkills, setStatus])
 
   return (
     <div className="space-y-4 p-6" data-testid="skills-page">
@@ -198,6 +232,17 @@ export function SkillsPage() {
         </p>
       </div>
 
+      {featureDisabled ? (
+        <div className="rounded-lg border bg-card p-4">
+          <div className="rounded-md border border-border bg-muted/30 p-4" data-testid="skills-disabled-state">
+            <p className="text-sm font-medium">Skills disabled</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Instance agent controls are disabled for this control plane.
+            </p>
+          </div>
+        </div>
+      ) : null}
+
       <section className="space-y-4 rounded-lg border bg-card p-4">
         <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
           <label htmlFor="skills-agent" className="space-y-1 text-sm">
@@ -206,7 +251,7 @@ export function SkillsPage() {
               id="skills-agent"
               className="h-10 w-full rounded-md border bg-background px-3 text-sm"
               value={agentID}
-              disabled={loading || actionPending}
+              disabled={featureDisabled || loading || actionPending}
               onChange={handleAgentChange}
             >
               {visibleAgents.map((item) => (
@@ -218,7 +263,7 @@ export function SkillsPage() {
           </label>
 
           <div className="flex justify-start md:justify-end">
-            <Button type="button" variant="outline" disabled={loading || actionPending} onClick={handleReload}>
+            <Button type="button" variant="outline" disabled={featureDisabled || loading || actionPending} onClick={handleReload}>
               {loading ? "Reloading..." : "Reload"}
             </Button>
           </div>
@@ -256,7 +301,7 @@ export function SkillsPage() {
                       type="button"
                       variant={item.installed ? "outline" : "default"}
                       size="sm"
-                      disabled={loading || actionPending || item.installed}
+                      disabled={featureDisabled || loading || actionPending || item.installed}
                       onClick={() => {
                         void installSkill(item.name)
                       }}
@@ -296,7 +341,7 @@ export function SkillsPage() {
                         type="button"
                         variant={active ? "outline" : "default"}
                         size="sm"
-                        disabled={loading || actionPending || !isInstalled(name)}
+                        disabled={featureDisabled || loading || actionPending || !isInstalled(name)}
                         onClick={() => {
                           void setActivation(name, !active)
                         }}

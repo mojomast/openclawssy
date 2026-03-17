@@ -1,5 +1,6 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
+import { useControlPlaneFeatures } from "@/hooks/useControlPlaneFeatures"
 import { api } from "@/lib/api"
 
 const DOC_ORDER = ["SOUL.md", "RULES.md", "TOOLS.md", "SPECPLAN.md", "DEVPLAN.md", "HANDOFF.md", "HEARTBEAT.md"]
@@ -69,6 +70,7 @@ function normalizeAgents(input: unknown): string[] {
 }
 
 export function DocsPage() {
+  const { features, loading: featuresLoading } = useControlPlaneFeatures()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [agentID, setAgentID] = useState("default")
@@ -79,6 +81,7 @@ export function DocsPage() {
   const [draftByName, setDraftByName] = useState<Record<string, string>>({})
   const [statusText, setStatusText] = useState("")
   const [statusKind, setStatusKind] = useState<"" | "success" | "error">("")
+  const featureDisabled = !featuresLoading && !features.instanceAgents
 
   const hasUnsavedChanges = useCallback((docName: string) => {
     return asText(draftByName[docName]) !== asText(baselineByName[docName])
@@ -89,6 +92,10 @@ export function DocsPage() {
   }, [documents, selectedDocName])
 
   const loadDocs = useCallback(async (requestedAgent: string, options?: { keepStatus?: boolean }) => {
+    if (featureDisabled) {
+      setLoading(false)
+      return
+    }
     const keepStatus = Boolean(options?.keepStatus)
     const targetAgent = asText(requestedAgent).trim() || "default"
 
@@ -130,17 +137,36 @@ export function DocsPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [featureDisabled])
 
   useEffect(() => {
+    if (featuresLoading) {
+      return
+    }
+    if (featureDisabled) {
+      setLoading(false)
+      setSaving(false)
+      setAgentID("default")
+      setAvailableAgents(["default"])
+      setDocuments([])
+      setSelectedDocName("")
+      setBaselineByName({})
+      setDraftByName({})
+      setStatusText("")
+      setStatusKind("")
+      return
+    }
     void loadDocs("default")
-  }, [loadDocs])
+  }, [featureDisabled, featuresLoading, loadDocs])
 
   const handleAgentChange = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
+    if (featureDisabled) {
+      return
+    }
     const nextAgent = event.target.value
     setAgentID(nextAgent)
     void loadDocs(nextAgent)
-  }, [loadDocs])
+  }, [featureDisabled, loadDocs])
 
   const handleDocumentChange = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
     setSelectedDocName(event.target.value)
@@ -149,10 +175,16 @@ export function DocsPage() {
   }, [])
 
   const handleReload = useCallback(() => {
+    if (featureDisabled) {
+      return
+    }
     void loadDocs(agentID)
-  }, [agentID, loadDocs])
+  }, [agentID, featureDisabled, loadDocs])
 
   const handleSave = useCallback(async () => {
+    if (featureDisabled) {
+      return
+    }
     if (!selectedDoc) {
       setStatusText("Select a document before saving.")
       setStatusKind("error")
@@ -182,7 +214,7 @@ export function DocsPage() {
     } finally {
       setSaving(false)
     }
-  }, [agentID, draftByName, selectedDoc])
+  }, [agentID, draftByName, featureDisabled, selectedDoc])
 
   const canSave = Boolean(selectedDoc && hasUnsavedChanges(selectedDoc.name))
 
@@ -195,6 +227,17 @@ export function DocsPage() {
         </p>
       </div>
 
+      {featureDisabled ? (
+        <div className="rounded-lg border bg-card p-4">
+          <div className="rounded-md border border-border bg-muted/30 p-4" data-testid="docs-disabled-state">
+            <p className="text-sm font-medium">Docs disabled</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Instance agent controls are disabled for this control plane.
+            </p>
+          </div>
+        </div>
+      ) : null}
+
       <section className="space-y-4 rounded-lg border bg-card p-4">
         <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
           <label htmlFor="docs-agent" className="space-y-1 text-sm">
@@ -203,7 +246,7 @@ export function DocsPage() {
               id="docs-agent"
               className="h-10 w-full rounded-md border bg-background px-3 text-sm"
               value={agentID}
-              disabled={loading || saving}
+              disabled={featureDisabled || loading || saving}
               onChange={handleAgentChange}
             >
               {(availableAgents.length ? availableAgents : [agentID]).map((item) => (
@@ -220,7 +263,7 @@ export function DocsPage() {
               id="docs-document"
               className="h-10 w-full rounded-md border bg-background px-3 text-sm"
               value={selectedDocName}
-              disabled={loading || saving || documents.length === 0}
+              disabled={featureDisabled || loading || saving || documents.length === 0}
               onChange={handleDocumentChange}
             >
               {documents.map((doc) => {
@@ -235,10 +278,10 @@ export function DocsPage() {
           </label>
 
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" disabled={loading || saving} onClick={handleReload}>
+            <Button type="button" variant="outline" disabled={featureDisabled || loading || saving} onClick={handleReload}>
               {loading ? "Reloading..." : "Reload docs"}
             </Button>
-            <Button type="button" disabled={loading || saving || !selectedDoc || !canSave} onClick={handleSave}>
+            <Button type="button" disabled={featureDisabled || loading || saving || !selectedDoc || !canSave} onClick={handleSave}>
               {saving ? "Saving..." : "Save selected doc"}
             </Button>
           </div>
@@ -281,7 +324,7 @@ export function DocsPage() {
                 id="docs-content"
                 className="min-h-[380px] w-full rounded-md border bg-background p-3 font-mono text-sm"
                 value={asText(draftByName[selectedDoc.name])}
-                disabled={loading || saving}
+                disabled={featureDisabled || loading || saving}
                 onChange={(event) => {
                   const value = event.target.value
                   setDraftByName((previous) => ({

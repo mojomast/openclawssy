@@ -99,6 +99,23 @@ async function routeDocsApi(page: Page, state: DocsApiState) {
   })
 }
 
+async function routeInstanceAgentsFeature(page: Page, enabled: boolean) {
+  await page.route("**/api/admin/control-plane/features", async (route: Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        features: {
+          instance_control: true,
+          instance_agents: enabled,
+          wizard: true,
+          eval: true,
+        },
+      }),
+    })
+  })
+}
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem("openclawssy.dashboard.bearer", "e2e-token")
@@ -118,6 +135,7 @@ test("loads docs with agent/document selectors and editor", async ({ page }) => 
   }
 
   await routeDocsApi(page, state)
+  await routeInstanceAgentsFeature(page, true)
 
   await page.goto("/dashboard#/docs")
 
@@ -141,6 +159,7 @@ test("shows unsaved indicator and saves selected document", async ({ page }) => 
   }
 
   await routeDocsApi(page, state)
+  await routeInstanceAgentsFeature(page, true)
 
   await page.goto("/dashboard#/docs")
   const editor = page.getByLabel("Document content")
@@ -166,6 +185,7 @@ test("reload button and switching agent refetch docs", async ({ page }) => {
   }
 
   await routeDocsApi(page, state)
+  await routeInstanceAgentsFeature(page, true)
 
   await page.goto("/dashboard#/docs")
   await expect(page.getByLabel("Document content")).toContainText("default soul")
@@ -193,6 +213,7 @@ test("shows load and save error status messages", async ({ page }) => {
   }
 
   await routeDocsApi(page, state)
+  await routeInstanceAgentsFeature(page, true)
 
   await page.goto("/dashboard#/docs")
   await expect(page.getByText("Failed to load docs: load failed")).toBeVisible()
@@ -203,4 +224,28 @@ test("shows load and save error status messages", async ({ page }) => {
   await page.getByLabel("Document content").fill("# SOUL\nwrite error")
   await page.getByRole("button", { name: "Save selected doc" }).click()
   await expect(page.getByText("Failed to save SOUL.md: write failed")).toBeVisible()
+})
+
+test("hides docs nav and skips docs API work when instance agents are disabled", async ({ page }) => {
+  const state: DocsApiState = {
+    availableAgents: ["default"],
+    docsByAgent: {
+      default: createDefaultDocStore("default"),
+    },
+    getCount: 0,
+    failNextGet: false,
+    failNextPost: false,
+  }
+
+  await routeDocsApi(page, state)
+  await routeInstanceAgentsFeature(page, false)
+
+  await page.goto("/dashboard#/docs")
+
+  await expect(page.getByTestId("docs-disabled-state")).toContainText("Docs disabled")
+  await expect(page.getByTestId("docs-disabled-state")).toContainText("Instance agent controls are disabled")
+  await expect(page.getByRole("link", { name: "Docs" })).toHaveCount(0)
+  await expect.poll(() => state.getCount).toBe(0)
+  await expect(page.getByRole("button", { name: "Reload docs" })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Save selected doc" })).toBeDisabled()
 })
