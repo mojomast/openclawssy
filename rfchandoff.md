@@ -197,6 +197,7 @@ Current capabilities:
 
 - dashboard inbox list/detail/ack/run routes now resolve message lifecycle state by `(agent_id, message_id)` instead of duplicating a parallel inbox model
 - dashboard inbox `run` reuses the shared message lifecycle runner through a wired `tools.AgentRunner`
+- dashboard inbox list/detail handlers now merge sparse lifecycle rows by `message_id`, preserving original message envelope/task/source data while surfacing the latest status and related run metadata
 - chat queue/request/response types now carry additive `instance_id` and `agent_id`
 - dashboard chat send, run polling, SSE subscribe, and cancel flows now thread composite identity through the operator UI
 
@@ -293,6 +294,8 @@ Verified:
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/chat.spec.ts tests/e2e/eval.spec.ts`
 - `go test ./internal/channels/dashboard ./internal/instances ./cmd/openclawssy`
 - `go test ./internal/channels/dashboard -run 'TestInstanceScopedPromptStackRoutesIsolateSameAgentID|TestInstanceScopedContractResolvedAndDiffEndpointsUseRequestedInstance|TestChatSessionMessagesEndpointIncludesLifecycleMetadata' -count=1`
+- `go test ./internal/channels/dashboard -run 'TestInstanceInboxListAckAndRunFlow' -count=1`
+- `go test ./internal/channels/dashboard ./internal/tools ./internal/runtime`
 - `cd internal/channels/dashboard/ui && npm run build && CI=1 npx playwright test tests/e2e/contract.spec.ts tests/e2e/prompt-stack.spec.ts --reporter=line`
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/sessions.spec.ts --reporter=line`
 

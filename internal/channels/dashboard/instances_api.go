@@ -735,9 +735,7 @@ func (h *Handler) listInstanceInboxMessages(store *chatstore.Store, instanceID, 
 					continue
 				}
 				existing, ok := messageByID[message.MessageID]
-				if !ok || message.TS.After(existing.TS) {
-					messageByID[message.MessageID] = message
-				}
+				messageByID[message.MessageID] = mergeDashboardInboxMessages(existing, message, ok)
 			}
 		}
 		for _, item := range messageByID {
@@ -765,12 +763,11 @@ func (h *Handler) listInstanceInboxMessages(store *chatstore.Store, instanceID, 
 }
 
 func (h *Handler) lookupInboxMessageState(store *chatstore.Store, instanceID, agentID, messageID string) (dashboardInboxMessage, chatstore.Session, tools.AgentMessageEnvelope, error) {
-	session, item, err := store.FindLatestMessage(agentID, messageID)
+	session, messages, err := findInboxMessageLifecycle(store, agentID, messageID)
 	if err != nil {
 		return dashboardInboxMessage{}, chatstore.Session{}, tools.AgentMessageEnvelope{}, err
 	}
-	envelope := tools.DecodeAgentMessageEnvelope(item)
-	message := dashboardInboxMessageFromStoreMessage(session.SessionID, item, envelope, agentID)
+	message, envelope := mergeDashboardInboxMessageLifecycle(session.SessionID, messages, agentID)
 	if strings.TrimSpace(message.InstanceID) != instanceID {
 		return dashboardInboxMessage{}, chatstore.Session{}, tools.AgentMessageEnvelope{}, chatstore.ErrMessageNotFound
 	}
@@ -811,6 +808,99 @@ func dashboardInboxMessageFromStoreMessage(sessionID string, item chatstore.Mess
 		Role:            strings.TrimSpace(item.Role),
 		TS:              item.TS.UTC(),
 	}
+}
+
+func mergeDashboardInboxMessages(existing, next dashboardInboxMessage, hasExisting bool) dashboardInboxMessage {
+	if !hasExisting {
+		return next
+	}
+	merged := existing
+	merged.MessageID = firstNonEmpty(next.MessageID, existing.MessageID)
+	merged.InstanceID = firstNonEmpty(existing.InstanceID, next.InstanceID)
+	merged.SessionID = firstNonEmpty(existing.SessionID, next.SessionID)
+	merged.SourceSessionID = firstNonEmpty(existing.SourceSessionID, next.SourceSessionID)
+	merged.FromAgentID = firstNonEmpty(existing.FromAgentID, next.FromAgentID)
+	merged.ToAgentID = firstNonEmpty(existing.ToAgentID, next.ToAgentID)
+	merged.Subject = firstNonEmpty(existing.Subject, next.Subject)
+	merged.TaskID = firstNonEmpty(existing.TaskID, next.TaskID)
+	merged.Channel = firstNonEmpty(existing.Channel, next.Channel)
+	merged.UserID = firstNonEmpty(existing.UserID, next.UserID)
+	merged.Message = firstNonEmpty(existing.Message, next.Message)
+	merged.Role = firstNonEmpty(existing.Role, next.Role)
+	if next.TS.After(existing.TS) {
+		merged.Status = firstNonEmpty(next.Status, existing.Status)
+		merged.RelatedRunID = firstNonEmpty(next.RelatedRunID, existing.RelatedRunID)
+		merged.Note = firstNonEmpty(next.Note, existing.Note)
+		merged.Error = firstNonEmpty(next.Error, existing.Error)
+		merged.TS = next.TS
+	} else {
+		merged.Status = firstNonEmpty(existing.Status, next.Status)
+		merged.RelatedRunID = firstNonEmpty(existing.RelatedRunID, next.RelatedRunID)
+		merged.Note = firstNonEmpty(existing.Note, next.Note)
+		merged.Error = firstNonEmpty(existing.Error, next.Error)
+	}
+	return merged
+}
+
+func mergeDashboardInboxMessageLifecycle(sessionID string, items []chatstore.Message, fallbackAgentID string) (dashboardInboxMessage, tools.AgentMessageEnvelope) {
+	var merged dashboardInboxMessage
+	var envelope tools.AgentMessageEnvelope
+	hasMessage := false
+	for _, item := range items {
+		decoded := tools.DecodeAgentMessageEnvelope(item)
+		message := dashboardInboxMessageFromStoreMessage(sessionID, item, decoded, fallbackAgentID)
+		merged = mergeDashboardInboxMessages(merged, message, hasMessage)
+		if !hasMessage {
+			envelope = decoded
+			hasMessage = true
+			continue
+		}
+		envelope.MessageID = firstNonEmpty(envelope.MessageID, decoded.MessageID)
+		envelope.InstanceID = firstNonEmpty(envelope.InstanceID, decoded.InstanceID)
+		envelope.FromAgentID = firstNonEmpty(envelope.FromAgentID, decoded.FromAgentID)
+		envelope.ToAgentID = firstNonEmpty(envelope.ToAgentID, decoded.ToAgentID)
+		envelope.Subject = firstNonEmpty(envelope.Subject, decoded.Subject)
+		envelope.TaskID = firstNonEmpty(envelope.TaskID, decoded.TaskID)
+		envelope.SessionID = firstNonEmpty(envelope.SessionID, decoded.SessionID)
+		envelope.SourceSessionID = firstNonEmpty(envelope.SourceSessionID, decoded.SourceSessionID)
+		envelope.Channel = firstNonEmpty(envelope.Channel, decoded.Channel)
+		envelope.UserID = firstNonEmpty(envelope.UserID, decoded.UserID)
+		envelope.Message = firstNonEmpty(envelope.Message, decoded.Message)
+		if message.TS.Equal(merged.TS) {
+			envelope.Status = firstNonEmpty(decoded.Status, envelope.Status)
+			envelope.RelatedRunID = firstNonEmpty(decoded.RelatedRunID, envelope.RelatedRunID)
+			envelope.Note = firstNonEmpty(decoded.Note, envelope.Note)
+			envelope.Error = firstNonEmpty(decoded.Error, envelope.Error)
+		}
+	}
+	envelope.Status = firstNonEmpty(merged.Status, envelope.Status)
+	envelope.RelatedRunID = firstNonEmpty(merged.RelatedRunID, envelope.RelatedRunID)
+	envelope.Note = firstNonEmpty(merged.Note, envelope.Note)
+	envelope.Error = firstNonEmpty(merged.Error, envelope.Error)
+	return merged, envelope
+}
+
+func findInboxMessageLifecycle(store *chatstore.Store, agentID, messageID string) (chatstore.Session, []chatstore.Message, error) {
+	sessions, err := store.ListSessions(agentID, "", "", "agent-mail")
+	if err != nil {
+		return chatstore.Session{}, nil, err
+	}
+	for _, session := range sessions {
+		recent, err := store.ReadRecentMessages(session.SessionID, chatstore.DefaultMaxHistoryCount)
+		if err != nil {
+			return chatstore.Session{}, nil, err
+		}
+		matches := make([]chatstore.Message, 0, len(recent))
+		for _, item := range recent {
+			if strings.TrimSpace(item.MessageID) == messageID || strings.TrimSpace(tools.DecodeAgentMessageEnvelope(item).MessageID) == messageID {
+				matches = append(matches, item)
+			}
+		}
+		if len(matches) > 0 {
+			return session, matches, nil
+		}
+	}
+	return chatstore.Session{}, nil, chatstore.ErrMessageNotFound
 }
 
 func stringSliceToAny(values []string) []any {

@@ -387,6 +387,7 @@ func TestInstanceInboxListAckAndRunFlow(t *testing.T) {
 		Messages []struct {
 			MessageID string `json:"message_id"`
 			Status    string `json:"status"`
+			Message   string `json:"message"`
 		} `json:"messages"`
 	}
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listPayload); err != nil {
@@ -394,6 +395,9 @@ func TestInstanceInboxListAckAndRunFlow(t *testing.T) {
 	}
 	if len(listPayload.Messages) != 1 || listPayload.Messages[0].MessageID != "msg-1" || listPayload.Messages[0].Status != "queued" {
 		t.Fatalf("unexpected inbox list payload: %+v", listPayload.Messages)
+	}
+	if listPayload.Messages[0].Message != "hello" {
+		t.Fatalf("expected original message in list payload, got %+v", listPayload.Messages[0])
 	}
 
 	ackReq := httptest.NewRequest(http.MethodPost, "/api/admin/instances/alpha/agents/receiver/inbox/msg-1/ack", bytes.NewBufferString(`{}`))
@@ -404,8 +408,9 @@ func TestInstanceInboxListAckAndRunFlow(t *testing.T) {
 	}
 	var ackPayload struct {
 		Message struct {
-			Status string `json:"status"`
-			Note   string `json:"note"`
+			Status  string `json:"status"`
+			Note    string `json:"note"`
+			Message string `json:"message"`
 		} `json:"message"`
 	}
 	if err := json.Unmarshal(ackRR.Body.Bytes(), &ackPayload); err != nil {
@@ -416,6 +421,9 @@ func TestInstanceInboxListAckAndRunFlow(t *testing.T) {
 	}
 	if ackPayload.Message.Note == "" {
 		t.Fatalf("expected ack note, got %+v", ackPayload.Message)
+	}
+	if ackPayload.Message.Message != "hello" {
+		t.Fatalf("expected original message after ack, got %+v", ackPayload.Message)
 	}
 	if _, err := h.loadInstanceInboxMessage(store, "alpha", "receiver", "msg-1"); err != nil {
 		t.Fatalf("load inbox message after ack: %v", err)
@@ -433,6 +441,7 @@ func TestInstanceInboxListAckAndRunFlow(t *testing.T) {
 		Message struct {
 			Status       string `json:"status"`
 			RelatedRunID string `json:"related_run_id"`
+			Message      string `json:"message"`
 		} `json:"message"`
 	}
 	if err := json.Unmarshal(runRR.Body.Bytes(), &runPayload); err != nil {
@@ -443,6 +452,32 @@ func TestInstanceInboxListAckAndRunFlow(t *testing.T) {
 	}
 	if runPayload.Message.Status != "completed" || runPayload.Message.RelatedRunID != "run-inbox-1" {
 		t.Fatalf("expected completed lifecycle message, got %+v", runPayload.Message)
+	}
+	if runPayload.Message.Message != "hello" {
+		t.Fatalf("expected original message after run, got %+v", runPayload.Message)
+	}
+
+	detailReq := httptest.NewRequest(http.MethodGet, "/api/admin/instances/alpha/agents/receiver/inbox/msg-1", nil)
+	detailRR := httptest.NewRecorder()
+	mux.ServeHTTP(detailRR, detailReq)
+	if detailRR.Code != http.StatusOK {
+		t.Fatalf("expected inbox detail status %d, got %d (%s)", http.StatusOK, detailRR.Code, detailRR.Body.String())
+	}
+	var detailPayload struct {
+		Message struct {
+			Message         string `json:"message"`
+			Status          string `json:"status"`
+			FromAgentID     string `json:"from_agent_id"`
+			TaskID          string `json:"task_id"`
+			RelatedRunID    string `json:"related_run_id"`
+			SourceSessionID string `json:"source_session_id"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(detailRR.Body.Bytes(), &detailPayload); err != nil {
+		t.Fatalf("decode detail payload: %v", err)
+	}
+	if detailPayload.Message.Message != "hello" || detailPayload.Message.Status != "completed" || detailPayload.Message.FromAgentID != "sender" || detailPayload.Message.TaskID != "task-1" || detailPayload.Message.RelatedRunID != "run-inbox-1" {
+		t.Fatalf("unexpected inbox detail payload: %+v", detailPayload.Message)
 	}
 }
 

@@ -34,6 +34,7 @@ Date: 2026-03-16
 - Dashboard Sessions now preserves lifecycle-rich message metadata and renders operator-facing lifecycle cards for status transitions and related run/task context.
 - Dashboard Agent Contract and Prompt Stack pages now load canonical instance-scoped routes using the selected instance, while legacy flat agent routes remain active-instance compatibility wrappers.
 - Shared control-plane compatibility feature loading now lives in `internal/instances`, and `openclawssy eval` operational subcommands are blocked when eval is disabled.
+- Dashboard inbox list/detail APIs now preserve the original message envelope across ack/run lifecycle updates by merging rows per `message_id` instead of returning sparse latest-row snapshots.
 
 ## Validation completed
 
@@ -56,6 +57,8 @@ Date: 2026-03-16
 - `go test ./internal/channels/dashboard -run 'TestEvalResultsEndpoint|TestControlPlaneFeaturesAndWizardEndpoints|TestInstanceFeatureFlagEnforcement' -count=1`
 - `go test ./internal/channels/dashboard ./internal/instances ./cmd/openclawssy`
 - `go test ./internal/channels/dashboard -run 'TestInstanceScopedPromptStackRoutesIsolateSameAgentID|TestInstanceScopedContractResolvedAndDiffEndpointsUseRequestedInstance|TestChatSessionMessagesEndpointIncludesLifecycleMetadata' -count=1`
+- `go test ./internal/channels/dashboard -run 'TestInstanceInboxListAckAndRunFlow' -count=1`
+- `go test ./internal/channels/dashboard ./internal/tools ./internal/runtime`
 - `cd internal/channels/dashboard/ui && npm run typecheck`
 - `cd internal/channels/dashboard/ui && npm run build`
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/runs.spec.ts`

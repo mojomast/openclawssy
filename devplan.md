@@ -199,6 +199,7 @@ Completed or substantially landed:
 - dashboard Sessions now preserves lifecycle-rich inbox metadata and renders operator-facing lifecycle cards for message status transitions
 - Agent Contract and Prompt Stack dashboard flows now resolve against explicit selected `instance_id` routes, while legacy flat agent routes remain active-instance compatibility wrappers
 - control-plane compatibility feature loading now lives in `internal/instances`, and `openclawssy eval` operational CLI commands are runtime-gated when eval is disabled
+- dashboard inbox list/detail handlers now merge lifecycle rows by `message_id`, preserving original message/task/source fields while surfacing the latest status and related run linkage
 
 Still open:
 
@@ -283,6 +284,7 @@ Progress update:
 - API-side feature-flag enforcement now covers wizard, instance-control, instance-agent, and eval routes, and the dashboard UI now hides/disables eval when that feature is off, but broader UI/runtime read-only and visibility enforcement remains open
 - dashboard Sessions now consumes lifecycle metadata from session messages and surfaces the queue/running/completed/failed flow as dedicated lifecycle cards for operators
 - dashboard Agent Contract and Prompt Stack flows now consume canonical instance-scoped routes instead of silently binding to the active instance, while preserving legacy flat-route compatibility wrappers
+- dashboard inbox list/detail APIs now match the shared tool inbox semantics by projecting merged lifecycle state per `message_id` instead of sparse latest-row snapshots
 
 ## Milestone 6: Wizard
 
