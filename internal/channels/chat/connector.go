@@ -17,6 +17,7 @@ var (
 )
 
 type Message struct {
+	InstanceID   string
 	UserID       string
 	RoomID       string
 	AgentID      string
@@ -27,18 +28,22 @@ type Message struct {
 }
 
 type Result struct {
-	ID        string
-	Status    string
-	Response  string
-	SessionID string
+	InstanceID string
+	AgentID    string
+	ID         string
+	Status     string
+	Response   string
+	SessionID  string
 }
 
 type QueuedRun struct {
-	ID     string
-	Status string
+	InstanceID string
+	AgentID    string
+	ID         string
+	Status     string
 }
 
-type QueueFunc func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error)
+type QueueFunc func(ctx context.Context, instanceID, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error)
 
 type Connector struct {
 	Allowlist      *Allowlist
@@ -110,7 +115,7 @@ func (c *Connector) HandleMessage(ctx context.Context, msg Message) (Result, err
 			return Result{}, err
 		}
 		if len(agents) == 0 {
-			return Result{Response: "No agents found"}, nil
+			return Result{InstanceID: strings.TrimSpace(msg.InstanceID), AgentID: agentID, Response: "No agents found"}, nil
 		}
 		lines := make([]string, 0, len(agents)+1)
 		lines = append(lines, "Available agents:")
@@ -121,19 +126,19 @@ func (c *Connector) HandleMessage(ctx context.Context, msg Message) (Result, err
 			}
 			lines = append(lines, "- "+candidate)
 		}
-		return Result{Response: strings.Join(lines, "\n")}, nil
+		return Result{InstanceID: strings.TrimSpace(msg.InstanceID), AgentID: agentID, Response: strings.Join(lines, "\n")}, nil
 	}
 	if text == "/agent" {
-		return Result{Response: "Active agent: " + agentID}, nil
+		return Result{InstanceID: strings.TrimSpace(msg.InstanceID), AgentID: agentID, Response: "Active agent: " + agentID}, nil
 	}
 	if strings.HasPrefix(text, "/agent ") {
 		parts := strings.Fields(text)
 		if len(parts) != 2 {
-			return Result{Response: "Usage: /agent <agent_id>"}, nil
+			return Result{InstanceID: strings.TrimSpace(msg.InstanceID), AgentID: agentID, Response: "Usage: /agent <agent_id>"}, nil
 		}
 		nextAgent := strings.TrimSpace(parts[1])
 		if nextAgent == "" || strings.Contains(nextAgent, "..") || strings.ContainsRune(nextAgent, '/') || strings.ContainsRune(nextAgent, '\\') {
-			return Result{Response: "Invalid agent id"}, nil
+			return Result{InstanceID: strings.TrimSpace(msg.InstanceID), AgentID: agentID, Response: "Invalid agent id"}, nil
 		}
 		agents, err := c.Store.ListAgents()
 		if err != nil {
@@ -147,12 +152,12 @@ func (c *Connector) HandleMessage(ctx context.Context, msg Message) (Result, err
 			}
 		}
 		if !found {
-			return Result{Response: "Agent not found: " + nextAgent + " (create it first or run /agents)"}, nil
+			return Result{InstanceID: strings.TrimSpace(msg.InstanceID), AgentID: agentID, Response: "Agent not found: " + nextAgent + " (create it first or run /agents)"}, nil
 		}
 		if err := c.Store.SetActiveAgentPointer(source, msg.UserID, roomID, nextAgent); err != nil {
 			return Result{}, err
 		}
-		return Result{Response: "Switched active agent to: " + nextAgent}, nil
+		return Result{InstanceID: strings.TrimSpace(msg.InstanceID), AgentID: nextAgent, Response: "Switched active agent to: " + nextAgent}, nil
 	}
 
 	if text == "/new" {
@@ -160,7 +165,7 @@ func (c *Connector) HandleMessage(ctx context.Context, msg Message) (Result, err
 		if err != nil {
 			return Result{}, err
 		}
-		return Result{Response: "Started new chat: " + session.SessionID, SessionID: session.SessionID}, nil
+		return Result{InstanceID: strings.TrimSpace(msg.InstanceID), AgentID: agentID, Response: "Started new chat: " + session.SessionID, SessionID: session.SessionID}, nil
 	}
 	if strings.HasPrefix(text, "/resume") {
 		parts := strings.Fields(text)
@@ -170,20 +175,20 @@ func (c *Connector) HandleMessage(ctx context.Context, msg Message) (Result, err
 		session, err := c.Store.GetSession(parts[1])
 		if err != nil {
 			if errors.Is(err, chatstore.ErrSessionNotFound) {
-				return Result{Response: "Session not found: " + parts[1]}, nil
+				return Result{InstanceID: strings.TrimSpace(msg.InstanceID), AgentID: agentID, Response: "Session not found: " + parts[1]}, nil
 			}
 			return Result{}, err
 		}
 		if session.AgentID != agentID || session.Channel != source || session.UserID != msg.UserID || session.RoomID != roomID {
-			return Result{Response: "Session not available in this chat context"}, nil
+			return Result{InstanceID: strings.TrimSpace(msg.InstanceID), AgentID: agentID, Response: "Session not available in this chat context"}, nil
 		}
 		if session.IsClosed() {
-			return Result{Response: "Session is closed: " + parts[1] + " (use /new to continue)"}, nil
+			return Result{InstanceID: strings.TrimSpace(msg.InstanceID), AgentID: agentID, Response: "Session is closed: " + parts[1] + " (use /new to continue)"}, nil
 		}
 		if err := c.Store.SetActiveSessionPointer(agentID, source, msg.UserID, roomID, parts[1]); err != nil {
 			return Result{}, err
 		}
-		return Result{Response: "Resumed chat: " + parts[1], SessionID: parts[1]}, nil
+		return Result{InstanceID: strings.TrimSpace(msg.InstanceID), AgentID: agentID, Response: "Resumed chat: " + parts[1], SessionID: parts[1]}, nil
 	}
 	if text == "/chats" || text == "/sessions" {
 		sessions, err := c.Store.ListSessions(agentID, msg.UserID, roomID, source)
@@ -191,7 +196,7 @@ func (c *Connector) HandleMessage(ctx context.Context, msg Message) (Result, err
 			return Result{}, err
 		}
 		if len(sessions) == 0 {
-			return Result{Response: "No chats found"}, nil
+			return Result{InstanceID: strings.TrimSpace(msg.InstanceID), AgentID: agentID, Response: "No chats found"}, nil
 		}
 		if len(sessions) > 10 {
 			sessions = sessions[:10]
@@ -205,7 +210,7 @@ func (c *Connector) HandleMessage(ctx context.Context, msg Message) (Result, err
 			}
 			lines = append(lines, line)
 		}
-		return Result{Response: strings.Join(lines, "\n")}, nil
+		return Result{InstanceID: strings.TrimSpace(msg.InstanceID), AgentID: agentID, Response: strings.Join(lines, "\n")}, nil
 	}
 
 	session, err := c.resolveOrCreateActiveSession(agentID, source, msg.UserID, roomID)
@@ -217,17 +222,28 @@ func (c *Connector) HandleMessage(ctx context.Context, msg Message) (Result, err
 		return Result{}, err
 	}
 
-	queued, err := c.Queue(ctx, agentID, msg.Text, parts, source, session.SessionID, msg.ThinkingMode)
+	queued, err := c.Queue(ctx, strings.TrimSpace(msg.InstanceID), agentID, msg.Text, parts, source, session.SessionID, msg.ThinkingMode)
 	if err != nil {
 		return Result{}, err
 	}
 
 	return Result{
-		ID:        queued.ID,
-		Status:    queued.Status,
-		SessionID: session.SessionID,
-		Response:  queuedStatusMessage(queued.ID, queued.Status),
+		InstanceID: firstNonEmptyResult(strings.TrimSpace(queued.InstanceID), strings.TrimSpace(msg.InstanceID)),
+		AgentID:    firstNonEmptyResult(strings.TrimSpace(queued.AgentID), agentID),
+		ID:         queued.ID,
+		Status:     queued.Status,
+		SessionID:  session.SessionID,
+		Response:   queuedStatusMessage(queued.ID, queued.Status),
 	}, nil
+}
+
+func firstNonEmptyResult(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func queuedStatusMessage(runID, status string) string {

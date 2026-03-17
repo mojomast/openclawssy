@@ -556,3 +556,46 @@ func TestGetActiveSessionPointerWaitsForPointerLock(t *testing.T) {
 		t.Fatal("timed out waiting for pointer lock release")
 	}
 }
+
+func TestFindLatestMessageReturnsNewestMatchingMessage(t *testing.T) {
+	agentsRoot := filepath.Join(t.TempDir(), ".openclawssy", "agents")
+	store, err := NewStore(agentsRoot)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+
+	session, err := store.CreateSession(CreateSessionInput{AgentID: "receiver", Channel: "agent-mail", UserID: "sender", RoomID: "task-1"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := store.AppendMessage(session.SessionID, Message{Role: "user", Content: "hello", MessageID: "msg-1", Status: "queued"}); err != nil {
+		t.Fatalf("append queued message: %v", err)
+	}
+	if err := store.AppendMessage(session.SessionID, Message{Role: "system", Content: "done", MessageID: "msg-1", Status: "completed", RelatedRunID: "run-1"}); err != nil {
+		t.Fatalf("append completed message: %v", err)
+	}
+
+	foundSession, foundMessage, err := store.FindLatestMessage("receiver", "msg-1")
+	if err != nil {
+		t.Fatalf("find latest message: %v", err)
+	}
+	if foundSession.SessionID != session.SessionID {
+		t.Fatalf("expected session %q, got %q", session.SessionID, foundSession.SessionID)
+	}
+	if foundMessage.Status != "completed" || foundMessage.RelatedRunID != "run-1" {
+		t.Fatalf("expected latest completed message, got %+v", foundMessage)
+	}
+}
+
+func TestFindLatestMessageReturnsNotFound(t *testing.T) {
+	agentsRoot := filepath.Join(t.TempDir(), ".openclawssy", "agents")
+	store, err := NewStore(agentsRoot)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+
+	_, _, err = store.FindLatestMessage("receiver", "missing")
+	if !errors.Is(err, ErrMessageNotFound) {
+		t.Fatalf("expected ErrMessageNotFound, got %v", err)
+	}
+}

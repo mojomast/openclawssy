@@ -1,10 +1,16 @@
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useControlPlaneFeatures } from "@/hooks/useControlPlaneFeatures"
 import { EvalHistoryTable } from "./eval/EvalHistoryTable"
 import { useEvalRuns } from "./eval/useEvalRuns"
 
 export function EvalPage() {
-  const { runs, loading, error, expandedRun, expandedRunID, loadResults, toggleRun } = useEvalRuns()
+  const { features, loading: featuresLoading } = useControlPlaneFeatures()
+  const { runs, loading, error, expandedRun, expandedRunID, featureDisabled, featureMessage, loadResults, toggleRun } =
+    useEvalRuns(features.eval)
+
+  const disabled = !featuresLoading && featureDisabled
+  const disabledMessage = featureMessage || "Eval is disabled for this control plane."
 
   return (
     <div className="space-y-4 p-6" data-testid="eval-page">
@@ -19,15 +25,22 @@ export function EvalPage() {
         <CardHeader>
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="text-base">Suite run history</CardTitle>
-            <Button type="button" variant="outline" size="sm" onClick={() => void loadResults()} disabled={loading}>
+            <Button type="button" variant="outline" size="sm" onClick={() => void loadResults()} disabled={loading || disabled}>
               Refresh
             </Button>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {disabled ? (
+            <div className="rounded-md border border-border bg-muted/30 p-4" data-testid="eval-disabled-state">
+              <p className="text-sm font-medium">Eval disabled</p>
+              <p className="mt-1 text-sm text-muted-foreground">{disabledMessage}</p>
+            </div>
+          ) : null}
+
           {loading ? <p className="text-sm text-muted-foreground">Loading eval results...</p> : null}
 
-          {!loading && error ? (
+          {!disabled && !loading && error ? (
             <div className="rounded-md border border-destructive/50 bg-destructive/5 p-3">
               <p className="text-sm text-destructive">{error}</p>
               <Button type="button" size="sm" variant="outline" className="mt-2" onClick={() => void loadResults()}>
@@ -36,11 +49,11 @@ export function EvalPage() {
             </div>
           ) : null}
 
-          {!loading && !error && runs.length === 0 ? (
+          {!disabled && !loading && !error && runs.length === 0 ? (
             <p className="text-sm text-muted-foreground">No eval results found.</p>
           ) : null}
 
-          {!loading && !error && runs.length > 0 ? (
+          {!disabled && !loading && !error && runs.length > 0 ? (
             <EvalHistoryTable runs={runs} expandedRunID={expandedRunID} onToggleRun={toggleRun} />
           ) : null}
         </CardContent>

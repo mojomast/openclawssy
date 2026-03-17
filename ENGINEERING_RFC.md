@@ -28,6 +28,9 @@ Substantial portions of Milestones 1-5 are now landed on the current branch, inc
 - dashboard eval, Runs, and Delegation consumers adopting additive instance/agent/run metadata
 - composite runtime/tool cancellation for `(instance_id, agent_id, run_id)`
 - first dashboard API feature-flag enforcement for wizard and instance-control surfaces
+- dashboard inbox ack/run APIs reusing the shared `message_id` lifecycle model
+- dashboard chat threading now carries `instance_id` and `agent_id` through send, poll, stream, and cancel paths
+- eval feature flags now gate both dashboard API responses and dashboard UI visibility/disabled states
 
 Remaining work is concentrated in wizard parity, deeper feature-flag enforcement, broader composite-identity rollout, and finishing first-class messaging/eval consumer convergence.
 

@@ -2103,6 +2103,13 @@ type subAgentRunner struct {
 	engine *Engine
 }
 
+func NewSubAgentRunner(engine *Engine) tools.AgentRunner {
+	if engine == nil {
+		return nil
+	}
+	return &subAgentRunner{engine: engine}
+}
+
 func (s *subAgentRunner) ExecuteSubAgent(ctx context.Context, input tools.AgentRunInput) (tools.AgentRunOutput, error) {
 	if s == nil || s.engine == nil {
 		return tools.AgentRunOutput{}, errors.New("runtime: engine is not configured")

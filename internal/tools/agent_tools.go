@@ -61,6 +61,16 @@ const (
 	agentMessageStatusFailed       = "failed"
 )
 
+const (
+	AgentMessageStatusQueued       = agentMessageStatusQueued
+	AgentMessageStatusAcknowledged = agentMessageStatusAcknowledged
+	AgentMessageStatusRunning      = agentMessageStatusRunning
+	AgentMessageStatusCompleted    = agentMessageStatusCompleted
+	AgentMessageStatusFailed       = agentMessageStatusFailed
+)
+
+type AgentMessageEnvelope = agentMessageEnvelope
+
 type agentMessageEnvelope struct {
 	MessageID       string `json:"message_id,omitempty"`
 	Status          string `json:"status,omitempty"`
@@ -865,6 +875,10 @@ func decodeAgentMessageEnvelope(item chatstore.Message) agentMessageEnvelope {
 	return envelope
 }
 
+func DecodeAgentMessageEnvelope(item chatstore.Message) AgentMessageEnvelope {
+	return decodeAgentMessageEnvelope(item)
+}
+
 func firstNonEmptyTrimmed(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
@@ -1031,6 +1045,10 @@ func appendAgentMessageStatus(store *chatstore.Store, sessionID string, envelope
 	})
 }
 
+func AppendAgentMessageStatus(store *chatstore.Store, sessionID string, envelope AgentMessageEnvelope) error {
+	return appendAgentMessageStatus(store, sessionID, envelope)
+}
+
 func runAgentMessageLifecycle(ctx context.Context, runner AgentRunner, store *chatstore.Store, req Request, envelope agentMessageEnvelope, inboxSessionID string) (AgentRunOutput, error) {
 	if runner == nil {
 		return AgentRunOutput{}, errors.New("agent runner is not configured")
@@ -1091,6 +1109,10 @@ func runAgentMessageLifecycle(ctx context.Context, runner AgentRunner, store *ch
 		SentAt:          envelope.SentAt,
 	})
 	return out, err
+}
+
+func RunAgentMessageLifecycle(ctx context.Context, runner AgentRunner, store *chatstore.Store, req Request, envelope AgentMessageEnvelope, inboxSessionID string) (AgentRunOutput, error) {
+	return runAgentMessageLifecycle(ctx, runner, store, req, envelope, inboxSessionID)
 }
 
 func stringSliceArg(args map[string]any, key string) []string {

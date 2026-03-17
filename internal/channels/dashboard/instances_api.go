@@ -3,20 +3,25 @@ package dashboard
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
+	"openclawssy/internal/chatstore"
 	"openclawssy/internal/config"
 	"openclawssy/internal/instances"
+	"openclawssy/internal/tools"
 )
 
 type controlPlaneFeaturesPatch struct {
 	InstanceControl *bool `json:"instance_control"`
 	InstanceAgents  *bool `json:"instance_agents"`
 	Wizard          *bool `json:"wizard"`
+	Eval            *bool `json:"eval"`
 }
 
 type createInstanceRequest struct {
@@ -44,6 +49,26 @@ type cloneInstanceRequest struct {
 type upsertInstanceAgentRequest struct {
 	AgentID string              `json:"agent_id"`
 	Profile config.AgentProfile `json:"profile"`
+}
+
+type dashboardInboxMessage struct {
+	MessageID       string    `json:"message_id"`
+	Status          string    `json:"status"`
+	InstanceID      string    `json:"instance_id,omitempty"`
+	SessionID       string    `json:"session_id,omitempty"`
+	SourceSessionID string    `json:"source_session_id,omitempty"`
+	FromAgentID     string    `json:"from_agent_id,omitempty"`
+	ToAgentID       string    `json:"to_agent_id,omitempty"`
+	Subject         string    `json:"subject,omitempty"`
+	TaskID          string    `json:"task_id,omitempty"`
+	Channel         string    `json:"channel,omitempty"`
+	UserID          string    `json:"user_id,omitempty"`
+	Message         string    `json:"message,omitempty"`
+	RelatedRunID    string    `json:"related_run_id,omitempty"`
+	Note            string    `json:"note,omitempty"`
+	Error           string    `json:"error,omitempty"`
+	Role            string    `json:"role,omitempty"`
+	TS              time.Time `json:"ts"`
 }
 
 func (h *Handler) requireControlPlaneFeature(w http.ResponseWriter, code string, enabled bool, disabledCode, disabledMessage string) bool {
@@ -81,6 +106,15 @@ func (h *Handler) requireInstanceAgentsFeature(w http.ResponseWriter) bool {
 	return h.requireControlPlaneFeature(w, "instance_agents", store.Features.InstanceAgents, "feature.instance_agents_disabled", "instance agent routes are disabled")
 }
 
+func (h *Handler) requireEvalFeature(w http.ResponseWriter) bool {
+	store, err := h.loadControlPlaneStore()
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "control_plane.load_failed", err.Error(), nil)
+		return false
+	}
+	return h.requireControlPlaneFeature(w, "eval", store.Features.Eval, "feature.eval_disabled", "eval routes are disabled")
+}
+
 func (h *Handler) handleControlPlaneFeatures(w http.ResponseWriter, r *http.Request) {
 	store, err := h.loadControlPlaneStore()
 	if err != nil {
@@ -106,6 +140,9 @@ func (h *Handler) handleControlPlaneFeatures(w http.ResponseWriter, r *http.Requ
 		if req.Wizard != nil {
 			store.Features.Wizard = *req.Wizard
 		}
+		if req.Eval != nil {
+			store.Features.Eval = *req.Eval
+		}
 		if err := h.saveControlPlaneStore(store); err != nil {
 			writeDashboardError(w, http.StatusInternalServerError, "control_plane.save_failed", err.Error(), nil)
 			return
@@ -114,6 +151,62 @@ func (h *Handler) handleControlPlaneFeatures(w http.ResponseWriter, r *http.Requ
 	default:
 		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 	}
+}
+
+func (h *Handler) handleInstanceInbox(w http.ResponseWriter, r *http.Request) {
+	if !h.requireInstanceAgentsFeature(w) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
+		return
+	}
+	instanceID := strings.TrimSpace(r.URL.Query().Get("instance_id"))
+	if instanceID == "" {
+		active, err := instances.LoadActiveInstanceID(h.rootDir)
+		if err != nil {
+			writeDashboardError(w, http.StatusInternalServerError, "instances.load_failed", err.Error(), nil)
+			return
+		}
+		instanceID = active
+	}
+	instanceID, err := normalizeInstanceID(instanceID)
+	if err != nil {
+		h.writeInstanceError(w, err)
+		return
+	}
+	limit, offset, err := parseLimitOffset(r.URL.Query(), 20, 200)
+	if err != nil {
+		writeDashboardError(w, http.StatusBadRequest, "instances.invalid_pagination", err.Error(), nil)
+		return
+	}
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+	if agentID != "" {
+		agentID, err = normalizeDashboardAgentID(agentID)
+		if err != nil {
+			writeDashboardError(w, http.StatusBadRequest, "instances.invalid_agent_id", "invalid agent id", nil)
+			return
+		}
+	}
+	store, err := chatstore.NewStore(filepath.Join(h.rootDir, ".openclawssy", "agents"))
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "instances.inbox_unavailable", "failed to open inbox store", nil)
+		return
+	}
+	messages, total, err := h.listInstanceInboxMessages(store, instanceID, agentID, limit, offset)
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "instances.inbox_failed", err.Error(), nil)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"instance_id": instanceID,
+		"agent_id":    agentID,
+		"messages":    messages,
+		"count":       len(messages),
+		"total":       total,
+		"limit":       limit,
+		"offset":      offset,
+	})
 }
 
 func (h *Handler) handleInstances(w http.ResponseWriter, r *http.Request) {
@@ -351,6 +444,14 @@ func (h *Handler) handleInstanceByID(w http.ResponseWriter, r *http.Request) {
 		if !h.requireInstanceAgentsFeature(w) {
 			return
 		}
+		if len(segments) >= 2 && segments[1] == "inbox" {
+			h.handleInstanceInboxList(w, r, instanceID)
+			return
+		}
+		if len(segments) >= 3 && segments[2] == "inbox" {
+			h.handleInstanceAgentInbox(w, r, instanceID, segments[1:])
+			return
+		}
 		if len(segments) >= 3 && segments[2] == "prompt-stack" {
 			agentID, err := normalizeDashboardAgentID(segments[1])
 			if err != nil {
@@ -364,6 +465,359 @@ func (h *Handler) handleInstanceByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (h *Handler) handleInstanceAgentInbox(w http.ResponseWriter, r *http.Request, instanceID string, segments []string) {
+	if len(segments) < 3 || segments[1] != "inbox" {
+		http.NotFound(w, r)
+		return
+	}
+	agentID, err := normalizeDashboardAgentID(segments[0])
+	if err != nil {
+		writeDashboardError(w, http.StatusBadRequest, "instances.invalid_agent_id", "invalid agent id", nil)
+		return
+	}
+	messageID := strings.TrimSpace(segments[2])
+	if messageID == "" || strings.Contains(messageID, "/") {
+		writeDashboardError(w, http.StatusBadRequest, "instances.invalid_message_id", "invalid message id", nil)
+		return
+	}
+	if len(segments) == 3 {
+		if r.Method != http.MethodGet {
+			writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
+			return
+		}
+		h.handleInstanceInboxMessage(w, instanceID, agentID, messageID)
+		return
+	}
+	if len(segments) != 4 || r.Method != http.MethodPost {
+		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
+		return
+	}
+	switch segments[3] {
+	case "ack":
+		h.ackInstanceInboxMessage(w, r, instanceID, agentID, messageID)
+	case "run":
+		h.runInstanceInboxMessage(w, r, instanceID, agentID, messageID)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (h *Handler) handleInstanceInboxList(w http.ResponseWriter, r *http.Request, instanceID string) {
+	limit, offset, err := parseLimitOffset(r.URL.Query(), 20, 200)
+	if err != nil {
+		writeDashboardError(w, http.StatusBadRequest, "instances.invalid_pagination", err.Error(), nil)
+		return
+	}
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+	if agentID != "" {
+		agentID, err = normalizeDashboardAgentID(agentID)
+		if err != nil {
+			writeDashboardError(w, http.StatusBadRequest, "instances.invalid_agent_id", "invalid agent id", nil)
+			return
+		}
+	}
+	store, err := chatstore.NewStore(filepath.Join(h.rootDir, ".openclawssy", "agents"))
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "instances.inbox_unavailable", "failed to open inbox store", nil)
+		return
+	}
+	messages, total, err := h.listInstanceInboxMessages(store, instanceID, agentID, limit, offset)
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "instances.inbox_failed", err.Error(), nil)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"instance_id": instanceID,
+		"agent_id":    agentID,
+		"messages":    messages,
+		"count":       len(messages),
+		"total":       total,
+		"limit":       limit,
+		"offset":      offset,
+	})
+}
+
+func (h *Handler) handleInstanceInboxMessage(w http.ResponseWriter, instanceID, agentID, messageID string) {
+	store, err := chatstore.NewStore(filepath.Join(h.rootDir, ".openclawssy", "agents"))
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "instances.inbox_unavailable", "failed to open inbox store", nil)
+		return
+	}
+	message, err := h.loadInstanceInboxMessage(store, instanceID, agentID, messageID)
+	if err != nil {
+		h.writeInboxLookupError(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"instance_id": instanceID, "agent_id": agentID, "message": message})
+}
+
+func (h *Handler) ackInstanceInboxMessage(w http.ResponseWriter, r *http.Request, instanceID, agentID, messageID string) {
+	store, err := chatstore.NewStore(filepath.Join(h.rootDir, ".openclawssy", "agents"))
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "instances.inbox_unavailable", "failed to open inbox store", nil)
+		return
+	}
+	message, session, envelope, err := h.lookupInboxMessageState(store, instanceID, agentID, messageID)
+	if err != nil {
+		h.writeInboxLookupError(w, err)
+		return
+	}
+	note := "message acknowledged from dashboard inbox"
+	if strings.EqualFold(message.Status, tools.AgentMessageStatusAcknowledged) {
+		note = firstNonEmpty(strings.TrimSpace(message.Note), note)
+	}
+	if err := tools.AppendAgentMessageStatus(store, session.SessionID, tools.AgentMessageEnvelope{
+		MessageID:       envelope.MessageID,
+		Status:          tools.AgentMessageStatusAcknowledged,
+		InstanceID:      envelope.InstanceID,
+		FromAgentID:     envelope.FromAgentID,
+		ToAgentID:       envelope.ToAgentID,
+		Subject:         envelope.Subject,
+		TaskID:          envelope.TaskID,
+		SessionID:       envelope.SessionID,
+		SourceSessionID: envelope.SourceSessionID,
+		Channel:         envelope.Channel,
+		UserID:          envelope.UserID,
+		Message:         envelope.Message,
+		RelatedRunID:    message.RelatedRunID,
+		Note:            note,
+		SentAt:          envelope.SentAt,
+	}); err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "instances.inbox_ack_failed", err.Error(), nil)
+		return
+	}
+	updated, err := h.loadInstanceInboxMessage(store, instanceID, agentID, messageID)
+	if err != nil {
+		h.writeInboxLookupError(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "instance_id": instanceID, "agent_id": agentID, "message": updated})
+}
+
+func (h *Handler) runInstanceInboxMessage(w http.ResponseWriter, r *http.Request, instanceID, agentID, messageID string) {
+	if h.agentRunner == nil {
+		writeDashboardError(w, http.StatusNotImplemented, "instances.inbox_run_disabled", "dashboard agent runner is not configured", nil)
+		return
+	}
+	store, err := chatstore.NewStore(filepath.Join(h.rootDir, ".openclawssy", "agents"))
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "instances.inbox_unavailable", "failed to open inbox store", nil)
+		return
+	}
+	message, session, envelope, err := h.lookupInboxMessageState(store, instanceID, agentID, messageID)
+	if err != nil {
+		h.writeInboxLookupError(w, err)
+		return
+	}
+	if strings.TrimSpace(envelope.Message) == "" {
+		writeDashboardError(w, http.StatusBadRequest, "instances.inbox_empty_message", "message has no runnable content", nil)
+		return
+	}
+	var reqBody struct {
+		ParentRunID       string   `json:"parent_run_id"`
+		Source            string   `json:"source"`
+		ThinkingMode      string   `json:"thinking_mode"`
+		AllowedTools      []string `json:"allowed_tools"`
+		MaxToolIterations int      `json:"max_tool_iterations"`
+		TimeoutMS         int      `json:"timeout_ms"`
+	}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil && !errors.Is(err, http.ErrBodyReadAfterClose) && !errors.Is(err, io.EOF) {
+			writeDashboardError(w, http.StatusBadRequest, "instances.invalid_json", "invalid json body", nil)
+			return
+		}
+	}
+	workspaceRoot := filepath.Join(h.rootDir, "workspace")
+	if instance, err := h.loadProjectedInstance(instanceID); err == nil && strings.TrimSpace(instance.Config.Workspace.Root) != "" {
+		workspaceRoot = strings.TrimSpace(instance.Config.Workspace.Root)
+	}
+	toolReq := tools.Request{
+		AgentID:    agentID,
+		InstanceID: instanceID,
+		Workspace:  workspaceRoot,
+		Args: map[string]any{
+			"parent_run_id":       strings.TrimSpace(reqBody.ParentRunID),
+			"source":              firstNonEmpty(strings.TrimSpace(reqBody.Source), "dashboard/inbox"),
+			"thinking_mode":       strings.TrimSpace(reqBody.ThinkingMode),
+			"allowed_tools":       stringSliceToAny(reqBody.AllowedTools),
+			"max_tool_iterations": reqBody.MaxToolIterations,
+			"timeout_ms":          reqBody.TimeoutMS,
+		},
+	}
+	result, runErr := tools.RunAgentMessageLifecycle(r.Context(), h.agentRunner, store, toolReq, tools.AgentMessageEnvelope{
+		MessageID:       envelope.MessageID,
+		Status:          message.Status,
+		InstanceID:      envelope.InstanceID,
+		FromAgentID:     envelope.FromAgentID,
+		ToAgentID:       envelope.ToAgentID,
+		Subject:         envelope.Subject,
+		TaskID:          envelope.TaskID,
+		SessionID:       envelope.SessionID,
+		SourceSessionID: envelope.SourceSessionID,
+		Channel:         envelope.Channel,
+		UserID:          envelope.UserID,
+		Message:         envelope.Message,
+		SentAt:          envelope.SentAt,
+	}, session.SessionID)
+	updated, loadErr := h.loadInstanceInboxMessage(store, instanceID, agentID, messageID)
+	if loadErr != nil {
+		h.writeInboxLookupError(w, loadErr)
+		return
+	}
+	statusCode := http.StatusOK
+	if runErr != nil {
+		statusCode = http.StatusBadGateway
+	}
+	writeJSONStatus(w, statusCode, map[string]any{
+		"ok":          runErr == nil,
+		"instance_id": instanceID,
+		"agent_id":    agentID,
+		"run_id":      result.RunID,
+		"status":      result.Status,
+		"message":     updated,
+		"error":       errorString(runErr),
+	})
+}
+
+func (h *Handler) listInstanceInboxMessages(store *chatstore.Store, instanceID, agentID string, limit, offset int) ([]dashboardInboxMessage, int, error) {
+	agentIDs := []string{}
+	if agentID != "" {
+		agentIDs = append(agentIDs, agentID)
+	} else {
+		agents, err := instances.ListAgents(h.rootDir, instanceID)
+		if err != nil {
+			return nil, 0, err
+		}
+		for _, agent := range agents {
+			agentIDs = append(agentIDs, agent.AgentID)
+		}
+	}
+	sort.Strings(agentIDs)
+	collected := make([]dashboardInboxMessage, 0)
+	for _, candidateAgentID := range agentIDs {
+		sessions, err := store.ListSessions(candidateAgentID, "", "", "agent-mail")
+		if err != nil {
+			return nil, 0, err
+		}
+		messageByID := map[string]dashboardInboxMessage{}
+		for _, session := range sessions {
+			recent, err := store.ReadRecentMessages(session.SessionID, 200)
+			if err != nil {
+				return nil, 0, err
+			}
+			for _, item := range recent {
+				envelope := tools.DecodeAgentMessageEnvelope(item)
+				message := dashboardInboxMessageFromStoreMessage(session.SessionID, item, envelope, candidateAgentID)
+				if strings.TrimSpace(message.InstanceID) != instanceID {
+					continue
+				}
+				if strings.TrimSpace(message.MessageID) == "" {
+					continue
+				}
+				existing, ok := messageByID[message.MessageID]
+				if !ok || message.TS.After(existing.TS) {
+					messageByID[message.MessageID] = message
+				}
+			}
+		}
+		for _, item := range messageByID {
+			collected = append(collected, item)
+		}
+	}
+	sort.Slice(collected, func(i, j int) bool {
+		if collected[i].TS.Equal(collected[j].TS) {
+			if collected[i].ToAgentID == collected[j].ToAgentID {
+				return collected[i].MessageID > collected[j].MessageID
+			}
+			return collected[i].ToAgentID < collected[j].ToAgentID
+		}
+		return collected[i].TS.After(collected[j].TS)
+	})
+	total := len(collected)
+	if offset > total {
+		offset = total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return collected[offset:end], total, nil
+}
+
+func (h *Handler) lookupInboxMessageState(store *chatstore.Store, instanceID, agentID, messageID string) (dashboardInboxMessage, chatstore.Session, tools.AgentMessageEnvelope, error) {
+	session, item, err := store.FindLatestMessage(agentID, messageID)
+	if err != nil {
+		return dashboardInboxMessage{}, chatstore.Session{}, tools.AgentMessageEnvelope{}, err
+	}
+	envelope := tools.DecodeAgentMessageEnvelope(item)
+	message := dashboardInboxMessageFromStoreMessage(session.SessionID, item, envelope, agentID)
+	if strings.TrimSpace(message.InstanceID) != instanceID {
+		return dashboardInboxMessage{}, chatstore.Session{}, tools.AgentMessageEnvelope{}, chatstore.ErrMessageNotFound
+	}
+	return message, session, envelope, nil
+}
+
+func (h *Handler) loadInstanceInboxMessage(store *chatstore.Store, instanceID, agentID, messageID string) (dashboardInboxMessage, error) {
+	message, _, _, err := h.lookupInboxMessageState(store, instanceID, agentID, messageID)
+	return message, err
+}
+
+func (h *Handler) writeInboxLookupError(w http.ResponseWriter, err error) {
+	if errors.Is(err, chatstore.ErrMessageNotFound) {
+		writeDashboardError(w, http.StatusNotFound, "instances.message_not_found", "inbox message not found", nil)
+		return
+	}
+	writeDashboardError(w, http.StatusInternalServerError, "instances.inbox_failed", err.Error(), nil)
+}
+
+func dashboardInboxMessageFromStoreMessage(sessionID string, item chatstore.Message, envelope tools.AgentMessageEnvelope, fallbackAgentID string) dashboardInboxMessage {
+	instanceID := firstNonEmpty(strings.TrimSpace(item.InstanceID), strings.TrimSpace(envelope.InstanceID))
+	return dashboardInboxMessage{
+		MessageID:       firstNonEmpty(strings.TrimSpace(item.MessageID), strings.TrimSpace(envelope.MessageID)),
+		Status:          firstNonEmpty(strings.TrimSpace(item.Status), strings.TrimSpace(envelope.Status), tools.AgentMessageStatusQueued),
+		InstanceID:      instanceID,
+		SessionID:       sessionID,
+		SourceSessionID: firstNonEmpty(strings.TrimSpace(item.SourceSessionID), strings.TrimSpace(envelope.SourceSessionID), strings.TrimSpace(envelope.SessionID)),
+		FromAgentID:     firstNonEmpty(strings.TrimSpace(item.FromAgentID), strings.TrimSpace(envelope.FromAgentID)),
+		ToAgentID:       firstNonEmpty(strings.TrimSpace(item.ToAgentID), strings.TrimSpace(envelope.ToAgentID), fallbackAgentID),
+		Subject:         firstNonEmpty(strings.TrimSpace(item.Subject), strings.TrimSpace(envelope.Subject)),
+		TaskID:          firstNonEmpty(strings.TrimSpace(item.TaskID), strings.TrimSpace(envelope.TaskID)),
+		Channel:         firstNonEmpty(strings.TrimSpace(item.Channel), strings.TrimSpace(envelope.Channel)),
+		UserID:          firstNonEmpty(strings.TrimSpace(item.UserID), strings.TrimSpace(envelope.UserID)),
+		Message:         firstNonEmpty(strings.TrimSpace(envelope.Message)),
+		RelatedRunID:    firstNonEmpty(strings.TrimSpace(item.RelatedRunID), strings.TrimSpace(envelope.RelatedRunID)),
+		Note:            firstNonEmpty(strings.TrimSpace(item.Note), strings.TrimSpace(envelope.Note)),
+		Error:           firstNonEmpty(strings.TrimSpace(item.Error), strings.TrimSpace(envelope.Error)),
+		Role:            strings.TrimSpace(item.Role),
+		TS:              item.TS.UTC(),
+	}
+}
+
+func stringSliceToAny(values []string) []any {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]any, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return strings.TrimSpace(err.Error())
 }
 
 func (h *Handler) getInstance(w http.ResponseWriter, instanceID string) {

@@ -515,6 +515,7 @@ func handleServe(ctx context.Context, engine *runtime.Engine, args []string) int
 			engine.RunTracker(),
 			runTracker,
 		}},
+		AgentRunner:     runtime.NewSubAgentRunner(engine),
 		EffectiveConfig: &runtimeCfg,
 	})
 	server := httpchannel.NewServer(httpchannel.Config{
@@ -956,7 +957,7 @@ func buildSharedChatConnector(cfg config.Config, store httpchannel.RunStore, exe
 		Store:          chatStore,
 		HistoryLimit:   30,
 		GlobalLimiter:  chat.NewRateLimiter(cfg.Chat.GlobalRateLimitPerMin, time.Minute),
-		Queue: func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (chat.QueuedRun, error) {
+		Queue: func(ctx context.Context, instanceID, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (chat.QueuedRun, error) {
 			run, err := httpchannel.QueueRunWithOptions(
 				ctx,
 				store,
@@ -967,12 +968,12 @@ func buildSharedChatConnector(cfg config.Config, store httpchannel.RunStore, exe
 				source,
 				sessionID,
 				thinkingMode,
-				httpchannel.QueueRunOptions{EventBus: eventBus, Tracker: runTracker},
+				httpchannel.QueueRunOptions{InstanceID: instanceID, EventBus: eventBus, Tracker: runTracker},
 			)
 			if err != nil {
 				return chat.QueuedRun{}, err
 			}
-			return chat.QueuedRun{ID: run.ID, Status: run.Status}, nil
+			return chat.QueuedRun{InstanceID: run.InstanceID, AgentID: run.AgentID, ID: run.ID, Status: run.Status}, nil
 		},
 	}, nil
 }
@@ -988,6 +989,7 @@ func buildDashboardChatConnector(cfg config.Config, connector *chat.Connector) h
 	return scopedChatAdapter{
 		connector:      connector,
 		source:         "dashboard",
+		instanceID:     "",
 		defaultAgentID: cfg.Chat.DefaultAgentID,
 		allow:          chat.NewAllowlist(allowUsers, cfg.Chat.AllowRooms),
 		limiter:        chat.NewRateLimiter(cfg.Chat.RateLimitPerMin, time.Minute),
@@ -996,7 +998,7 @@ func buildDashboardChatConnector(cfg config.Config, connector *chat.Connector) h
 
 func buildDiscordMessageHandler(connector *chat.Connector, defaultAgentID string) discord.MessageHandler {
 	return func(ctx context.Context, msg discord.Message) (discord.Response, error) {
-		queued, err := queueChannelMessage(ctx, connector, defaultAgentID, "discord", msg.UserID, msg.RoomID, msg.AgentID, msg.Text, nil, msg.ThinkingMode)
+		queued, err := queueChannelMessage(ctx, connector, "", defaultAgentID, "discord", msg.UserID, msg.RoomID, msg.AgentID, msg.Text, nil, msg.ThinkingMode)
 		if err != nil {
 			return discord.Response{}, err
 		}
@@ -1006,7 +1008,7 @@ func buildDiscordMessageHandler(connector *chat.Connector, defaultAgentID string
 
 func buildTelegramMessageHandler(connector *chat.Connector, defaultAgentID string) telegram.MessageHandler {
 	return func(ctx context.Context, msg telegram.Message) (telegram.Response, error) {
-		queued, err := queueChannelMessage(ctx, connector, defaultAgentID, "telegram", msg.UserID, msg.RoomID, msg.AgentID, msg.Text, msg.ContentParts, msg.ThinkingMode)
+		queued, err := queueChannelMessage(ctx, connector, "", defaultAgentID, "telegram", msg.UserID, msg.RoomID, msg.AgentID, msg.Text, msg.ContentParts, msg.ThinkingMode)
 		if err != nil {
 			return telegram.Response{}, err
 		}
@@ -1102,7 +1104,7 @@ func quoteBridgeField(value string, maxChars int) string {
 	return clean
 }
 
-func queueChannelMessage(ctx context.Context, connector *chat.Connector, defaultAgentID, source, userID, roomID, requestedAgentID, text string, contentParts []messagecontent.Part, thinkingMode string) (chat.Result, error) {
+func queueChannelMessage(ctx context.Context, connector *chat.Connector, instanceID, defaultAgentID, source, userID, roomID, requestedAgentID, text string, contentParts []messagecontent.Part, thinkingMode string) (chat.Result, error) {
 	if connector == nil {
 		return chat.Result{}, errors.New("chat connector is disabled")
 	}
@@ -1113,12 +1115,13 @@ func queueChannelMessage(ctx context.Context, connector *chat.Connector, default
 	if agentID == "" {
 		agentID = "default"
 	}
-	return connector.HandleMessage(ctx, chat.Message{UserID: userID, RoomID: roomID, AgentID: agentID, Source: source, Text: text, ContentParts: append([]messagecontent.Part(nil), contentParts...), ThinkingMode: thinkingMode})
+	return connector.HandleMessage(ctx, chat.Message{InstanceID: instanceID, UserID: userID, RoomID: roomID, AgentID: agentID, Source: source, Text: text, ContentParts: append([]messagecontent.Part(nil), contentParts...), ThinkingMode: thinkingMode})
 }
 
 type scopedChatAdapter struct {
 	connector      *chat.Connector
 	source         string
+	instanceID     string
 	defaultAgentID string
 	allow          *chat.Allowlist
 	limiter        *chat.RateLimiter
@@ -1137,11 +1140,15 @@ func (a scopedChatAdapter) HandleMessage(ctx context.Context, msg httpchannel.Ch
 	if agentID == "" {
 		agentID = strings.TrimSpace(a.defaultAgentID)
 	}
-	queued, err := a.connector.HandleMessage(ctx, chat.Message{UserID: msg.UserID, RoomID: msg.RoomID, AgentID: agentID, Source: a.source, Text: msg.Message, ContentParts: append([]messagecontent.Part(nil), msg.ContentParts...), ThinkingMode: msg.ThinkingMode})
+	instanceID := strings.TrimSpace(msg.InstanceID)
+	if instanceID == "" {
+		instanceID = strings.TrimSpace(a.instanceID)
+	}
+	queued, err := a.connector.HandleMessage(ctx, chat.Message{InstanceID: instanceID, UserID: msg.UserID, RoomID: msg.RoomID, AgentID: agentID, Source: a.source, Text: msg.Message, ContentParts: append([]messagecontent.Part(nil), msg.ContentParts...), ThinkingMode: msg.ThinkingMode})
 	if err != nil {
 		return httpchannel.ChatResponse{}, err
 	}
-	return httpchannel.ChatResponse{ID: queued.ID, Status: queued.Status, Response: queued.Response, SessionID: queued.SessionID}, nil
+	return httpchannel.ChatResponse{InstanceID: queued.InstanceID, AgentID: queued.AgentID, ID: queued.ID, Status: queued.Status, Response: queued.Response, SessionID: queued.SessionID}, nil
 }
 
 func providerForDoctor(cfg config.Config) (config.ProviderEndpointConfig, error) {

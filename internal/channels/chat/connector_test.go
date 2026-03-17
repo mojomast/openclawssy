@@ -25,8 +25,11 @@ func TestConnectorQueuesAllowedMessage(t *testing.T) {
 		RateLimiter:    limiter,
 		DefaultAgentID: "default",
 		Store:          store,
-		Queue: func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
+		Queue: func(ctx context.Context, instanceID, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
 			_ = ctx
+			if instanceID != "instance-a" {
+				t.Fatalf("unexpected instance id: %q", instanceID)
+			}
 			if sessionID == "" {
 				t.Fatal("expected session id")
 			}
@@ -42,11 +45,11 @@ func TestConnectorQueuesAllowedMessage(t *testing.T) {
 			if len(contentParts) != 0 {
 				t.Fatalf("expected no content parts, got %#v", contentParts)
 			}
-			return QueuedRun{ID: "run-1", Status: "queued"}, nil
+			return QueuedRun{InstanceID: instanceID, AgentID: agentID, ID: "run-1", Status: "queued"}, nil
 		},
 	}
 
-	run, err := connector.HandleMessage(context.Background(), Message{UserID: "u1", RoomID: "r1", Text: "hello"})
+	run, err := connector.HandleMessage(context.Background(), Message{InstanceID: "instance-a", UserID: "u1", RoomID: "r1", Text: "hello"})
 	if err != nil {
 		t.Fatalf("handle message: %v", err)
 	}
@@ -58,6 +61,9 @@ func TestConnectorQueuesAllowedMessage(t *testing.T) {
 	}
 	if strings.TrimSpace(run.SessionID) == "" {
 		t.Fatal("expected session id in connector result")
+	}
+	if run.InstanceID != "instance-a" || run.AgentID != "default" {
+		t.Fatalf("expected composite identity in result, got %+v", run)
 	}
 }
 
@@ -71,7 +77,7 @@ func TestConnectorRejectsUnallowlisted(t *testing.T) {
 			}
 			return store
 		}(),
-		Queue: func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
+		Queue: func(ctx context.Context, instanceID, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
 			_ = contentParts
 			return QueuedRun{}, nil
 		},
@@ -93,13 +99,13 @@ func TestConnectorNewResumeAndChatsCommands(t *testing.T) {
 	connector := &Connector{
 		Store:          store,
 		DefaultAgentID: "default",
-		Queue: func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
+		Queue: func(ctx context.Context, instanceID, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
 			_ = contentParts
 			if sessionID == "" {
 				t.Fatal("expected session id")
 			}
 			queued++
-			return QueuedRun{ID: "run-1", Status: "queued"}, nil
+			return QueuedRun{InstanceID: instanceID, AgentID: agentID, ID: "run-1", Status: "queued"}, nil
 		},
 	}
 
@@ -152,7 +158,7 @@ func TestConnectorQueuesRawMessageAndStoresHistory(t *testing.T) {
 	connector := &Connector{
 		Store:          store,
 		DefaultAgentID: "default",
-		Queue: func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
+		Queue: func(ctx context.Context, instanceID, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
 			queuedMessage = message
 			queuedSessionID = sessionID
 			if thinkingMode != "always" {
@@ -161,7 +167,7 @@ func TestConnectorQueuesRawMessageAndStoresHistory(t *testing.T) {
 			if len(contentParts) != 0 {
 				t.Fatalf("expected no content parts, got %#v", contentParts)
 			}
-			return QueuedRun{ID: "run-1", Status: "queued"}, nil
+			return QueuedRun{InstanceID: instanceID, AgentID: agentID, ID: "run-1", Status: "queued"}, nil
 		},
 	}
 
@@ -217,9 +223,9 @@ func TestConnectorGlobalRateLimiterReturnsCooldown(t *testing.T) {
 		Store:          store,
 		DefaultAgentID: "default",
 		GlobalLimiter:  NewRateLimiterWithClock(1, time.Minute, clock),
-		Queue: func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
+		Queue: func(ctx context.Context, instanceID, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
 			_ = contentParts
-			return QueuedRun{ID: "run-1", Status: "queued"}, nil
+			return QueuedRun{InstanceID: instanceID, AgentID: agentID, ID: "run-1", Status: "queued"}, nil
 		},
 	}
 
@@ -255,10 +261,10 @@ func TestConnectorClosedSessionGetsReplacedAndCannotResume(t *testing.T) {
 	connector := &Connector{
 		Store:          store,
 		DefaultAgentID: "default",
-		Queue: func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
+		Queue: func(ctx context.Context, instanceID, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
 			_ = contentParts
 			queuedSessionIDs = append(queuedSessionIDs, sessionID)
-			return QueuedRun{ID: "run-1", Status: "queued"}, nil
+			return QueuedRun{InstanceID: instanceID, AgentID: agentID, ID: "run-1", Status: "queued"}, nil
 		},
 	}
 
@@ -311,14 +317,14 @@ func TestConnectorAgentSwitchCommand(t *testing.T) {
 	connector := &Connector{
 		Store:          store,
 		DefaultAgentID: "default",
-		Queue: func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
+		Queue: func(ctx context.Context, instanceID, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
 			_ = message
 			_ = source
 			_ = sessionID
 			_ = thinkingMode
 			_ = contentParts
 			queuedAgent = agentID
-			return QueuedRun{ID: "run-1", Status: "queued"}, nil
+			return QueuedRun{InstanceID: instanceID, AgentID: agentID, ID: "run-1", Status: "queued"}, nil
 		},
 	}
 
@@ -347,7 +353,7 @@ func TestConnectorQueuesContentPartsAndStoresHistory(t *testing.T) {
 	connector := &Connector{
 		Store:          store,
 		DefaultAgentID: "default",
-		Queue: func(ctx context.Context, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
+		Queue: func(ctx context.Context, instanceID, agentID, message string, contentParts []messagecontent.Part, source, sessionID, thinkingMode string) (QueuedRun, error) {
 			_ = ctx
 			_ = agentID
 			_ = source
@@ -357,7 +363,7 @@ func TestConnectorQueuesContentPartsAndStoresHistory(t *testing.T) {
 				t.Fatalf("expected text prompt preserved, got %q", message)
 			}
 			queuedParts = append([]messagecontent.Part(nil), contentParts...)
-			return QueuedRun{ID: "run-1", Status: "queued"}, nil
+			return QueuedRun{InstanceID: instanceID, AgentID: agentID, ID: "run-1", Status: "queued"}, nil
 		},
 	}
 	parts := []messagecontent.Part{{Type: messagecontent.TypeText, Text: "use this sticker"}, {Type: messagecontent.TypeImage, MIMEType: "image/webp", Data: "AAAA"}}

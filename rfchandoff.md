@@ -176,21 +176,48 @@ Current capabilities:
 - wizard routes now return structured `403` errors when the `wizard` feature is disabled
 - instance CRUD/activate/clone/bootstrap routes now return structured `403` errors when `instance_control` is disabled
 - instance-agent admin routes now return structured `403` errors when `instance_agents` is disabled
+- eval results routes now return structured `403` errors when the `eval` feature is disabled
 - control-plane feature introspection remains ungated so operators can still discover disabled features
 
-### 2.10 Dashboard eval metadata consumer adoption
+### 2.10 Dashboard inbox lifecycle APIs and chat identity threading
+
+Implemented in:
+
+- `internal/channels/dashboard/instances_api.go`
+- `internal/channels/dashboard/instances_api_test.go`
+- `internal/chatstore/store.go`
+- `internal/tools/agent_tools.go`
+- `internal/runtime/engine.go`
+- `cmd/openclawssy/main.go`
+- `internal/channels/http/server.go`
+- `internal/channels/chat/connector.go`
+- `internal/channels/dashboard/ui/src/pages/ChatPage.tsx`
+
+Current capabilities:
+
+- dashboard inbox list/detail/ack/run routes now resolve message lifecycle state by `(agent_id, message_id)` instead of duplicating a parallel inbox model
+- dashboard inbox `run` reuses the shared message lifecycle runner through a wired `tools.AgentRunner`
+- chat queue/request/response types now carry additive `instance_id` and `agent_id`
+- dashboard chat send, run polling, SSE subscribe, and cancel flows now thread composite identity through the operator UI
+
+### 2.11 Dashboard eval metadata consumer adoption
 
 Implemented in:
 
 - `internal/channels/dashboard/ui/src/pages/eval/types.ts`
 - `internal/channels/dashboard/ui/src/pages/eval/utils.ts`
 - `internal/channels/dashboard/ui/src/pages/eval/EvalRunDetailPanel.tsx`
+- `internal/channels/dashboard/ui/src/pages/EvalPage.tsx`
+- `internal/channels/dashboard/ui/src/pages/eval/useEvalRuns.ts`
+- `internal/channels/dashboard/ui/src/components/Layout.tsx`
+- `internal/channels/dashboard/ui/src/hooks/useControlPlaneFeatures.ts`
 
 Current capabilities:
 
 - dashboard eval parsing now preserves additive `identity` and `metadata` blocks returned by the backend
 - eval detail panels now render instance/agent/run lineage, task/session/source linkage, artifact/checkpoint paths, and a lightweight delegation summary for operators
 - delegation/decomposition metadata is now visible in the dashboard without requiring raw JSON inspection
+- dashboard nav now hides the Eval entry when the feature is disabled, and direct Eval page access renders a disabled-state panel instead of pretending the feature is available
 
 ### 3. Tests currently passing
 
@@ -204,6 +231,8 @@ Verified:
 - `go test ./cmd/openclawssy`
 - `go test ./internal/channels/dashboard ./internal/eval ./internal/channels/http ./internal/tools ./internal/runtime ./cmd/openclawssy`
 - `go test ./internal/tools ./internal/runtime ./internal/channels/http`
+- `go test ./internal/chatstore ./internal/tools ./internal/channels/chat ./internal/channels/http ./internal/channels/dashboard ./internal/runtime ./cmd/openclawssy`
+- `go test ./internal/channels/dashboard -run 'TestEvalResultsEndpoint|TestControlPlaneFeaturesAndWizardEndpoints|TestInstanceFeatureFlagEnforcement' -count=1`
 - `go test ./internal/agent -run TestExecuteDelegatedTasksRecordsMessageBackedLifecycleMetadata -count=1`
 - `go test ./internal/runtime -run 'TestSubAgentAdapterPassesDefaultRestrictions|TestSubAgentAdapterReturnsMessageIDInOutput' -count=1`
 - `go test ./internal/runtime -run '^TestRunTracker_' -count=1`
@@ -213,6 +242,7 @@ Verified:
 - `cd internal/channels/dashboard/ui && npm run typecheck`
 - `cd internal/channels/dashboard/ui && npm run build`
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/runs.spec.ts`
+- `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/chat.spec.ts tests/e2e/eval.spec.ts`
 
 Note: one broader `go test ./internal/runtime ./...` package pass exposed an existing flaky/unrelated failure in `TestEngineExecuteIngestsMemoryEventsWhenEnabled`, but the focused rerun of that test passed immediately and the targeted package suites for the changed slices passed.
 

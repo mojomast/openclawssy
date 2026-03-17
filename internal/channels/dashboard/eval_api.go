@@ -39,6 +39,9 @@ type evalBaselineResponse struct {
 }
 
 func (h *Handler) handleEvalResults(w http.ResponseWriter, r *http.Request) {
+	if !h.requireEvalFeature(w) {
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return

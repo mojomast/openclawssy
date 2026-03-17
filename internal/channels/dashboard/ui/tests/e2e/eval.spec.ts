@@ -107,11 +107,13 @@ const defaultRuns = [
 type EvalMockOptions = {
   runs?: unknown[]
   failEvalRequests?: number
+  evalEnabled?: boolean
 }
 
 async function installEvalMocks(page: Page, options: EvalMockOptions = {}): Promise<void> {
   let remainingFailures = options.failEvalRequests ?? 0
   const runs = options.runs ?? defaultRuns
+  const evalEnabled = options.evalEnabled ?? true
 
   await page.route("**/*", async (route: Route) => {
     const request = route.request()
@@ -132,7 +134,23 @@ async function installEvalMocks(page: Page, options: EvalMockOptions = {}): Prom
       return
     }
 
+    if (pathname === "/api/admin/control-plane/features") {
+      await json({
+        features: {
+          instance_control: true,
+          instance_agents: true,
+          wizard: true,
+          eval: evalEnabled,
+        },
+      })
+      return
+    }
+
     if (pathname === "/api/admin/eval/results" && method === "GET") {
+      if (!evalEnabled) {
+        await json({ error: { code: "feature.eval_disabled", message: "eval routes are disabled" } }, 403)
+        return
+      }
       if (remainingFailures > 0) {
         remainingFailures -= 1
         await json({ error: { message: "backend unavailable" } }, 500)
@@ -216,4 +234,14 @@ test("Eval Results page surfaces API errors and refreshes successfully after ret
 
   await expect(page.getByTestId("eval-history-table")).toBeVisible()
   await expect(page.getByTestId("eval-run-row-42")).toContainText("basic")
+})
+
+test("Eval Results page hides nav entry and shows disabled state when eval feature is off", async ({ page }) => {
+  await installEvalMocks(page, { evalEnabled: false })
+
+  await page.goto("/dashboard#/eval")
+
+  await expect(page.getByRole("link", { name: "Eval" })).toHaveCount(0)
+  await expect(page.getByTestId("eval-disabled-state")).toContainText("Eval disabled")
+  await expect(page.getByTestId("eval-disabled-state")).toContainText("Eval is disabled")
 })

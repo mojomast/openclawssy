@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils"
 import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react"
 
 const CHAT_DEFAULTS = {
+  instanceID: "",
   userID: "dashboard_user",
   roomID: "dashboard",
   agentID: "default",
@@ -82,8 +83,11 @@ type ChatState = {
   sendError: string
   debugCopyStatus: string
 
+  activeInstanceID: string
   currentRunID: string
   currentRunStatus: string
+  currentRunInstanceID: string
+  currentRunAgentID: string
   currentRunStartedAtMs: number
   currentSessionID: string
   currentRunLastUpdatedAt: string
@@ -729,8 +733,11 @@ export function ChatPage() {
       sendError: "",
       debugCopyStatus: "",
 
+      activeInstanceID: "",
       currentRunID: "",
       currentRunStatus: "idle",
+      currentRunInstanceID: "",
+      currentRunAgentID: "",
       currentRunStartedAtMs: 0,
       currentSessionID: "",
       currentRunLastUpdatedAt: "",
@@ -1095,6 +1102,30 @@ export function ChatPage() {
     }
   }, [])
 
+  const resolveActiveInstanceID = useCallback(async (): Promise<string> => {
+    const current = safeText(stateRef.current.currentRunInstanceID)
+    if (current) {
+      return current
+    }
+    const active = safeText(stateRef.current.activeInstanceID)
+    if (active) {
+      return active
+    }
+    try {
+      const payload = await api.get<{ instance?: { id?: unknown } }>("/api/admin/instances/active")
+      const instanceID = safeText(payload?.instance?.id)
+      if (instanceID) {
+        setState((prev) => ({
+          ...prev,
+          activeInstanceID: instanceID,
+        }))
+      }
+      return instanceID
+    } catch {
+      return ""
+    }
+  }, [])
+
   const resetStreamingState = useCallback((options?: { resetLastEventID?: boolean; keepStreamingText?: boolean }) => {
     const resetLastEventID = Boolean(options?.resetLastEventID)
     const keepStreamingText = Boolean(options?.keepStreamingText)
@@ -1425,7 +1456,7 @@ export function ChatPage() {
   )
 
   const connectRunEventStream = useCallback(
-    async (runID: string) => {
+    async (runID: string, options?: { instanceID?: string; agentID?: string }) => {
       const targetRunID = safeText(runID)
       if (!targetRunID) {
         return
@@ -1458,7 +1489,22 @@ export function ChatPage() {
           headers.set("Last-Event-ID", String(stateRef.current.streamLastEventID))
         }
 
-        const response = await window.fetch(`/v1/runs/events/${encodeURIComponent(targetRunID)}`, {
+        const params = new URLSearchParams()
+        const instanceID =
+          safeText(options?.instanceID) ||
+          safeText(stateRef.current.currentRunInstanceID) ||
+          safeText(stateRef.current.activeInstanceID)
+        const agentID =
+          safeText(options?.agentID) ||
+          safeText(stateRef.current.currentRunAgentID) ||
+          safeText(stateRef.current.selectedAgentID)
+        if (instanceID) {
+          params.set("instance_id", instanceID)
+        }
+        if (agentID) {
+          params.set("agent_id", agentID)
+        }
+        const response = await window.fetch(`/v1/runs/events/${encodeURIComponent(targetRunID)}${params.toString() ? `?${params.toString()}` : ""}`, {
           method: "GET",
           headers,
           signal: controller.signal,
@@ -1555,17 +1601,22 @@ export function ChatPage() {
     [processSSEBlock]
   )
 
-  const startPolling = useCallback((runID: string, sessionID = "") => {
+  const startPolling = useCallback((runID: string, sessionID = "", instanceID = "", agentID = "") => {
     const normalizedRunID = safeText(runID)
     const normalizedSessionID = safeText(sessionID)
+    const normalizedInstanceID = safeText(instanceID)
+    const normalizedAgentID = safeText(agentID)
     if (!normalizedRunID) {
       return
     }
     setState((prev) => ({
       ...prev,
+      activeInstanceID: normalizedInstanceID || prev.activeInstanceID,
       currentRunID: normalizedRunID,
       currentSessionID: normalizedSessionID || prev.currentSessionID,
       currentRunStatus: prev.currentRunID === normalizedRunID ? prev.currentRunStatus : "running",
+      currentRunInstanceID: normalizedInstanceID || prev.currentRunInstanceID,
+      currentRunAgentID: normalizedAgentID || prev.currentRunAgentID,
       currentRunStartedAtMs: Date.now(),
       polling: true,
       runPollingEnabled: true,
@@ -1584,8 +1635,19 @@ export function ChatPage() {
 
     runPollInFlightRef.current = true
     try {
-      const run = await api.get<Record<string, unknown>>(`/v1/runs/${encodeURIComponent(runID)}`)
+      const params = new URLSearchParams()
+      const instanceID = safeText(stateRef.current.currentRunInstanceID)
+      const agentID = safeText(stateRef.current.currentRunAgentID) || safeText(stateRef.current.selectedAgentID)
+      if (instanceID) {
+        params.set("instance_id", instanceID)
+      }
+      if (agentID) {
+        params.set("agent_id", agentID)
+      }
+      const run = await api.get<Record<string, unknown>>(`/v1/runs/${encodeURIComponent(runID)}${params.toString() ? `?${params.toString()}` : ""}`)
       const status = normalizeRunStatus(run.status) || "unknown"
+      const discoveredInstanceID = safeText(run.instance_id)
+      const discoveredAgentID = safeText(run.agent_id)
       const discoveredSessionID = safeText(run.session_id)
       const updatedAt = safeText(run.updated_at)
       const output = String(run.output || "")
@@ -1674,6 +1736,8 @@ export function ChatPage() {
           ...prev,
           transcript,
           currentRunStatus: status,
+          currentRunInstanceID: discoveredInstanceID || prev.currentRunInstanceID,
+          currentRunAgentID: discoveredAgentID || prev.currentRunAgentID,
           currentRunLastUpdatedAt: updatedAt,
           currentRunLastOutput: output,
           currentSessionID: discoveredSessionID || prev.currentSessionID,
@@ -1772,7 +1836,9 @@ export function ChatPage() {
       })
 
       try {
+        const instanceID = await resolveActiveInstanceID()
         const payload = await api.post<Record<string, unknown>>("/v1/chat/messages", {
+          instance_id: instanceID,
           user_id: CHAT_DEFAULTS.userID,
           room_id: CHAT_DEFAULTS.roomID,
           agent_id: safeText(stateRef.current.selectedAgentID) || CHAT_DEFAULTS.agentID,
@@ -1780,13 +1846,18 @@ export function ChatPage() {
         })
 
         const runID = safeText(payload.id)
+        const runInstanceID = safeText(payload.instance_id) || instanceID
+        const runAgentID = safeText(payload.agent_id) || safeText(stateRef.current.selectedAgentID) || CHAT_DEFAULTS.agentID
         const sessionID = safeText(payload.session_id)
         const runStatus = normalizeRunStatus(payload.status) || "queued"
         if (runID) {
           setState((prev) => ({
             ...prev,
+            activeInstanceID: runInstanceID || prev.activeInstanceID,
             currentRunID: runID,
             currentRunStatus: runStatus,
+            currentRunInstanceID: runInstanceID,
+            currentRunAgentID: runAgentID,
             currentRunLastUpdatedAt: "",
             currentRunLastOutput: "",
             currentRunStartedAtMs: Date.now(),
@@ -1810,14 +1881,17 @@ export function ChatPage() {
             }))
           }
 
-          startPolling(runID, sessionID)
-          void connectRunEventStream(runID)
+          startPolling(runID, sessionID, runInstanceID, runAgentID)
+          void connectRunEventStream(runID, { instanceID: runInstanceID, agentID: runAgentID })
         } else {
           const directResponse = safeText(payload.response) || "Request accepted."
           setState((prev) => ({
             ...prev,
+            activeInstanceID: instanceID || prev.activeInstanceID,
             transcript: replacePendingAssistantInTranscript(prev.transcript, directResponse),
             currentRunStatus: "idle",
+            currentRunInstanceID: "",
+            currentRunAgentID: "",
             currentRunStartedAtMs: 0,
             polling: false,
           }))
@@ -1925,7 +1999,19 @@ export function ChatPage() {
     }))
 
     try {
-      const response = await api.post<Record<string, unknown>>(`/v1/runs/${encodeURIComponent(runID)}/cancel`, {})
+      const params = new URLSearchParams()
+      const instanceID = safeText(stateRef.current.currentRunInstanceID)
+      const agentID = safeText(stateRef.current.currentRunAgentID) || safeText(stateRef.current.selectedAgentID)
+      if (instanceID) {
+        params.set("instance_id", instanceID)
+      }
+      if (agentID) {
+        params.set("agent_id", agentID)
+      }
+      const response = await api.post<Record<string, unknown>>(
+        `/v1/runs/${encodeURIComponent(runID)}/cancel${params.toString() ? `?${params.toString()}` : ""}`,
+        {}
+      )
       const nextStatus = resolveCancelRunStatus(response?.status, response?.cancelled)
       const statusMessage =
         nextStatus === "canceled"
@@ -1940,6 +2026,8 @@ export function ChatPage() {
       setState((prev) => ({
         ...prev,
         currentRunStatus: nextStatus,
+        currentRunInstanceID: prev.currentRunInstanceID,
+        currentRunAgentID: prev.currentRunAgentID,
         currentRunLastUpdatedAt: updatedAt,
         polling: !isTerminalStatus(nextStatus),
         runPollingEnabled: true,
@@ -1978,7 +2066,13 @@ export function ChatPage() {
       return
     }
     try {
-      await api.post("/api/admin/monitor/runs/control", { action: "cancel", run_id: targetRunID })
+      const observed = observedSubagentRuns.find((item) => safeText(item.runID) === targetRunID)
+      await api.post("/api/admin/monitor/runs/control", {
+        action: "cancel",
+        run_id: targetRunID,
+        instance_id: safeText(stateRef.current.currentRunInstanceID),
+        agent_id: safeText(observed?.agentID),
+      })
       setState((prev) => ({
         ...prev,
         debugCopyStatus: `Cancellation requested for subagent ${targetRunID}.`,
@@ -2033,6 +2127,7 @@ export function ChatPage() {
 
         setState((prev) => ({
           ...prev,
+          activeInstanceID: safeText(stateRef.current.activeInstanceID),
           availableAgents: agents.length ? agents : prev.availableAgents,
           selectedAgentID,
           activeAgentID,
@@ -2048,6 +2143,8 @@ export function ChatPage() {
               : null,
           currentRunID: "",
           currentRunStatus: "idle",
+          currentRunInstanceID: "",
+          currentRunAgentID: "",
           currentRunStartedAtMs: 0,
           currentSessionID: "",
           currentRunLastUpdatedAt: "",
@@ -2084,7 +2181,7 @@ export function ChatPage() {
         }))
       }
     },
-    [ensureCurrentSessionID, refreshTranscriptFromCurrentSession]
+    [ensureCurrentSessionID, observedSubagentRuns, refreshTranscriptFromCurrentSession]
   )
 
   const toggleToolEntryExpanded = useCallback((eventKey: string, kind: "tool" | "error") => {
@@ -2585,6 +2682,8 @@ export function ChatPage() {
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
               <p>Run: {safeText(state.currentRunID) || "-"}</p>
+              <p>Instance: {safeText(state.currentRunInstanceID) || "-"}</p>
+              <p>Agent: {safeText(state.currentRunAgentID) || safeText(state.selectedAgentID) || "-"}</p>
               <p>
                 Status: <strong>{safeText(state.currentRunStatus) || "idle"}</strong>
               </p>

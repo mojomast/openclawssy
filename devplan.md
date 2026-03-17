@@ -189,6 +189,9 @@ Completed or substantially landed:
 - dashboard eval detail views now surface additive identity/runtime/delegation metadata instead of dropping it at the UI layer
 - delegated subagent execution now carries stable delegated `message_id` values and records `message_id` / `related_run_id` in delegation events for shared lifecycle correlation
 - dashboard runs/delegation consumers now thread `instance_id` + `agent_id` into run detail, trace, and decision fetches instead of relying on bare `run_id`
+- dashboard chat send/poll/SSE/cancel flows now thread `instance_id` + `agent_id`, with active-instance bootstrap in the UI
+- dashboard inbox APIs now expose list/detail/ack/run routes backed by the shared message lifecycle and subagent runner path
+- eval dashboard surfaces now hide the nav entry when the feature is disabled and render a disabled state on direct page access
 - dashboard run detail now renders a structured identity/delegation summary for operators (instance, agent, parent run, session, artifact path, delegation plan)
 - runtime `RunTracker` now has first-class composite track/cancel/remove helpers for `(instance_id, agent_id, run_id)` while preserving bare `run_id` compatibility
 - `run.cancel` now accepts composite identity and prefers precise composite cancellation when `instance_id` and `agent_id` are supplied together
@@ -272,9 +275,9 @@ Progress update:
 - same-instance messaging compatibility layer is landed
 - composite tracker identity is landed in runtime and HTTP queued runs
 - dashboard run/decision surfaces now consume and emit instance-aware identity more consistently
-- inbox lifecycle foundation is landed (`message_id`, `queued`, `acknowledged`), but broader runtime/UI wiring and canonical storage cleanup are still open
+- inbox lifecycle foundation is landed (`message_id`, `queued`, `acknowledged`) and dashboard inbox ack/run APIs now reuse the same lifecycle model, but broader runtime/UI wiring and canonical storage cleanup are still open
 - inbox lifecycle is now exercised by real auto-run, proactive-memory, and delegated-subagent producer paths, but more producers/consumers still need to converge on the same model
-- API-side feature-flag enforcement has started for wizard and instance-control routes, but broader UI/runtime read-only and visibility enforcement remains open
+- API-side feature-flag enforcement now covers wizard, instance-control, instance-agent, and eval routes, and the dashboard UI now hides/disables eval when that feature is off, but broader UI/runtime read-only and visibility enforcement remains open
 
 ## Milestone 6: Wizard
 
@@ -304,7 +307,7 @@ Progress update:
 Progress update:
 
 - eval storage and API now carry richer additive identity/runtime metadata (`instance_id`, `agent_id`, `run_id`, `parent_run_id`, `root_run_id`, `source`, `task_id`, `session_id`, artifact/checkpoint/delegation metadata)
-- dashboard/eval consumers have stronger composite identity and lineage adoption, but delegation producers and broader consumers still need follow-through
+- dashboard/eval consumers have stronger composite identity and lineage adoption, and chat now threads composite identity through its operator flows, but delegation producers and broader consumers still need follow-through
 - dashboard eval detail panels now consume and render additive identity/runtime/delegation metadata, but richer producer coverage and more operator views still remain
 
 ## 7. Detailed task list by agent
