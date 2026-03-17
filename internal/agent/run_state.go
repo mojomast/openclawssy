@@ -26,6 +26,7 @@ const (
 	agentMessageSendCap          = 1
 	agentMessageInboxCap         = 2
 	agentRunCap                  = 1
+	agentIdentitySetCap          = 2
 	agentCreateGlobalCap         = 8
 	shellExecRepetitionCap       = 3
 	memoryWriteRepetitionCap     = 2
@@ -534,7 +535,7 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 				outcome.blockedSuccessfulOneShotMutation = true
 				continue
 			}
-			skipGenericRepetitionGuard = true
+			skipGenericRepetitionGuard = call.Name != "agent.identity.set"
 		}
 
 		if !skipGenericRepetitionGuard {
@@ -1399,6 +1400,9 @@ func extractAgentIDFromArgs(args []byte) string {
 func repeatedCallRepetitionKey(call ToolCallRequest) (string, int, bool) {
 	name := strings.TrimSpace(call.Name)
 	if key, ok := oneShotMutationRepetitionKey(name, call.Arguments); ok {
+		if name == "agent.identity.set" {
+			return key, agentIdentitySetCap, true
+		}
 		return key, stateMutationRepetitionCap, true
 	}
 	if name == "agent.message.send" {
@@ -1628,6 +1632,17 @@ func oneShotMutationRepetitionKey(name string, argsJSON []byte) (string, bool) {
 			scope = "both"
 		}
 		return canonicalName + "|" + agentID + "|" + scope, true
+	case "agent.identity.set":
+		agentID := strings.ToLower(firstTrimmedStringFromMap(args, "agent_id"))
+		if agentID == "" {
+			agentID = "current"
+		}
+		assistantName := strings.ToLower(strings.TrimSpace(firstTrimmedStringFromMap(args, "assistant_name")))
+		userName := strings.ToLower(strings.TrimSpace(firstTrimmedStringFromMap(args, "user_name")))
+		if assistantName == "" || userName == "" {
+			return "", false
+		}
+		return canonicalName + "|" + agentID + "|" + assistantName + "|" + userName, true
 	case "config.set":
 		rawUpdates, ok := args["updates"]
 		if !ok || rawUpdates == nil {

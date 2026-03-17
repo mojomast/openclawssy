@@ -868,6 +868,45 @@ func TestRunnerAllowsRetryOfOneShotMutationAfterFailureUntilSuccess(t *testing.T
 	}
 }
 
+func TestRunnerAllowsOneRetryForRepeatedAgentIdentitySetFailureThenBlocks(t *testing.T) {
+	args := []byte(`{"assistant_name":"Sir Ussyton The First","user_name":"ussy guy"}`)
+	model := &mockModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "agent.identity.set", Arguments: args}}},
+		{ToolCalls: []ToolCallRequest{{ID: "2", Name: "agent.identity.set", Arguments: args}}},
+		{ToolCalls: []ToolCallRequest{{ID: "3", Name: "agent.identity.set", Arguments: args}}},
+		{FinalText: "done"},
+	}}
+	tools := &mockTools{results: map[string]ToolCallResult{
+		"1": {ID: "1", Error: "internal.error (agent.identity.set): SOUL.md is already initialized; clear SOUL.md to rerun identity bootstrap"},
+		"2": {ID: "2", Error: "internal.error (agent.identity.set): SOUL.md is already initialized; clear SOUL.md to rerun identity bootstrap"},
+		"3": {ID: "3", Error: "internal.error (agent.identity.set): SOUL.md is already initialized; clear SOUL.md to rerun identity bootstrap"},
+	}}
+	runner := Runner{Model: model, ToolExecutor: tools, MaxToolIterations: 8}
+
+	out, err := runner.Run(context.Background(), RunInput{Message: "set identity names"})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out.FinalText != "done" {
+		t.Fatalf("unexpected final text: %q", out.FinalText)
+	}
+	if len(tools.calls) != 2 {
+		t.Fatalf("expected first two agent.identity.set attempts to execute, got %d", len(tools.calls))
+	}
+	if len(out.ToolCalls) != 3 {
+		t.Fatalf("expected three tool call records, got %d", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.ToolCalls[2].Result.Error, "repetition detected") {
+		t.Fatalf("expected third agent.identity.set to be blocked, got %q", out.ToolCalls[2].Result.Error)
+	}
+	if !strings.Contains(out.ToolCalls[2].Result.Error, "agent.identity.set|current|sir ussyton the first|ussy guy") {
+		t.Fatalf("expected identity repetition key in error, got %q", out.ToolCalls[2].Result.Error)
+	}
+	if len(model.reqs) != 4 {
+		t.Fatalf("expected three tool turns and one final text turn, got %d model requests", len(model.reqs))
+	}
+}
+
 func TestRunnerBlocksRepeatedPolicyGrantAfterFirstSuccess(t *testing.T) {
 	model := &mockModel{responses: []ModelResponse{
 		{ToolCalls: []ToolCallRequest{{ID: "1", Name: "policy.grant", Arguments: []byte(`{"agent_id":"default","capability":"http.request"}`)}}},
@@ -1801,8 +1840,8 @@ func TestRunnerNoChoicesAfterToolsUsesFriendlyRecovery(t *testing.T) {
 	if !strings.Contains(out.FinalText, "found no matching entries") {
 		t.Fatalf("expected empty-search summary, got %q", out.FinalText)
 	}
-	if model.attempts != 6 {
-		t.Fatalf("expected 1 initial + 4 no-choices attempts + 1 recovery finalization, got %d", model.attempts)
+	if model.attempts != 3 {
+		t.Fatalf("expected initial tool turn, single no-choices follow-up, and tool-free recovery finalization, got %d", model.attempts)
 	}
 }
 
@@ -1839,8 +1878,8 @@ func TestRunnerFinalizesFromToolResultsAfterTransientProviderError(t *testing.T)
 	if strings.Contains(out.FinalText, "model/API error") {
 		t.Fatalf("expected no raw model/API error fallback, got %q", out.FinalText)
 	}
-	if model.attempts != 6 {
-		t.Fatalf("expected 6 model attempts including recovery finalization, got %d", model.attempts)
+	if model.attempts != 3 {
+		t.Fatalf("expected initial tool turn, interrupted follow-up, and tool-free recovery finalization, got %d", model.attempts)
 	}
 }
 
@@ -1864,8 +1903,8 @@ func TestRunnerTransientProviderErrorAfterToolsReturnsContinuationHint(t *testin
 	if !strings.Contains(out.FinalText, "SPECPLAN.md") {
 		t.Fatalf("expected latest tool results in fallback, got %q", out.FinalText)
 	}
-	if model.attempts != 6 {
-		t.Fatalf("expected 6 model attempts including failed recovery finalization, got %d", model.attempts)
+	if model.attempts != 3 {
+		t.Fatalf("expected initial tool turn, interrupted follow-up, and failed tool-free recovery finalization, got %d", model.attempts)
 	}
 }
 
