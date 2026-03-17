@@ -5,6 +5,7 @@ import { Toaster } from './components/ui/toaster'
 import {
   // Migrated pages
   HelpPage,
+  InstancesPage,
   WorkspacePage,
   SecretsPage,
   DocsPage,
@@ -35,6 +36,7 @@ function App() {
           {/* 13 migrated pages */}
           <Route index element={<HelpPage />} />
           <Route path="help" element={<HelpPage />} />
+          <Route path="instances" element={<InstancesPage />} />
           <Route path="workspace" element={<WorkspacePage />} />
           <Route path="secrets" element={<SecretsPage />} />
           <Route path="docs" element={<DocsPage />} />

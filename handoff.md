@@ -50,6 +50,7 @@ Date: 2026-03-16
 - Wizard agent flows now work end-to-end in the dashboard shell too: operators can target an existing instance, preview normalized profile/operations, create the agent in-place, and get duplicate-agent protection while wizard agent routes also enforce `instance_agents`.
 - Wizard now supports same-session handoff from new instance creation into agent targeting, and the latest targeted tests cover preview/create parity on key wizard fields plus in-page disabled-state handling when `instance_control` is off.
 - Wizard instance preview/create now shares canonical projection logic too, which reduces preview-vs-persisted drift and hardens the backend side of the milestone beyond the initial UI flow work.
+- The dashboard now has an Instances page too: operators can inspect canonical instances, see the active instance clearly, activate another instance, and get deterministic disabled behavior when `instance_control` is off.
 
 ## Validation completed
 

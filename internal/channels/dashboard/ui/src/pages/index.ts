@@ -3,6 +3,7 @@
  */
 // Migrated pages (5 initial)
 export { HelpPage } from './HelpPage'
+export { InstancesPage } from './InstancesPage'
 export { WorkspacePage } from './WorkspacePage'
 export { SecretsPage } from './SecretsPage'
 export { DocsPage } from './DocsPage'

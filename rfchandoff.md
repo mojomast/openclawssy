@@ -189,6 +189,7 @@ Current capabilities:
 - wizard agent plan/create routes now also require `instance_agents`, and the dashboard shell can target existing instances, preview normalized agent profiles, and create agents in-place with duplicate-agent conflict handling
 - wizard now also carries operators from successful instance creation into agent targeting within the same page, and focused parity tests now assert that wizard previews and creates stay aligned on key instance/agent runtime fields
 - wizard instance preview/create now also uses the same canonical projection path before persistence, so dashboard previews match the persisted control-plane shape more closely without introducing a separate manifest format in the UI
+- the dashboard now also has a dedicated `/instances` route wired to canonical instance list/activate APIs, giving operators a clear active-instance control surface instead of relying on wizard-side incidental instance selection
 
 ### 2.10 Dashboard inbox lifecycle APIs and chat identity threading
 
@@ -219,6 +220,7 @@ Current capabilities:
 - Wizard now goes beyond catalog browsing: instance templates can be selected, planned, previewed, and created directly from the dashboard shell, with explicit notes about chat-assistant default-agent behavior and clean duplicate-id failure handling
 - Wizard agent creation now follows that same in-shell pattern too: the page loads canonical instances and existing agent IDs, previews normalized agent profiles, and prevents duplicate agent creation before issuing the create call
 - Wizard now also shows explicit disabled-state handling when `instance_control` is off, and same-session create flows can continue directly from a new instance into agent planning without requiring a page change or manual instance refresh
+- Instances now follows that same deterministic feature-state pattern too: nav visibility hides the route when `instance_control` is off, and direct access renders a disabled-state shell instead of issuing list/activate traffic
 
 ### 2.11 Dashboard eval metadata consumer adoption
 

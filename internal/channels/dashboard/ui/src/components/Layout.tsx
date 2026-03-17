@@ -19,6 +19,7 @@ const navSections: NavSection[] = [
     title: 'Dashboard',
       items: [
         { path: '/help', label: 'Help' },
+        { path: '/instances', label: 'Instances' },
         { path: '/workspace', label: 'Workspace' },
         { path: '/secrets', label: 'Secrets' },
       { path: '/docs', label: 'Docs' },
@@ -135,6 +136,9 @@ export function Layout() {
       }
       if (item.path === '/wizard') {
         return !featuresLoading && features.wizard
+      }
+      if (item.path === '/instances') {
+        return !featuresLoading && features.instanceControl
       }
       if (item.path === '/docs' || item.path === '/skills' || item.path === '/roles') {
         return !featuresLoading && features.instanceAgents
