@@ -504,6 +504,10 @@ func ResolveEffectiveRuntime(rootDir, instanceID, agentID string) (*EffectiveRun
 	if timeoutMS <= 0 {
 		timeoutMS = model.TimeoutMS
 	}
+	featureFlags, err := LoadControlPlaneFeatureSet(rootDir)
+	if err != nil {
+		return nil, err
+	}
 	resolved := &EffectiveRuntime{
 		InstanceID:         instanceID,
 		AgentID:            agentID,
@@ -526,7 +530,7 @@ func ResolveEffectiveRuntime(rootDir, instanceID, agentID string) (*EffectiveRun
 		Skills:             append([]string(nil), skills.Activated...),
 		ChannelDefaults:    channels,
 		Concurrency:        instanceManifest.Runtime,
-		FeatureFlags:       DefaultFeatureSet(),
+		FeatureFlags:       featureFlags,
 		ThinkingMode:       firstNonEmpty(agentManifest.Behavior.DefaultThinkingMode, cfg.Output.ThinkingMode),
 		TimeoutMS:          timeoutMS,
 		Enabled:            instanceManifest.Enabled && agentManifest.Enabled,

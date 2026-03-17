@@ -69,6 +69,11 @@ type StructuralTestResult = {
   checks: StructuralCheck[]
 }
 
+type InstanceSummary = {
+  id: string
+  name: string
+}
+
 const LAYER_DEFINITIONS: LayerDefinition[] = [
   {
     id: "global_operator_policy",
@@ -161,6 +166,30 @@ function normalizeAgentIDs(payload: unknown): string[] {
     out.push(normalized)
   }
   return out
+}
+
+function normalizeInstances(payload: unknown): InstanceSummary[] {
+  if (!Array.isArray(payload)) {
+    return []
+  }
+
+  const seen = new Set<string>()
+  const out: InstanceSummary[] = []
+  for (const item of payload) {
+    const record = asRecord(item)
+    const id = asText(record?.id).trim()
+    if (!id || seen.has(id)) {
+      continue
+    }
+    seen.add(id)
+    out.push({ id, name: asText(record?.name).trim() || id })
+  }
+  return out
+}
+
+function buildPromptStackRoute(instanceID: string, agentID: string, suffix = ""): string {
+  const base = `/api/admin/instances/${encodeURIComponent(instanceID)}/agents/${encodeURIComponent(agentID)}/prompt-stack`
+  return suffix ? `${base}/${suffix}` : base
 }
 
 function findLayerLabel(layerID: string): string {
@@ -384,6 +413,8 @@ export function PromptStackPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState("")
 
+  const [instances, setInstances] = useState<InstanceSummary[]>([])
+  const [selectedInstance, setSelectedInstance] = useState("")
   const [agents, setAgents] = useState<string[]>([])
   const [selectedAgent, setSelectedAgent] = useState("")
 
@@ -445,12 +476,11 @@ export function PromptStackPage() {
     })
   }, [])
 
-  const loadAgentPromptData = useCallback(async (agentID: string) => {
-    const encoded = encodeURIComponent(agentID)
+  const loadAgentPromptData = useCallback(async (instanceID: string, agentID: string) => {
     const [stackPayload, previewPayload, historyPayload] = await Promise.all([
-      api.get<unknown>(`/api/admin/agents/${encoded}/prompt-stack`),
-      api.get<unknown>(`/api/admin/agents/${encoded}/prompt-stack/preview`),
-      api.get<unknown>(`/api/admin/agents/${encoded}/prompt-stack/history`),
+      api.get<unknown>(buildPromptStackRoute(instanceID, agentID)),
+      api.get<unknown>(buildPromptStackRoute(instanceID, agentID, "preview")),
+      api.get<unknown>(buildPromptStackRoute(instanceID, agentID, "history")),
     ])
 
     const stackRecord = asRecord(stackPayload)
@@ -489,21 +519,33 @@ export function PromptStackPage() {
     setLoadError("")
 
     try {
-      const [agentsPayload, configPayload] = await Promise.all([
-        api.get<{ agents?: unknown; selected_agent?: unknown }>("/api/admin/agents"),
+      const [instancesPayload, activePayload, configPayload] = await Promise.all([
+        api.get<{ instances?: unknown }>("/api/admin/instances"),
+        api.get<{ instance?: unknown }>("/api/admin/instances/active"),
         api.get<unknown>("/api/admin/config"),
       ])
 
-      const ids = normalizeAgentIDs(agentsPayload.agents)
-      const selectedRaw = asText(agentsPayload.selected_agent).trim()
-      const selected = selectedRaw && ids.includes(selectedRaw) ? selectedRaw : (ids[0] || "")
+      const nextInstances = normalizeInstances(instancesPayload.instances)
+      const activeInstanceID = asText(asRecord(activePayload.instance)?.id).trim()
+      const nextSelectedInstance =
+        (activeInstanceID && nextInstances.some((instance) => instance.id === activeInstanceID) ? activeInstanceID : "") ||
+        nextInstances[0]?.id ||
+        ""
 
+      const agentsForInstance = nextSelectedInstance
+        ? await api.get<{ agents?: unknown }>(`/api/admin/instances/${encodeURIComponent(nextSelectedInstance)}/agents`)
+        : { agents: [] }
+      const ids = normalizeAgentIDs(agentsForInstance.agents)
+      const selected = ids[0] || ""
+
+      setInstances(nextInstances)
+      setSelectedInstance(nextSelectedInstance)
       setAgents(ids)
       setContextWindow(parseContextWindow(configPayload))
       setSelectedAgent(selected)
 
-      if (selected) {
-        await loadAgentPromptData(selected)
+      if (nextSelectedInstance && selected) {
+        await loadAgentPromptData(nextSelectedInstance, selected)
       }
     } catch (error) {
       setLoadError(`Failed to load prompt stack page: ${extractErrorMessage(error)}`)
@@ -517,7 +559,7 @@ export function PromptStackPage() {
   }, [initialize])
 
   const handleAgentChange = useCallback(async (agentID: string) => {
-    if (!agentID || agentID === selectedAgent) {
+    if (!selectedInstance || !agentID || agentID === selectedAgent) {
       return
     }
 
@@ -528,16 +570,16 @@ export function PromptStackPage() {
     setSaveError("")
 
     try {
-      await loadAgentPromptData(agentID)
+      await loadAgentPromptData(selectedInstance, agentID)
     } catch (error) {
       setLoadError(`Failed to load prompt stack for ${agentID}: ${extractErrorMessage(error)}`)
     } finally {
       setLoading(false)
     }
-  }, [loadAgentPromptData, selectedAgent])
+  }, [loadAgentPromptData, selectedAgent, selectedInstance])
 
   const handleSaveLayer = useCallback(async () => {
-    if (!selectedAgent || !activeLayer) {
+    if (!selectedInstance || !selectedAgent || !activeLayer) {
       return
     }
 
@@ -547,10 +589,9 @@ export function PromptStackPage() {
     setSaveError("")
 
     try {
-      const encodedAgent = encodeURIComponent(selectedAgent)
       const encodedLayer = encodeURIComponent(activeLayer.id)
       const payload = await api.put<unknown>(
-        `/api/admin/agents/${encodedAgent}/prompt-stack/${encodedLayer}`,
+        buildPromptStackRoute(selectedInstance, selectedAgent, encodedLayer),
         { content }
       )
 
@@ -559,8 +600,8 @@ export function PromptStackPage() {
       applyLayers(updatedLayers)
 
       const [previewPayload, historyPayload] = await Promise.all([
-        api.get<unknown>(`/api/admin/agents/${encodedAgent}/prompt-stack/preview`),
-        api.get<unknown>(`/api/admin/agents/${encodedAgent}/prompt-stack/history`),
+        api.get<unknown>(buildPromptStackRoute(selectedInstance, selectedAgent, "preview")),
+        api.get<unknown>(buildPromptStackRoute(selectedInstance, selectedAgent, "history")),
       ])
 
       setPreview(parsePreview(previewPayload))
@@ -582,10 +623,10 @@ export function PromptStackPage() {
     } finally {
       setSavingLayer(false)
     }
-  }, [activeLayer, applyLayers, draftByLayerID, selectedAgent, toast])
+  }, [activeLayer, applyLayers, draftByLayerID, selectedAgent, selectedInstance, toast])
 
   const handleLoadDiff = useCallback(async () => {
-    if (!selectedAgent) {
+    if (!selectedInstance || !selectedAgent) {
       return
     }
 
@@ -607,9 +648,8 @@ export function PromptStackPage() {
     setDiffError("")
 
     try {
-      const encodedAgent = encodeURIComponent(selectedAgent)
       const payload = await api.get<unknown>(
-        `/api/admin/agents/${encodedAgent}/prompt-stack/diff?v1=${fromVersion}&v2=${toVersion}`
+        `${buildPromptStackRoute(selectedInstance, selectedAgent, "diff")}?v1=${fromVersion}&v2=${toVersion}`
       )
       setDiff(parseDiff(payload))
     } catch (error) {
@@ -618,10 +658,10 @@ export function PromptStackPage() {
     } finally {
       setDiffLoading(false)
     }
-  }, [selectedAgent, selectedFromVersion, selectedToVersion])
+  }, [selectedAgent, selectedFromVersion, selectedInstance, selectedToVersion])
 
   const handleRollback = useCallback(async () => {
-    if (!selectedAgent) {
+    if (!selectedInstance || !selectedAgent) {
       return
     }
     const version = asPositiveInt(selectedRollbackVersion)
@@ -635,9 +675,8 @@ export function PromptStackPage() {
     setSaveError("")
 
     try {
-      const encodedAgent = encodeURIComponent(selectedAgent)
-      await api.post(`/api/admin/agents/${encodedAgent}/prompt-stack/rollback`, { version })
-      await loadAgentPromptData(selectedAgent)
+      await api.post(buildPromptStackRoute(selectedInstance, selectedAgent, "rollback"), { version })
+      await loadAgentPromptData(selectedInstance, selectedAgent)
       setSaveNotice(`Rolled back to version ${version}.`)
       toast({
         title: "Rollback complete",
@@ -648,18 +687,17 @@ export function PromptStackPage() {
     } finally {
       setLoading(false)
     }
-  }, [loadAgentPromptData, selectedAgent, selectedRollbackVersion, toast])
+  }, [loadAgentPromptData, selectedAgent, selectedInstance, selectedRollbackVersion, toast])
 
   const handleLint = useCallback(async () => {
-    if (!selectedAgent) {
+    if (!selectedInstance || !selectedAgent) {
       return
     }
     setLintLoading(true)
     setLintError("")
 
     try {
-      const encodedAgent = encodeURIComponent(selectedAgent)
-      const payload = await api.post<unknown>(`/api/admin/agents/${encodedAgent}/prompt-stack/lint`, {})
+      const payload = await api.post<unknown>(buildPromptStackRoute(selectedInstance, selectedAgent, "lint"), {})
       setLintIssues(parseLintIssues(payload))
     } catch (error) {
       setLintIssues([])
@@ -667,18 +705,17 @@ export function PromptStackPage() {
     } finally {
       setLintLoading(false)
     }
-  }, [selectedAgent])
+  }, [selectedAgent, selectedInstance])
 
   const handleRunTests = useCallback(async () => {
-    if (!selectedAgent) {
+    if (!selectedInstance || !selectedAgent) {
       return
     }
     setTestLoading(true)
     setTestError("")
 
     try {
-      const encodedAgent = encodeURIComponent(selectedAgent)
-      const payload = await api.post<unknown>(`/api/admin/agents/${encodedAgent}/prompt-stack/test`, {})
+      const payload = await api.post<unknown>(buildPromptStackRoute(selectedInstance, selectedAgent, "test"), {})
       setTestResult(parseStructuralTest(payload))
     } catch (error) {
       setTestResult(null)
@@ -686,7 +723,7 @@ export function PromptStackPage() {
     } finally {
       setTestLoading(false)
     }
-  }, [selectedAgent])
+  }, [selectedAgent, selectedInstance])
 
   return (
     <div className="space-y-4 p-6" data-testid="prompt-stack-page">
@@ -703,6 +740,57 @@ export function PromptStackPage() {
         </CardHeader>
         <CardContent>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <label htmlFor="prompt-stack-instance-selector" className="space-y-1 text-sm">
+              <span>Instance</span>
+              <select
+                id="prompt-stack-instance-selector"
+                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                value={selectedInstance}
+                disabled={loading || instances.length === 0}
+                onChange={async (event) => {
+                  const instanceID = event.target.value
+                  setSelectedInstance(instanceID)
+                  setSelectedAgent("")
+                  setPreview(null)
+                  setVersions([])
+                  setDiff(null)
+                  setDiffError("")
+                  setLintIssues([])
+                  setLintError("")
+                  setTestResult(null)
+                  setTestError("")
+                  setLoading(true)
+                  setLoadError("")
+                  setSaveNotice("")
+                  setSaveError("")
+                  try {
+                    const agentsPayload = instanceID
+                      ? await api.get<{ agents?: unknown }>(`/api/admin/instances/${encodeURIComponent(instanceID)}/agents`)
+                      : { agents: [] }
+                    const ids = normalizeAgentIDs(agentsPayload.agents)
+                    const nextAgent = ids[0] || ""
+                    setAgents(ids)
+                    setSelectedAgent(nextAgent)
+                    if (instanceID && nextAgent) {
+                      await loadAgentPromptData(instanceID, nextAgent)
+                    }
+                  } catch (error) {
+                    setAgents([])
+                    setSelectedAgent("")
+                    setLoadError(`Failed to load prompt stack instance: ${extractErrorMessage(error)}`)
+                  } finally {
+                    setLoading(false)
+                  }
+                }}
+              >
+                {instances.map((instance) => (
+                  <option key={instance.id} value={instance.id}>
+                    {instance.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <label htmlFor="prompt-stack-agent-selector" className="space-y-1 text-sm">
               <span>Agent</span>
               <select

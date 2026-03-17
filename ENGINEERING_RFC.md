@@ -31,8 +31,11 @@ Substantial portions of Milestones 1-5 are now landed on the current branch, inc
 - dashboard inbox ack/run APIs reusing the shared `message_id` lifecycle model
 - dashboard chat threading now carries `instance_id` and `agent_id` through send, poll, stream, and cancel paths
 - eval feature flags now gate both dashboard API responses and dashboard UI visibility/disabled states
+- dashboard Sessions now consumes lifecycle-rich `system` events and renders operator-facing message lifecycle cards
+- Agent Contract and Prompt Stack dashboard flows now resolve explicitly against selected `instance_id` instead of silently depending on the active instance
+- eval feature gating now has a runtime-compatible loader and blocks `openclawssy eval` operational CLI commands when eval is disabled
 
-Remaining work is concentrated in wizard parity, deeper feature-flag enforcement, broader composite-identity rollout, and finishing first-class messaging/eval consumer convergence.
+Remaining work is concentrated in wizard parity, broader composite-identity rollout, and finishing first-class messaging/eval consumer convergence beyond the newly landed dashboard/CLI slices.
 
 This design is grounded in the current code shape:
 

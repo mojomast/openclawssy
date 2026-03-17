@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"openclawssy/internal/eval"
+	"openclawssy/internal/instances"
 	"openclawssy/internal/runtime"
 )
 
@@ -44,20 +45,51 @@ func (s evalService) HandleEval(ctx context.Context, args []string) int {
 		printEvalUsage(s.stdout())
 		return 0
 	case "run":
+		if err := s.requireEvalFeature(); err != nil {
+			fmt.Fprintln(s.stderr(), err)
+			return 1
+		}
 		return s.handleEvalRun(ctx, subArgs)
 	case "list":
+		if err := s.requireEvalFeature(); err != nil {
+			fmt.Fprintln(s.stderr(), err)
+			return 1
+		}
 		return s.handleEvalList(subArgs)
 	case "results":
+		if err := s.requireEvalFeature(); err != nil {
+			fmt.Fprintln(s.stderr(), err)
+			return 1
+		}
 		return s.handleEvalResults(ctx, subArgs)
 	case "baseline":
+		if err := s.requireEvalFeature(); err != nil {
+			fmt.Fprintln(s.stderr(), err)
+			return 1
+		}
 		return s.handleEvalBaseline(ctx, subArgs)
 	case "compare":
+		if err := s.requireEvalFeature(); err != nil {
+			fmt.Fprintln(s.stderr(), err)
+			return 1
+		}
 		return s.handleEvalCompare(ctx, subArgs)
 	default:
 		fmt.Fprintf(s.stderr(), "unknown eval subcommand: %s\n\n", args[0])
 		printEvalUsage(s.stderr())
 		return 2
 	}
+}
+
+func (s evalService) requireEvalFeature() error {
+	enabled, err := instances.EvalFeatureEnabled(s.rootDir())
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		return instances.EvalFeatureDisabledError()
+	}
+	return nil
 }
 
 func (s evalService) handleEvalRun(ctx context.Context, args []string) int {

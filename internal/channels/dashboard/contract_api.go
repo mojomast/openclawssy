@@ -2,8 +2,10 @@ package dashboard
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -45,18 +47,37 @@ func (h *Handler) handleAgentContractAPI(w http.ResponseWriter, r *http.Request)
 		writeDashboardError(w, http.StatusBadRequest, "agents.invalid_agent_id", "invalid agent id", nil)
 		return
 	}
-	if !h.dashboardAgentExists(agentID) {
-		writeDashboardError(w, http.StatusNotFound, "agents.not_found", "agent not found", nil)
-		return
-	}
 
 	if actions[0] == "prompt-stack" {
+		if !h.dashboardAgentExists(agentID) {
+			writeDashboardError(w, http.StatusNotFound, "agents.not_found", "agent not found", nil)
+			return
+		}
 		activeInstanceID, err := instances.LoadActiveInstanceID(h.rootDir)
 		if err != nil {
 			writeDashboardError(w, http.StatusInternalServerError, "instances.load_failed", err.Error(), nil)
 			return
 		}
 		h.handlePromptStackAPI(w, r, activeInstanceID, agentID, actions[1:])
+		return
+	}
+
+	activeInstanceID, err := instances.LoadActiveInstanceID(h.rootDir)
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "instances.load_failed", err.Error(), nil)
+		return
+	}
+	h.handleAgentContractRoute(w, r, activeInstanceID, agentID, actions, false)
+}
+
+func (h *Handler) handleAgentContractRoute(w http.ResponseWriter, r *http.Request, instanceID, agentID string, actions []string, instanceScoped bool) {
+	if instanceScoped {
+		if !h.dashboardAgentExistsInInstance(instanceID, agentID) {
+			writeDashboardError(w, http.StatusNotFound, "agents.not_found", "agent not found", nil)
+			return
+		}
+	} else if !h.dashboardAgentExists(agentID) {
+		writeDashboardError(w, http.StatusNotFound, "agents.not_found", "agent not found", nil)
 		return
 	}
 
@@ -71,38 +92,38 @@ func (h *Handler) handleAgentContractAPI(w http.ResponseWriter, r *http.Request)
 			writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 			return
 		}
-		h.getAgentResolvedContract(w, agentID)
+		h.getAgentResolvedContract(w, instanceID, agentID)
 	case "validate":
 		if r.Method != http.MethodPost {
 			writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 			return
 		}
-		h.validateAgentContract(w, r, agentID)
+		h.validateAgentContract(w, r, instanceID, agentID)
 	case "diff":
 		if r.Method != http.MethodGet {
 			writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 			return
 		}
-		h.getAgentContractDiff(w, r, agentID)
+		h.getAgentContractDiff(w, r, instanceID, agentID)
 	case "rollback-snapshot":
 		if r.Method != http.MethodPost {
 			writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 			return
 		}
-		h.createAgentRollbackSnapshot(w, agentID)
+		h.createAgentRollbackSnapshot(w, instanceID, agentID)
 	case "rollback-restore":
 		if r.Method != http.MethodPost {
 			writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 			return
 		}
-		h.restoreAgentRollbackSnapshot(w, r, agentID)
+		h.restoreAgentRollbackSnapshot(w, r, instanceID, agentID)
 	default:
 		http.NotFound(w, r)
 	}
 }
 
-func (h *Handler) createAgentRollbackSnapshot(w http.ResponseWriter, agentID string) {
-	cfg, err := h.loadDashboardConfig()
+func (h *Handler) createAgentRollbackSnapshot(w http.ResponseWriter, instanceID, agentID string) {
+	cfg, err := h.loadDashboardConfigForInstance(instanceID)
 	if err != nil {
 		writeDashboardError(w, http.StatusInternalServerError, "config.load_failed", err.Error(), nil)
 		return
@@ -127,11 +148,12 @@ func (h *Handler) createAgentRollbackSnapshot(w http.ResponseWriter, agentID str
 	}
 
 	h.rollbackMu.Lock()
-	existing := append([]agentRollbackSnapshot{snapshot}, h.rollbackByAgent[agentID]...)
+	key := rollbackSnapshotKey(instanceID, agentID)
+	existing := append([]agentRollbackSnapshot{snapshot}, h.rollbackByAgent[key]...)
 	if len(existing) > maxRollbackSnapshotsPerAgent {
 		existing = existing[:maxRollbackSnapshotsPerAgent]
 	}
-	h.rollbackByAgent[agentID] = existing
+	h.rollbackByAgent[key] = existing
 	h.rollbackMu.Unlock()
 
 	writeJSON(w, map[string]any{
@@ -143,7 +165,7 @@ func (h *Handler) createAgentRollbackSnapshot(w http.ResponseWriter, agentID str
 	})
 }
 
-func (h *Handler) restoreAgentRollbackSnapshot(w http.ResponseWriter, r *http.Request, agentID string) {
+func (h *Handler) restoreAgentRollbackSnapshot(w http.ResponseWriter, r *http.Request, instanceID, agentID string) {
 	var req struct {
 		SnapshotID string `json:"snapshot_id"`
 	}
@@ -158,7 +180,7 @@ func (h *Handler) restoreAgentRollbackSnapshot(w http.ResponseWriter, r *http.Re
 	}
 
 	h.rollbackMu.Lock()
-	snapshots := h.rollbackByAgent[agentID]
+	snapshots := h.rollbackByAgent[rollbackSnapshotKey(instanceID, agentID)]
 	var match agentRollbackSnapshot
 	found := false
 	for _, snapshot := range snapshots {
@@ -175,12 +197,42 @@ func (h *Handler) restoreAgentRollbackSnapshot(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if err := saveDashboardConfig(filepath.Join(h.rootDir, ".openclawssy", "config.json"), match.Config); err != nil {
-		writeConfigValidationError(w, err, match.Config)
-		return
+	if strings.TrimSpace(instanceID) == "" || strings.TrimSpace(instanceID) == instances.DefaultInstanceID {
+		if _, err := h.loadProjectedInstance(instanceID); err != nil {
+			if err := saveDashboardConfig(filepath.Join(h.rootDir, ".openclawssy", "config.json"), match.Config); err != nil {
+				writeConfigValidationError(w, err, match.Config)
+				return
+			}
+		} else {
+			instance, err := h.loadProjectedInstance(instanceID)
+			if err != nil {
+				writeDashboardError(w, http.StatusInternalServerError, "instances.load_failed", err.Error(), nil)
+				return
+			}
+			instance.Config = match.Config
+			if err := h.saveProjectedInstance(instance); err != nil {
+				writeConfigValidationError(w, err, match.Config)
+				return
+			}
+		}
+	} else {
+		instance, err := h.loadProjectedInstance(instanceID)
+		if err != nil {
+			writeDashboardError(w, http.StatusInternalServerError, "instances.load_failed", err.Error(), nil)
+			return
+		}
+		instance.Config = match.Config
+		if err := h.saveProjectedInstance(instance); err != nil {
+			writeConfigValidationError(w, err, match.Config)
+			return
+		}
 	}
 
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+func rollbackSnapshotKey(instanceID, agentID string) string {
+	return firstNonEmpty(strings.TrimSpace(instanceID), instances.DefaultInstanceID) + ":" + agentID
 }
 
 func parseAgentAdminRoute(requestPath string) (agentID string, actions []string, ok bool) {
@@ -212,17 +264,36 @@ func (h *Handler) dashboardAgentExists(agentID string) bool {
 	return false
 }
 
+func (h *Handler) dashboardAgentExistsInInstance(instanceID, agentID string) bool {
+	_, err := instances.LoadAgentManifest(h.rootDir, instanceID, agentID)
+	return err == nil
+}
+
 func (h *Handler) loadDashboardConfig() (config.Config, error) {
 	return config.LoadOrDefault(filepath.Join(h.rootDir, ".openclawssy", "config.json"))
 }
 
-func (h *Handler) getAgentResolvedContract(w http.ResponseWriter, agentID string) {
-	cfg, err := h.loadDashboardConfig()
+func (h *Handler) loadDashboardConfigForInstance(instanceID string) (config.Config, error) {
+	if strings.TrimSpace(instanceID) == "" {
+		return h.loadDashboardConfig()
+	}
+	instance, err := h.loadProjectedInstance(instanceID)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) && strings.TrimSpace(instanceID) == instances.DefaultInstanceID {
+			return h.loadDashboardConfig()
+		}
+		return config.Config{}, err
+	}
+	return instance.Config, nil
+}
+
+func (h *Handler) getAgentResolvedContract(w http.ResponseWriter, instanceID, agentID string) {
+	cfg, err := h.loadDashboardConfigForInstance(instanceID)
 	if err != nil {
 		writeDashboardError(w, http.StatusInternalServerError, "config.load_failed", err.Error(), nil)
 		return
 	}
-	resolved, err := h.resolveAgentContractWithIntegrations(cfg, agentID)
+	resolved, err := h.resolveAgentContractWithIntegrations(cfg, instanceID, agentID)
 	if err != nil {
 		writeDashboardError(w, http.StatusInternalServerError, "contract.resolve_failed", err.Error(), nil)
 		return
@@ -230,13 +301,13 @@ func (h *Handler) getAgentResolvedContract(w http.ResponseWriter, agentID string
 	writeJSON(w, resolved)
 }
 
-func (h *Handler) resolveAgentContractWithIntegrations(cfg config.Config, agentID string) (agentcontract.AgentContract, error) {
+func (h *Handler) resolveAgentContractWithIntegrations(cfg config.Config, instanceID, agentID string) (agentcontract.AgentContract, error) {
 	resolved, err := agentcontract.Resolve(cfg, agentID, nil)
 	if err != nil {
 		return agentcontract.AgentContract{}, err
 	}
 
-	if err := h.applyPromptStackToContract(agentID, &resolved); err != nil {
+	if err := h.applyPromptStackToContract(instanceID, agentID, &resolved); err != nil {
 		return agentcontract.AgentContract{}, err
 	}
 	if err := applyDelegationRoleReferences(cfg, agentID, &resolved); err != nil {
@@ -246,16 +317,20 @@ func (h *Handler) resolveAgentContractWithIntegrations(cfg config.Config, agentI
 	return resolved, nil
 }
 
-func (h *Handler) applyPromptStackToContract(agentID string, resolved *agentcontract.AgentContract) error {
-	activeInstanceID, err := instances.LoadActiveInstanceID(h.rootDir)
+func (h *Handler) applyPromptStackToContract(instanceID, agentID string, resolved *agentcontract.AgentContract) error {
+	resolvedInstanceID := strings.TrimSpace(instanceID)
+	if resolvedInstanceID == "" {
+		activeInstanceID, err := instances.LoadActiveInstanceID(h.rootDir)
+		if err != nil {
+			return err
+		}
+		resolvedInstanceID = activeInstanceID
+	}
+	store, err := h.promptStackStore(resolvedInstanceID)
 	if err != nil {
 		return err
 	}
-	store, err := h.promptStackStore(activeInstanceID)
-	if err != nil {
-		return err
-	}
-	stack, err := h.ensurePromptStackInitialized(activeInstanceID, agentID, store)
+	stack, err := h.ensurePromptStackInitialized(resolvedInstanceID, agentID, store)
 	if err != nil {
 		return err
 	}
@@ -331,8 +406,8 @@ func mapSubAgentRestrictionsToRoleOverrides(restrictions config.SubAgentRestrict
 	return overrides
 }
 
-func (h *Handler) validateAgentContract(w http.ResponseWriter, r *http.Request, agentID string) {
-	cfg, err := h.loadDashboardConfig()
+func (h *Handler) validateAgentContract(w http.ResponseWriter, r *http.Request, instanceID, agentID string) {
+	cfg, err := h.loadDashboardConfigForInstance(instanceID)
 	if err != nil {
 		writeDashboardError(w, http.StatusInternalServerError, "config.load_failed", err.Error(), nil)
 		return
@@ -402,14 +477,14 @@ func applyContractPatch(base agentcontract.AgentContract, patch map[string]any, 
 	return proposed, nil
 }
 
-func (h *Handler) getAgentContractDiff(w http.ResponseWriter, r *http.Request, agentID string) {
-	cfg, err := h.loadDashboardConfig()
+func (h *Handler) getAgentContractDiff(w http.ResponseWriter, r *http.Request, instanceID, agentID string) {
+	cfg, err := h.loadDashboardConfigForInstance(instanceID)
 	if err != nil {
 		writeDashboardError(w, http.StatusInternalServerError, "config.load_failed", err.Error(), nil)
 		return
 	}
 
-	target, err := h.resolveAgentContractWithIntegrations(cfg, agentID)
+	target, err := h.resolveAgentContractWithIntegrations(cfg, instanceID, agentID)
 	if err != nil {
 		writeDashboardError(w, http.StatusInternalServerError, "contract.resolve_failed", err.Error(), nil)
 		return
@@ -428,7 +503,7 @@ func (h *Handler) getAgentContractDiff(w http.ResponseWriter, r *http.Request, a
 	if strings.EqualFold(base, agentcontract.InheritanceSourceGlobal) {
 		baseLabel = agentcontract.InheritanceSourceGlobal
 		globalCfg := cloneConfigForGlobalDiff(cfg, agentID)
-		baseContract, err = h.resolveAgentContractWithIntegrations(globalCfg, agentID)
+		baseContract, err = h.resolveAgentContractWithIntegrations(globalCfg, instanceID, agentID)
 		if err != nil {
 			writeDashboardError(w, http.StatusInternalServerError, "contract.resolve_failed", err.Error(), nil)
 			return
@@ -444,7 +519,7 @@ func (h *Handler) getAgentContractDiff(w http.ResponseWriter, r *http.Request, a
 			return
 		}
 		baseLabel = otherID
-		baseContract, err = h.resolveAgentContractWithIntegrations(cfg, otherID)
+		baseContract, err = h.resolveAgentContractWithIntegrations(cfg, instanceID, otherID)
 		if err != nil {
 			writeDashboardError(w, http.StatusInternalServerError, "contract.resolve_failed", err.Error(), nil)
 			return
