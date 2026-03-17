@@ -234,12 +234,29 @@ func TestControlPlaneFeaturesAndWizardEndpoints(t *testing.T) {
 	if !ok || model["provider"] != "openrouter" {
 		t.Fatalf("expected planned model provider openrouter, got %#v", planConfig)
 	}
+	var createdPayload struct {
+		Instance map[string]any `json:"instance"`
+	}
 
 	createReq := httptest.NewRequest(http.MethodPost, "/api/admin/wizard/instances/create", bytes.NewBufferString(instanceWizardBody))
 	createRR := httptest.NewRecorder()
 	mux.ServeHTTP(createRR, createReq)
 	if createRR.Code != http.StatusCreated {
 		t.Fatalf("expected wizard instance create status %d, got %d (%s)", http.StatusCreated, createRR.Code, createRR.Body.String())
+	}
+	if err := json.Unmarshal(createRR.Body.Bytes(), &createdPayload); err != nil {
+		t.Fatalf("decode create payload: %v", err)
+	}
+	createdConfig, ok := createdPayload.Instance["config"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected config in create payload, got %#v", createdPayload.Instance)
+	}
+	createdModel, ok := createdConfig["model"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected model in create payload config, got %#v", createdConfig)
+	}
+	if createdModel["provider"] == "" || createdModel["name"] == "" {
+		t.Fatalf("expected created model provider/name to be populated, got %#v", createdModel)
 	}
 
 	agentWizardBody := `{"instance_id":"wizard-one","agent_id":"researcher","template_id":"research","model_provider":"openai","model_name":"gpt-4.1-mini"}`
@@ -263,12 +280,27 @@ func TestControlPlaneFeaturesAndWizardEndpoints(t *testing.T) {
 	if agentPlanPayload.Plan.AgentID != "researcher" || agentPlanPayload.Plan.Profile.Model.Provider != "openai" {
 		t.Fatalf("unexpected agent plan payload: %#v", agentPlanPayload.Plan)
 	}
+	var agentCreatePayload struct {
+		Agent struct {
+			AgentID string              `json:"agent_id"`
+			Profile config.AgentProfile `json:"profile"`
+		} `json:"agent"`
+	}
 
 	agentCreateReq := httptest.NewRequest(http.MethodPost, "/api/admin/wizard/agents/create", bytes.NewBufferString(agentWizardBody))
 	agentCreateRR := httptest.NewRecorder()
 	mux.ServeHTTP(agentCreateRR, agentCreateReq)
 	if agentCreateRR.Code != http.StatusCreated {
 		t.Fatalf("expected wizard agent create status %d, got %d (%s)", http.StatusCreated, agentCreateRR.Code, agentCreateRR.Body.String())
+	}
+	if err := json.Unmarshal(agentCreateRR.Body.Bytes(), &agentCreatePayload); err != nil {
+		t.Fatalf("decode agent create payload: %v", err)
+	}
+	if agentCreatePayload.Agent.AgentID != agentPlanPayload.Plan.AgentID {
+		t.Fatalf("expected created agent id %q to match plan %q", agentCreatePayload.Agent.AgentID, agentPlanPayload.Plan.AgentID)
+	}
+	if agentCreatePayload.Agent.Profile.Model != agentPlanPayload.Plan.Profile.Model {
+		t.Fatalf("expected created agent model to match plan\nplan=%#v\ncreate=%#v", agentPlanPayload.Plan.Profile.Model, agentCreatePayload.Agent.Profile.Model)
 	}
 
 	instanceReq := httptest.NewRequest(http.MethodGet, "/api/admin/instances/wizard-one", nil)
@@ -304,6 +336,81 @@ func TestControlPlaneFeaturesAndWizardEndpoints(t *testing.T) {
 		t.Fatalf("expected invalid template status %d, got %d (%s)", http.StatusBadRequest, invalidRR.Code, invalidRR.Body.String())
 	}
 	assertDashboardErrorCode(t, invalidRR.Body.Bytes(), "wizard.unknown_instance_template")
+}
+
+func TestWizardEndpointsRequireFeatureSpecificGuards(t *testing.T) {
+	root := t.TempDir()
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	patchReq := httptest.NewRequest(http.MethodPatch, "/api/admin/control-plane/features", bytes.NewBufferString(`{"instance_control":false,"instance_agents":false,"wizard":true}`))
+	patchRR := httptest.NewRecorder()
+	mux.ServeHTTP(patchRR, patchReq)
+	if patchRR.Code != http.StatusOK {
+		t.Fatalf("expected feature patch status %d, got %d (%s)", http.StatusOK, patchRR.Code, patchRR.Body.String())
+	}
+
+	instancePlanReq := httptest.NewRequest(http.MethodPost, "/api/admin/wizard/instances/plan", bytes.NewBufferString(`{"template_id":"blank","instance_id":"alpha"}`))
+	instancePlanRR := httptest.NewRecorder()
+	mux.ServeHTTP(instancePlanRR, instancePlanReq)
+	if instancePlanRR.Code != http.StatusForbidden {
+		t.Fatalf("expected wizard instance plan status %d, got %d (%s)", http.StatusForbidden, instancePlanRR.Code, instancePlanRR.Body.String())
+	}
+	assertDashboardErrorCode(t, instancePlanRR.Body.Bytes(), "feature.instance_control_disabled")
+
+	instanceCreateReq := httptest.NewRequest(http.MethodPost, "/api/admin/wizard/instances/create", bytes.NewBufferString(`{"template_id":"blank","instance_id":"alpha"}`))
+	instanceCreateRR := httptest.NewRecorder()
+	mux.ServeHTTP(instanceCreateRR, instanceCreateReq)
+	if instanceCreateRR.Code != http.StatusForbidden {
+		t.Fatalf("expected wizard instance create status %d, got %d (%s)", http.StatusForbidden, instanceCreateRR.Code, instanceCreateRR.Body.String())
+	}
+	assertDashboardErrorCode(t, instanceCreateRR.Body.Bytes(), "feature.instance_control_disabled")
+
+	agentPlanReq := httptest.NewRequest(http.MethodPost, "/api/admin/wizard/agents/plan", bytes.NewBufferString(`{"instance_id":"alpha","agent_id":"researcher","template_id":"research"}`))
+	agentPlanRR := httptest.NewRecorder()
+	mux.ServeHTTP(agentPlanRR, agentPlanReq)
+	if agentPlanRR.Code != http.StatusForbidden {
+		t.Fatalf("expected wizard agent plan status %d, got %d (%s)", http.StatusForbidden, agentPlanRR.Code, agentPlanRR.Body.String())
+	}
+	assertDashboardErrorCode(t, agentPlanRR.Body.Bytes(), "feature.instance_agents_disabled")
+
+	agentCreateReq := httptest.NewRequest(http.MethodPost, "/api/admin/wizard/agents/create", bytes.NewBufferString(`{"instance_id":"alpha","agent_id":"researcher","template_id":"research"}`))
+	agentCreateRR := httptest.NewRecorder()
+	mux.ServeHTTP(agentCreateRR, agentCreateReq)
+	if agentCreateRR.Code != http.StatusForbidden {
+		t.Fatalf("expected wizard agent create status %d, got %d (%s)", http.StatusForbidden, agentCreateRR.Code, agentCreateRR.Body.String())
+	}
+	assertDashboardErrorCode(t, agentCreateRR.Body.Bytes(), "feature.instance_agents_disabled")
+}
+
+func TestWizardAgentCreateRejectsDuplicateAgent(t *testing.T) {
+	root := t.TempDir()
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	createInstanceReq := httptest.NewRequest(http.MethodPost, "/api/admin/instances", bytes.NewBufferString(`{"id":"wizard-one","name":"Wizard One"}`))
+	createInstanceRR := httptest.NewRecorder()
+	mux.ServeHTTP(createInstanceRR, createInstanceReq)
+	if createInstanceRR.Code != http.StatusCreated {
+		t.Fatalf("expected create instance status %d, got %d (%s)", http.StatusCreated, createInstanceRR.Code, createInstanceRR.Body.String())
+	}
+
+	createAgentReq := httptest.NewRequest(http.MethodPost, "/api/admin/instances/wizard-one/agents", bytes.NewBufferString(`{"agent_id":"researcher","profile":{"enabled":true}}`))
+	createAgentRR := httptest.NewRecorder()
+	mux.ServeHTTP(createAgentRR, createAgentReq)
+	if createAgentRR.Code != http.StatusCreated {
+		t.Fatalf("expected create agent status %d, got %d (%s)", http.StatusCreated, createAgentRR.Code, createAgentRR.Body.String())
+	}
+
+	wizardReq := httptest.NewRequest(http.MethodPost, "/api/admin/wizard/agents/create", bytes.NewBufferString(`{"instance_id":"wizard-one","agent_id":"researcher","template_id":"research"}`))
+	wizardRR := httptest.NewRecorder()
+	mux.ServeHTTP(wizardRR, wizardReq)
+	if wizardRR.Code != http.StatusConflict {
+		t.Fatalf("expected duplicate agent status %d, got %d (%s)", http.StatusConflict, wizardRR.Code, wizardRR.Body.String())
+	}
+	assertDashboardErrorCode(t, wizardRR.Body.Bytes(), "instances.agent_exists")
 }
 
 func TestInstanceFeatureFlagEnforcement(t *testing.T) {

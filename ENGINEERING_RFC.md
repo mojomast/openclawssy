@@ -46,6 +46,9 @@ Substantial portions of Milestones 1-5 are now landed on the current branch, inc
 - Docs and Skills now follow that same `instance_agents` feature-state contract: their admin routes hard-fail when disabled, nav visibility hides both entries, and direct route access renders explicit disabled-state panels with doc/skill API work suppressed
 - Role Templates now follows that same `instance_agents` feature-state contract too: role admin routes hard-fail when disabled, nav visibility hides the page, and direct route access renders an explicit disabled-state panel with role API work suppressed
 - Wizard now has a first-class dashboard shell: nav visibility honors the `wizard` feature, direct route access renders an explicit disabled-state panel when off, and the template catalog loads through the existing wizard backend when enabled
+- Wizard instance flows now support plan/create directly from the dashboard shell: operators can select a template, preview planned instance config and operations, and create instances in-place while wizard routes also enforce the underlying `instance_control` feature guard
+- Wizard agent flows now also support existing-instance plan/create from the dashboard shell: operators can target a canonical instance, preview normalized agent profiles and operations, avoid duplicate agent IDs, and create agents in-place while wizard agent routes enforce `instance_agents`
+- Wizard now supports same-session handoff from instance creation into agent targeting, plus targeted preview/create parity regression coverage and in-page instance-control disabled states so the milestone is substantially end-to-end instead of catalog-only
 
 Remaining work is concentrated in wizard parity, broader composite-identity rollout, and finishing first-class messaging/eval consumer convergence beyond the newly landed dashboard/CLI slices.
 

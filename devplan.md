@@ -299,6 +299,9 @@ Progress update:
 - Docs and Skills now honor that same shared `instance_agents` feature state across both dashboard UI and admin routes, hiding disabled nav/direct access and suppressing legacy doc/skill API activity when instance-agent controls are off
 - Role Templates now honors that same shared `instance_agents` feature state across both dashboard UI and admin routes, hiding disabled nav/direct access and suppressing role template API activity when instance-agent controls are off
 - Wizard now has an initial dashboard route/nav/template-catalog shell wired to the existing wizard backend, including disabled-nav/direct-access behavior when the `wizard` feature is off
+- Wizard now also supports the first guided create path in the dashboard shell: instance template selection, plan preview, in-place create, duplicate-id handling, and matching feature enforcement for `instance_control`
+- Wizard now also supports existing-instance agent plan/create in the dashboard shell, including active-instance selection, normalized profile previews, duplicate-agent avoidance, and matching feature enforcement for `instance_agents`
+- Wizard now includes same-session instance->agent handoff, targeted preview/create parity coverage, and in-page disabled-state handling for `instance_control`, making the wizard milestone materially closer to exit criteria
 
 ## Milestone 6: Wizard
 

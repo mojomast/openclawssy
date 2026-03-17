@@ -1299,6 +1299,9 @@ func (h *Handler) handleWizardInstancePlan(w http.ResponseWriter, r *http.Reques
 	if !h.requireWizardFeature(w) {
 		return
 	}
+	if !h.requireInstanceControlFeature(w) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 		return
@@ -1318,6 +1321,9 @@ func (h *Handler) handleWizardInstancePlan(w http.ResponseWriter, r *http.Reques
 
 func (h *Handler) handleWizardInstanceCreate(w http.ResponseWriter, r *http.Request) {
 	if !h.requireWizardFeature(w) {
+		return
+	}
+	if !h.requireInstanceControlFeature(w) {
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -1360,6 +1366,9 @@ func (h *Handler) handleWizardAgentPlan(w http.ResponseWriter, r *http.Request) 
 	if !h.requireWizardFeature(w) {
 		return
 	}
+	if !h.requireInstanceAgentsFeature(w) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 		return
@@ -1385,6 +1394,9 @@ func (h *Handler) handleWizardAgentCreate(w http.ResponseWriter, r *http.Request
 	if !h.requireWizardFeature(w) {
 		return
 	}
+	if !h.requireInstanceAgentsFeature(w) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 		return
@@ -1402,6 +1414,13 @@ func (h *Handler) handleWizardAgentCreate(w http.ResponseWriter, r *http.Request
 	plan, err := buildWizardAgentPlan(instance, req)
 	if err != nil {
 		h.writeWizardError(w, err)
+		return
+	}
+	if _, err := instances.LoadAgentManifest(h.rootDir, instance.ID, plan.AgentID); err == nil {
+		writeDashboardError(w, http.StatusConflict, "instances.agent_exists", "agent already exists", nil)
+		return
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		writeDashboardError(w, http.StatusInternalServerError, "instances.load_failed", err.Error(), nil)
 		return
 	}
 	updatedCfg, normalizedProfile, err := buildInstanceAgentConfig(instance.Config, plan.AgentID, plan.Profile)

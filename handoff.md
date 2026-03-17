@@ -46,6 +46,9 @@ Date: 2026-03-16
 - Docs and Skills now match that same `instance_agents` feature gating contract too: their admin routes are feature-gated, nav entries hide when disabled, direct-route shells render explicit disabled panels, and legacy doc/skill API work is suppressed.
 - Role Templates now matches that same `instance_agents` feature gating contract too: role admin routes are feature-gated, the nav entry hides when disabled, direct-route shells render an explicit disabled panel, and role-template API work is suppressed.
 - Wizard now has a dashboard shell too: the nav entry hides when `wizard` is disabled, direct-route access renders an explicit disabled panel, and enabled control planes can browse instance/agent template catalogs through `/api/admin/wizard/templates`.
+- Wizard instance flows now work end-to-end in the dashboard shell too: operators can choose a template, preview planned config/operations, create the instance in-place, and get clean duplicate-id errors, while wizard instance routes also enforce `instance_control`.
+- Wizard agent flows now work end-to-end in the dashboard shell too: operators can target an existing instance, preview normalized profile/operations, create the agent in-place, and get duplicate-agent protection while wizard agent routes also enforce `instance_agents`.
+- Wizard now supports same-session handoff from new instance creation into agent targeting, and the latest targeted tests cover preview/create parity on key wizard fields plus in-page disabled-state handling when `instance_control` is off.
 
 ## Validation completed
 
