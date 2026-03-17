@@ -233,6 +233,7 @@ Current capabilities:
 - dashboard session-message normalization now preserves lifecycle envelope metadata such as `message_id`, `status`, `instance_id`, sender/recipient IDs, task linkage, and related run linkage
 - Sessions detail now renders operator-facing lifecycle cards for system/lifecycle events instead of flattening everything into generic system text
 - dashboard session-message API coverage now verifies lifecycle metadata survives the backend/UI boundary
+- Sessions lifecycle cards now open canonical inbox detail, rendering merged `message_id` lifecycle state and exposing inbox `ack` / `run` actions backed by the shared dashboard inbox endpoints
 
 ### 2.13 Instance-aware Agent Contract and Prompt Stack consumers
 
@@ -298,6 +299,7 @@ Verified:
 - `go test ./internal/channels/dashboard ./internal/tools ./internal/runtime`
 - `cd internal/channels/dashboard/ui && npm run build && CI=1 npx playwright test tests/e2e/contract.spec.ts tests/e2e/prompt-stack.spec.ts --reporter=line`
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/sessions.spec.ts --reporter=line`
+- `cd internal/channels/dashboard/ui && npm run build`
 
 Note: one broader `go test ./internal/runtime ./...` package pass exposed an existing flaky/unrelated failure in `TestEngineExecuteIngestsMemoryEventsWhenEnabled`, but the focused rerun of that test passed immediately and the targeted package suites for the changed slices passed.
 

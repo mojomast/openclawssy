@@ -41,6 +41,9 @@ type SessionMockOptions = {
 type SessionMockState = {
   listQueries: Array<Record<string, string>>
   messageQueries: Array<{ sessionID: string; limit: string }>
+  inboxDetailRequests: string[]
+  inboxAckRequests: string[]
+  inboxRunRequests: Array<{ path: string; body: string }>
 }
 
 function json(route: Route, body: unknown, status = 200) {
@@ -68,6 +71,9 @@ async function installSessionsMocks(page: Page, options: SessionMockOptions): Pr
   const state: SessionMockState = {
     listQueries: [],
     messageQueries: [],
+    inboxDetailRequests: [],
+    inboxAckRequests: [],
+    inboxRunRequests: [],
   }
 
   await page.route("**/*", async (route) => {
@@ -120,6 +126,72 @@ async function installSessionsMocks(page: Page, options: SessionMockOptions): Pr
       await json(route, {
         session_id: sessionID,
         messages: allMessages.slice(Math.max(0, allMessages.length - limit)),
+      })
+      return
+    }
+
+    if (pathname === "/api/admin/instances/lab/agents/implementer/inbox/msg_123" && method === "GET") {
+      state.inboxDetailRequests.push(pathname)
+      await json(route, {
+        instance_id: "lab",
+        agent_id: "implementer",
+        message: {
+          message_id: "msg_123",
+          status: "acknowledged",
+          instance_id: "lab",
+          session_id: "inbox_session_1",
+          source_session_id: "source_session_1",
+          from_agent_id: "planner",
+          to_agent_id: "implementer",
+          task_id: "task_9",
+          message: "implement the patch",
+          related_run_id: "run_314",
+          note: "dashboard acknowledged",
+        },
+      })
+      return
+    }
+
+    if (pathname === "/api/admin/instances/lab/agents/implementer/inbox/msg_123/ack" && method === "POST") {
+      state.inboxAckRequests.push(pathname)
+      await json(route, {
+        ok: true,
+        message: {
+          message_id: "msg_123",
+          status: "acknowledged",
+          instance_id: "lab",
+          session_id: "inbox_session_1",
+          source_session_id: "source_session_1",
+          from_agent_id: "planner",
+          to_agent_id: "implementer",
+          task_id: "task_9",
+          message: "implement the patch",
+          related_run_id: "run_314",
+          note: "dashboard acknowledged",
+        },
+      })
+      return
+    }
+
+    if (pathname === "/api/admin/instances/lab/agents/implementer/inbox/msg_123/run" && method === "POST") {
+      state.inboxRunRequests.push({ path: pathname, body: request.postData() || "" })
+      await json(route, {
+        ok: true,
+        run_id: "run_315",
+        status: "completed",
+        message: {
+          message_id: "msg_123",
+          status: "completed",
+          instance_id: "lab",
+          session_id: "inbox_session_1",
+          source_session_id: "source_session_1",
+          from_agent_id: "planner",
+          to_agent_id: "implementer",
+          task_id: "task_9",
+          message: "implement the patch",
+          related_run_id: "run_315",
+          note: "task completed",
+        },
       })
       return
     }
@@ -285,7 +357,7 @@ test("opening a session shows messages and tool events with collapsible args/out
 })
 
 test("session detail renders lifecycle cards for system message events", async ({ page }) => {
-  await installSessionsMocks(page, {
+  const state = await installSessionsMocks(page, {
     sessions: [
       {
         session_id: "session_lifecycle",
@@ -332,6 +404,26 @@ test("session detail renders lifecycle cards for system message events", async (
   await expect(lifecycleCard).toContainText("Source session: source_session_1")
   await expect(lifecycleCard).toContainText("Run: run_314")
   await expect(lifecycleCard).toContainText("dashboard acknowledged")
+
+  await lifecycleCard.getByRole("button", { name: "View inbox detail" }).click()
+  await expect.poll(() => state.inboxDetailRequests.length).toBe(1)
+
+  const inboxDetail = page.getByTestId("sessions-inbox-detail")
+  await expect(inboxDetail).toContainText("Canonical inbox detail")
+  await expect(inboxDetail).toContainText("Original message")
+  await expect(inboxDetail).toContainText("implement the patch")
+  await expect(inboxDetail).toContainText("Inbox session: inbox_session_1")
+
+  await inboxDetail.getByRole("button", { name: "Acknowledge" }).click()
+  await expect.poll(() => state.inboxAckRequests.length).toBe(1)
+  await expect(inboxDetail).toContainText("dashboard acknowledged")
+
+  await inboxDetail.getByRole("button", { name: "Run inbox task" }).click()
+  await expect.poll(() => state.inboxRunRequests.length).toBe(1)
+  await expect(inboxDetail).toContainText("completed")
+  await expect(inboxDetail).toContainText("Run: run_315")
+  await expect(inboxDetail).toContainText("task completed")
+  await expect.poll(() => JSON.parse(state.inboxRunRequests[0]?.body || "{}").source).toBe("dashboard/sessions")
 })
 
 test("shows loading and empty states for sessions list and message detail", async ({ page }) => {

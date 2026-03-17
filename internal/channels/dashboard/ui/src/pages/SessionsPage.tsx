@@ -73,6 +73,29 @@ type SessionMessagesResponse = {
   messages?: unknown
 }
 
+type InboxMessageDetail = {
+  messageID: string
+  status: string
+  instanceID: string
+  sessionID: string
+  sourceSessionID: string
+  fromAgentID: string
+  toAgentID: string
+  subject: string
+  taskID: string
+  channel: string
+  userID: string
+  message: string
+  relatedRunID: string
+  note: string
+  error: string
+  ts: string
+}
+
+type InboxMessageResponse = {
+  message?: unknown
+}
+
 function asText(value: unknown): string {
   if (value === null || value === undefined) {
     return ""
@@ -293,6 +316,35 @@ function normalizeMessages(value: unknown): SessionMessage[] {
     .filter((message): message is SessionMessage => message !== null)
 }
 
+function normalizeInboxMessage(value: unknown): InboxMessageDetail | null {
+  const raw = asRecord(value)
+  if (!raw) {
+    return null
+  }
+  const messageID = asText(raw.message_id).trim()
+  if (!messageID) {
+    return null
+  }
+  return {
+    messageID,
+    status: asText(raw.status).trim(),
+    instanceID: asText(raw.instance_id).trim(),
+    sessionID: asText(raw.session_id).trim(),
+    sourceSessionID: asText(raw.source_session_id).trim(),
+    fromAgentID: asText(raw.from_agent_id).trim(),
+    toAgentID: asText(raw.to_agent_id).trim(),
+    subject: asText(raw.subject).trim(),
+    taskID: asText(raw.task_id).trim(),
+    channel: asText(raw.channel).trim(),
+    userID: asText(raw.user_id).trim(),
+    message: asText(raw.message).trim(),
+    relatedRunID: asText(raw.related_run_id).trim(),
+    note: asText(raw.note).trim(),
+    error: asText(raw.error).trim(),
+    ts: asText(raw.ts).trim(),
+  }
+}
+
 function sessionSearchBlob(session: SessionItem): string {
   return normalizeSearch(
     [session.sessionID, session.title, session.userID, session.roomID, session.agentID, session.channel]
@@ -390,6 +442,34 @@ function lifecycleDetails(message: SessionMessage): Array<{ label: string; value
   ].filter((entry) => entry.value)
 }
 
+function inboxDetails(message: InboxMessageDetail): Array<{ label: string; value: string }> {
+  return [
+    { label: "Message", value: message.messageID },
+    { label: "Status", value: message.status },
+    { label: "Instance", value: message.instanceID },
+    { label: "From", value: message.fromAgentID },
+    { label: "To", value: message.toAgentID },
+    { label: "Task", value: message.taskID },
+    { label: "Source session", value: message.sourceSessionID },
+    { label: "Inbox session", value: message.sessionID },
+    { label: "Run", value: message.relatedRunID },
+    { label: "Channel", value: message.channel },
+    { label: "User", value: message.userID },
+  ].filter((entry) => entry.value)
+}
+
+function canInspectInboxMessage(message: SessionMessage): boolean {
+  return Boolean(message.messageID && message.instanceID && message.toAgentID)
+}
+
+function inboxMessageKey(message: Pick<SessionMessage, "messageID" | "instanceID" | "toAgentID">): string {
+  return [message.instanceID, message.toAgentID, message.messageID].filter(Boolean).join(":")
+}
+
+function buildInboxMessagePath(instanceID: string, agentID: string, messageID: string): string {
+  return `/api/admin/instances/${encodeURIComponent(instanceID)}/agents/${encodeURIComponent(agentID)}/inbox/${encodeURIComponent(messageID)}`
+}
+
 function buildSessionsListQuery(limit: number, offset: number): string {
   const params = new URLSearchParams()
   params.set("limit", String(limit))
@@ -440,6 +520,11 @@ export function SessionsPage() {
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [messagesError, setMessagesError] = useState("")
   const [messagesReloadToken, setMessagesReloadToken] = useState(0)
+  const [activeInboxKey, setActiveInboxKey] = useState("")
+  const [activeInboxDetail, setActiveInboxDetail] = useState<InboxMessageDetail | null>(null)
+  const [activeInboxLoading, setActiveInboxLoading] = useState(false)
+  const [activeInboxError, setActiveInboxError] = useState("")
+  const [activeInboxAction, setActiveInboxAction] = useState("")
 
   const pathSessionID = useMemo(() => normalizeDeepLinkID(params.sessionId), [params.sessionId])
   const querySessionID = useMemo(() => normalizeDeepLinkID(searchParams.get("session")), [searchParams])
@@ -537,6 +622,64 @@ export function SessionsPage() {
     }
   }, [messageLimit, selectedSessionID])
 
+  const loadInboxDetail = useCallback(async (message: SessionMessage) => {
+    if (!canInspectInboxMessage(message)) {
+      return
+    }
+    const key = inboxMessageKey(message)
+    if (activeInboxKey === key && activeInboxDetail && !activeInboxLoading) {
+      setActiveInboxKey("")
+      setActiveInboxDetail(null)
+      setActiveInboxError("")
+      return
+    }
+
+    setActiveInboxKey(key)
+    setActiveInboxLoading(true)
+    setActiveInboxError("")
+
+    try {
+      const payload = await api.get<InboxMessageResponse>(buildInboxMessagePath(message.instanceID, message.toAgentID, message.messageID))
+      const detail = normalizeInboxMessage(payload.message)
+      if (!detail) {
+        throw new Error("Inbox detail response was missing a message payload")
+      }
+      setActiveInboxDetail(detail)
+    } catch (error) {
+      setActiveInboxDetail(null)
+      setActiveInboxError(extractErrorMessage(error))
+    } finally {
+      setActiveInboxLoading(false)
+    }
+  }, [activeInboxDetail, activeInboxKey, activeInboxLoading])
+
+  const performInboxAction = useCallback(async (message: SessionMessage, action: "ack" | "run") => {
+    if (!canInspectInboxMessage(message)) {
+      return
+    }
+    const key = inboxMessageKey(message)
+    setActiveInboxKey(key)
+    setActiveInboxAction(action)
+    setActiveInboxError("")
+
+    try {
+      const payload = await api.post<InboxMessageResponse>(
+        `${buildInboxMessagePath(message.instanceID, message.toAgentID, message.messageID)}/${action}`,
+        action === "run" ? { source: "dashboard/sessions" } : {}
+      )
+      const detail = normalizeInboxMessage(payload.message)
+      if (!detail) {
+        throw new Error(`Inbox ${action} response was missing a message payload`)
+      }
+      setActiveInboxDetail(detail)
+      setMessagesReloadToken((current) => current + 1)
+    } catch (error) {
+      setActiveInboxError(extractErrorMessage(error))
+    } finally {
+      setActiveInboxAction("")
+    }
+  }, [])
+
   useEffect(() => {
     void loadSessions()
   }, [listReloadToken, loadSessions])
@@ -565,6 +708,14 @@ export function SessionsPage() {
   useEffect(() => {
     void loadMessages()
   }, [loadMessages, messagesReloadToken])
+
+  useEffect(() => {
+    setActiveInboxKey("")
+    setActiveInboxDetail(null)
+    setActiveInboxLoading(false)
+    setActiveInboxError("")
+    setActiveInboxAction("")
+  }, [selectedSessionID])
 
   return (
     <div className="space-y-4 p-6" data-testid="sessions-page">
@@ -800,6 +951,11 @@ export function SessionsPage() {
               {messages.map((message, index) => {
                 if (isLifecycleMessage(message)) {
                   const details = lifecycleDetails(message)
+                  const supportsInboxDetail = canInspectInboxMessage(message)
+                  const currentInboxKey = supportsInboxDetail ? inboxMessageKey(message) : ""
+                  const inboxOpen = supportsInboxDetail && activeInboxKey === currentInboxKey
+                  const inboxInfo = inboxOpen ? activeInboxDetail : null
+                  const inboxFields = inboxInfo ? inboxDetails(inboxInfo) : []
                   return (
                     <article
                       key={`lifecycle-${message.messageID || message.ts || index}`}
@@ -829,6 +985,95 @@ export function SessionsPage() {
                               {entry.label}: {entry.value}
                             </span>
                           ))}
+                        </div>
+                      ) : null}
+
+                      {supportsInboxDetail ? (
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void loadInboxDetail(message)}
+                            disabled={activeInboxLoading && inboxOpen}
+                          >
+                            {inboxOpen ? "Hide inbox detail" : "View inbox detail"}
+                          </Button>
+                        </div>
+                      ) : null}
+
+                      {inboxOpen ? (
+                        <div className="space-y-3 rounded-md border bg-background/80 p-3" data-testid="sessions-inbox-detail">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-medium">Canonical inbox detail</p>
+                              <p className="text-xs text-muted-foreground">
+                                Merged lifecycle state for {message.messageID}
+                              </p>
+                            </div>
+                            {inboxInfo?.status ? <Badge variant="secondary">{inboxInfo.status}</Badge> : null}
+                          </div>
+
+                          {activeInboxLoading ? (
+                            <p className="text-sm text-muted-foreground">Loading inbox detail...</p>
+                          ) : null}
+
+                          {!activeInboxLoading && activeInboxError ? (
+                            <div className="rounded-md border border-destructive/50 bg-destructive/5 p-3 text-sm text-destructive">
+                              Failed to load inbox detail: {activeInboxError}
+                            </div>
+                          ) : null}
+
+                          {!activeInboxLoading && !activeInboxError && inboxInfo ? (
+                            <>
+                              {inboxFields.length > 0 ? (
+                                <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                  {inboxFields.map((entry) => (
+                                    <span key={`${entry.label}-${entry.value}`} className="rounded-full border bg-background px-2 py-1">
+                                      {entry.label}: {entry.value}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : null}
+
+                              {inboxInfo.message ? (
+                                <details className="rounded-md border bg-background p-2" open>
+                                  <summary className="cursor-pointer text-sm">Original message</summary>
+                                  <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-xs">{inboxInfo.message}</pre>
+                                </details>
+                              ) : null}
+
+                              {inboxInfo.note ? <p className="text-xs text-muted-foreground">Note: {inboxInfo.note}</p> : null}
+
+                              {inboxInfo.error ? (
+                                <details className="rounded-md border bg-background p-2" open>
+                                  <summary className="cursor-pointer text-sm">Error</summary>
+                                  <pre className="mt-2 max-h-64 overflow-auto text-xs">{inboxInfo.error}</pre>
+                                </details>
+                              ) : null}
+
+                              <div className="flex flex-wrap gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => void performInboxAction(message, "ack")}
+                                  disabled={activeInboxAction !== ""}
+                                >
+                                  {activeInboxAction === "ack" ? "Acknowledging..." : "Acknowledge"}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => void performInboxAction(message, "run")}
+                                  disabled={activeInboxAction !== ""}
+                                >
+                                  {activeInboxAction === "run" ? "Running..." : "Run inbox task"}
+                                </Button>
+                              </div>
+                            </>
+                          ) : null}
                         </div>
                       ) : null}
 

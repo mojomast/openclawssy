@@ -35,6 +35,7 @@ Substantial portions of Milestones 1-5 are now landed on the current branch, inc
 - Agent Contract and Prompt Stack dashboard flows now resolve explicitly against selected `instance_id` instead of silently depending on the active instance
 - eval feature gating now has a runtime-compatible loader and blocks `openclawssy eval` operational CLI commands when eval is disabled
 - dashboard inbox list/detail APIs now project merged per-`message_id` lifecycle state so sparse ack/run status rows do not discard the original message envelope
+- Sessions lifecycle cards now let operators open the canonical inbox detail view and trigger inbox `ack` / `run` actions against the shared `message_id` lifecycle endpoints
 
 Remaining work is concentrated in wizard parity, broader composite-identity rollout, and finishing first-class messaging/eval consumer convergence beyond the newly landed dashboard/CLI slices.
 
