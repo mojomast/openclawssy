@@ -15,6 +15,8 @@ type RouteState = {
   sessionListCalls: number
   sessionMessagesCalls: number
   monitorControlCalls: number
+  agentGetURLs: string[]
+  agentPostBodies: Array<Record<string, unknown>>
 }
 
 function sseFrame(event: { id?: number; event?: string; data: unknown }): string {
@@ -50,6 +52,8 @@ async function installChatRoutes(
     sessionListCalls: 0,
     sessionMessagesCalls: 0,
     monitorControlCalls: 0,
+    agentGetURLs: [],
+    agentPostBodies: [],
   }
 
   const sessionID = "sess_chat_1"
@@ -93,6 +97,7 @@ async function installChatRoutes(
 
     if (pathname === "/api/admin/agents" && method === "GET") {
       state.agentGetCalls += 1
+      state.agentGetURLs.push(request.url())
       await json({
         agents: ["default", "research"],
         active_agent: state.selectedAgent,
@@ -117,6 +122,7 @@ async function installChatRoutes(
 
     if (pathname === "/api/admin/agents" && method === "POST") {
       const payload = JSON.parse(request.postData() || "{}")
+      state.agentPostBodies.push(payload)
       const nextAgent = String(payload.agent_id || "").trim() || "default"
       state.selectedAgent = nextAgent
       await json({
@@ -433,8 +439,13 @@ test("agent picker switches active agent and subsequent send uses the selected a
   const state = await installChatRoutes(page)
   await page.goto("/dashboard#/chat")
 
+  await expect.poll(() => state.agentGetURLs.some((url) => url.includes("instance_id=instance-a"))).toBeTruthy()
+
   await page.getByLabel("Agent picker").selectOption("research")
   await expect(page.getByText("Selected: research")).toBeVisible()
+
+  await expect.poll(() => state.agentPostBodies.length).toBe(1)
+  expect(state.agentPostBodies[0]?.instance_id).toBe("instance-a")
 
   await page.getByLabel("Message composer").fill("Use research agent")
   await page.getByRole("button", { name: "Send" }).click()

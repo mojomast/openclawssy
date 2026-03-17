@@ -295,6 +295,7 @@ Progress update:
 - Agent Monitor list/control routes and dashboard shell now honor the same shared `instance_agents` feature state, extending deterministic disabled-nav/direct-access behavior to another instance-agent-dependent operator surface
 - Sessions list/detail routes and dashboard shell now honor the same shared `instance_agents` feature state, extending deterministic disabled-nav/direct-access behavior to the transcript/inbox-facing session surface too
 - Chat now honors that same shared `instance_agents` feature state in the dashboard shell, suppressing agent/session bootstrap work and rendering a deterministic disabled-state panel instead of mixed downstream failures
+- `/api/admin/agents` now uses the active/requested instance projection and instance-scoped pointer keys, so Chat/Monitor agent selection aligns with the same instance-aware contract instead of leaking root-config/global pointer behavior
 
 ## Milestone 6: Wizard
 

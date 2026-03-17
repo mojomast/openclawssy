@@ -123,6 +123,16 @@ type ChatState = {
   activityPaneWidth: number
 }
 
+type AgentsPayload = {
+  agents?: unknown
+  active_agent?: unknown
+  selected_agent?: unknown
+  profile_context?: unknown
+  agents_config?: unknown
+  agent_summaries?: unknown
+  instance_id?: unknown
+}
+
 type SessionMessage = {
   role?: unknown
   content?: unknown
@@ -1056,25 +1066,23 @@ export function ChatPage() {
     applySessionMessagesPayload(payload)
   }, [applySessionMessagesPayload, ensureCurrentSessionID])
 
-  const refreshAvailableAgents = useCallback(async () => {
+  const refreshAvailableAgents = useCallback(async (instanceIDOverride = "") => {
     try {
       const params = new URLSearchParams({
         channel: "dashboard",
         user_id: CHAT_DEFAULTS.userID,
         room_id: CHAT_DEFAULTS.roomID,
       })
+      const activeInstanceID = safeText(instanceIDOverride) || safeText(stateRef.current.activeInstanceID)
+      if (activeInstanceID) {
+        params.set("instance_id", activeInstanceID)
+      }
       const requestedAgent = safeText(stateRef.current.selectedAgentID)
       if (requestedAgent) {
         params.set("agent_id", requestedAgent)
       }
 
-      const payload = await api.get<{
-        agents?: unknown
-        active_agent?: unknown
-        selected_agent?: unknown
-        profile_context?: unknown
-        agents_config?: unknown
-      }>(`/api/admin/agents?${params.toString()}`)
+      const payload = await api.get<AgentsPayload>(`/api/admin/agents?${params.toString()}`)
 
       const agents = Array.isArray(payload?.agents)
         ? payload.agents.map((item) => safeText(item)).filter(Boolean)
@@ -1085,6 +1093,7 @@ export function ChatPage() {
         const selected = safeText(payload?.selected_agent) || activeAgent
         return {
           ...prev,
+          activeInstanceID: safeText(payload.instance_id) || prev.activeInstanceID,
           availableAgents: agents.length ? agents : prev.availableAgents,
           activeAgentID: activeAgent || prev.activeAgentID,
           selectedAgentID:
@@ -2115,13 +2124,8 @@ export function ChatPage() {
       }
 
       try {
-        const payload = await api.post<{
-          agents?: unknown
-          active_agent?: unknown
-          selected_agent?: unknown
-          profile_context?: unknown
-          agents_config?: unknown
-        }>("/api/admin/agents", {
+        const payload = await api.post<AgentsPayload>("/api/admin/agents", {
+          instance_id: safeText(stateRef.current.activeInstanceID) || undefined,
           channel: "dashboard",
           user_id: CHAT_DEFAULTS.userID,
           room_id: CHAT_DEFAULTS.roomID,
@@ -2137,7 +2141,7 @@ export function ChatPage() {
 
         setState((prev) => ({
           ...prev,
-          activeInstanceID: safeText(stateRef.current.activeInstanceID),
+          activeInstanceID: safeText(payload.instance_id) || safeText(stateRef.current.activeInstanceID),
           availableAgents: agents.length ? agents : prev.availableAgents,
           selectedAgentID,
           activeAgentID,
@@ -2309,7 +2313,8 @@ export function ChatPage() {
     }
     let cancelled = false
     ;(async () => {
-      await refreshAvailableAgents()
+      const instanceID = await resolveActiveInstanceID()
+      await refreshAvailableAgents(instanceID)
       if (cancelled) {
         return
       }
@@ -2327,7 +2332,7 @@ export function ChatPage() {
     return () => {
       cancelled = true
     }
-  }, [ensureCurrentSessionID, featureDisabled, featuresLoading, refreshAvailableAgents, refreshTranscriptFromCurrentSession])
+  }, [ensureCurrentSessionID, featureDisabled, featuresLoading, refreshAvailableAgents, refreshTranscriptFromCurrentSession, resolveActiveInstanceID])
 
   useEffect(() => {
     if (featureDisabled) {

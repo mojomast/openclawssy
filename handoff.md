@@ -42,6 +42,7 @@ Date: 2026-03-16
 - Agent Monitor now matches that same `instance_agents` feature gating contract across backend routes and dashboard UI, including hidden nav, disabled direct-route shell, and suppressed launch/run controls when disabled.
 - Sessions now matches that same `instance_agents` feature gating contract across backend routes and dashboard UI, including hidden nav, disabled direct-route shell, and suppressed session browsing when disabled.
 - Chat now matches that same `instance_agents` feature gating contract in the dashboard shell, including hidden nav, disabled direct-route shell, and suppressed agent/session bootstrap activity when disabled.
+- `/api/admin/agents` now matches the instance-aware control-plane contract too: it is feature-gated, resolves agents from the active/requested instance config, and isolates dashboard active-agent pointers by instance-scoped room key.
 
 ## Validation completed
 
@@ -83,6 +84,8 @@ Date: 2026-03-16
 - `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/sessions.spec.ts --reporter=line`
 - `go test ./internal/channels/dashboard -run TestIntegrationDashboardPagesUseSharedShadcnUIComponents -count=1`
 - `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/chat.spec.ts --reporter=line`
+- `go test ./internal/channels/dashboard -run 'TestAdminAgentsEndpointListAndSetActive|TestAdminAgentsEndpointUsesActiveInstanceConfigAndInstanceScopedPointers|TestAdminAgentsEndpointRequiresInstanceAgentsFeature|TestMonitorRoutesRequireInstanceAgentsFeature|TestSessionsRoutesRequireInstanceAgentsFeature|TestInstanceFeatureFlagEnforcement' -count=1`
+- `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/chat.spec.ts tests/e2e/monitor.spec.ts --reporter=line`
 
 Note:
 
@@ -142,6 +145,7 @@ Still open overall:
 - Monitor now joins Eval, Contract, and Prompt Stack in that disabled-nav/direct-access pattern, but more instance-agent-dependent pages still need the same treatment.
 - Sessions now joins Eval, Monitor, Contract, and Prompt Stack in that disabled-nav/direct-access pattern, but Chat and more instance-agent-dependent pages still need the same treatment.
 - Chat now joins Sessions, Eval, Monitor, Contract, and Prompt Stack in that disabled-nav/direct-access pattern, but more instance-agent-dependent pages and selective backend guardrails still need the same treatment.
+- Chat now joins Sessions, Eval, Monitor, Contract, and Prompt Stack in that disabled-nav/direct-access pattern, and `/api/admin/agents` now aligns with instance-aware selection too; more instance-agent-dependent pages still need the same treatment.
 
 ## Recommended next starting point
 

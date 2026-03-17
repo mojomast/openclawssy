@@ -1294,6 +1294,135 @@ func TestAdminAgentsEndpointListAndSetActive(t *testing.T) {
 	}
 }
 
+func TestAdminAgentsEndpointUsesActiveInstanceConfigAndInstanceScopedPointers(t *testing.T) {
+	root := t.TempDir()
+	if _, err := instances.BootstrapDefaultInstance(root); err != nil {
+		t.Fatalf("bootstrap default instance: %v", err)
+	}
+	lab := instances.DefaultInstanceManifest("lab")
+	lab.Workspace.Root = filepath.Join(root, "workspace")
+	if err := instances.SaveInstanceManifest(root, lab); err != nil {
+		t.Fatalf("save lab instance: %v", err)
+	}
+	if err := instances.SaveAgentManifest(root, "lab", instances.DefaultAgentManifest("builder")); err != nil {
+		t.Fatalf("save lab builder agent: %v", err)
+	}
+	if err := instances.SaveAgentManifest(root, "lab", instances.DefaultAgentManifest("reviewer")); err != nil {
+		t.Fatalf("save lab reviewer agent: %v", err)
+	}
+	if err := instances.SaveActiveInstanceID(root, "lab"); err != nil {
+		t.Fatalf("save active instance id: %v", err)
+	}
+
+	store, err := chatstore.NewStore(filepath.Join(root, ".openclawssy", "agents"))
+	if err != nil {
+		t.Fatalf("new chat store: %v", err)
+	}
+	if err := store.SetActiveAgentPointer("dashboard", "dashboard_user", "default:dashboard", "default"); err != nil {
+		t.Fatalf("seed default pointer: %v", err)
+	}
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/agents?channel=dashboard&user_id=dashboard_user&room_id=dashboard", nil)
+	listResp := httptest.NewRecorder()
+	mux.ServeHTTP(listResp, listReq)
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("expected list agents status 200, got %d (%s)", listResp.Code, listResp.Body.String())
+	}
+	var listed map[string]any
+	if err := json.Unmarshal(listResp.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode list payload: %v", err)
+	}
+	if listed["instance_id"] != "lab" {
+		t.Fatalf("expected instance_id lab, got %#v", listed["instance_id"])
+	}
+	if listed["selected_agent"] != "default" {
+		t.Fatalf("expected selected_agent default fallback, got %#v", listed["selected_agent"])
+	}
+	agents, ok := listed["agents"].([]any)
+	if !ok {
+		t.Fatalf("expected agents array, got %#v", listed["agents"])
+	}
+	seen := map[string]bool{}
+	for _, item := range agents {
+		seen[strings.TrimSpace(fmt.Sprint(item))] = true
+	}
+	if !seen["builder"] || !seen["reviewer"] || !seen["default"] {
+		t.Fatalf("expected lab/default agents in list, got %#v", listed["agents"])
+	}
+	if seen["discord-bot"] {
+		t.Fatalf("did not expect legacy root-config agent in lab instance list, got %#v", listed["agents"])
+	}
+
+	setReq := httptest.NewRequest(http.MethodPost, "/api/admin/agents", bytes.NewBufferString(`{"channel":"dashboard","user_id":"dashboard_user","room_id":"dashboard","agent_id":"builder"}`))
+	setReq.Header.Set("Content-Type", "application/json")
+	setResp := httptest.NewRecorder()
+	mux.ServeHTTP(setResp, setReq)
+	if setResp.Code != http.StatusOK {
+		t.Fatalf("expected set active agent status 200, got %d (%s)", setResp.Code, setResp.Body.String())
+	}
+
+	verifyReq := httptest.NewRequest(http.MethodGet, "/api/admin/agents?channel=dashboard&user_id=dashboard_user&room_id=dashboard", nil)
+	verifyResp := httptest.NewRecorder()
+	mux.ServeHTTP(verifyResp, verifyReq)
+	if verifyResp.Code != http.StatusOK {
+		t.Fatalf("expected verify status 200, got %d (%s)", verifyResp.Code, verifyResp.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(verifyResp.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode verify payload: %v", err)
+	}
+	if payload["active_agent"] != "builder" || payload["selected_agent"] != "builder" {
+		t.Fatalf("expected builder active/selected, got %#v", payload)
+	}
+	pointer, err := store.GetActiveAgentPointer("dashboard", "dashboard_user", "lab:dashboard")
+	if err != nil {
+		t.Fatalf("get lab active pointer: %v", err)
+	}
+	if pointer != "builder" {
+		t.Fatalf("expected lab pointer builder, got %q", pointer)
+	}
+	defaultPointer, err := store.GetActiveAgentPointer("dashboard", "dashboard_user", "default:dashboard")
+	if err != nil {
+		t.Fatalf("get default active pointer: %v", err)
+	}
+	if defaultPointer != "default" {
+		t.Fatalf("expected default pointer to remain default, got %q", defaultPointer)
+	}
+}
+
+func TestAdminAgentsEndpointRequiresInstanceAgentsFeature(t *testing.T) {
+	root := t.TempDir()
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	store := defaultControlPlaneStore()
+	store.Features.InstanceAgents = false
+	if err := h.saveControlPlaneStore(store); err != nil {
+		t.Fatalf("save control plane store: %v", err)
+	}
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/agents?channel=dashboard&user_id=dashboard_user&room_id=dashboard", nil)
+	listRR := httptest.NewRecorder()
+	mux.ServeHTTP(listRR, listReq)
+	if listRR.Code != http.StatusForbidden {
+		t.Fatalf("expected agents list status %d, got %d (%s)", http.StatusForbidden, listRR.Code, listRR.Body.String())
+	}
+	assertDashboardErrorCode(t, listRR.Body.Bytes(), "feature.instance_agents_disabled")
+
+	setReq := httptest.NewRequest(http.MethodPost, "/api/admin/agents", bytes.NewBufferString(`{"channel":"dashboard","user_id":"dashboard_user","room_id":"dashboard","agent_id":"default"}`))
+	setReq.Header.Set("Content-Type", "application/json")
+	setRR := httptest.NewRecorder()
+	mux.ServeHTTP(setRR, setReq)
+	if setRR.Code != http.StatusForbidden {
+		t.Fatalf("expected agents set status %d, got %d (%s)", http.StatusForbidden, setRR.Code, setRR.Body.String())
+	}
+	assertDashboardErrorCode(t, setRR.Body.Bytes(), "feature.instance_agents_disabled")
+}
+
 type stubDashboardRunCanceller struct {
 	tracked  map[string]bool
 	called   []string

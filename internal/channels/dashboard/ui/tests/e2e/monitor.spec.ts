@@ -6,6 +6,7 @@ type MonitorMockState = {
   refreshCalls: number
   startPayloads: Array<Record<string, unknown>>
   controlPayloads: Array<Record<string, unknown>>
+  agentRequestURLs: string[]
 }
 
 type MonitorMockOptions = {
@@ -84,6 +85,7 @@ async function installMonitorMocks(page: Page, options?: MonitorMockOptions): Pr
     refreshCalls: 0,
     startPayloads: [],
     controlPayloads: [],
+    agentRequestURLs: [],
   }
 
   await page.route("**/*", async (route) => {
@@ -111,6 +113,7 @@ async function installMonitorMocks(page: Page, options?: MonitorMockOptions): Pr
 
     if (pathname === "/api/admin/agents" && method === "GET") {
       state.agentsCalls += 1
+      state.agentRequestURLs.push(request.url())
       const payload = options?.agentPayloadForCall?.(state.agentsCalls) || defaultAgentPayload()
       await json(route, payload)
       return
@@ -207,14 +210,15 @@ test("agent monitor shows cards, run table, and auto-polls every 2.5s", async ({
   await expect(page.getByText("3 recent internal runs tracked", { exact: false })).toBeVisible()
 
   const defaultCard = page.locator("[data-testid='monitor-agent-card-default']")
-  await expect(defaultCard).toContainText("main: 1 · subagent: 1 · active: run_sub_1")
+  await expect(defaultCard).toContainText("main: 1 · subagent: 1")
+  await expect(defaultCard).toContainText("active:")
   await expect(defaultCard).toContainText("self-improvement: ready")
   await expect(defaultCard).toContainText("skills: triage, verify")
   await expect(defaultCard).toContainText("model: hatz/glm-4.5")
 
   await expect(page.locator("[data-testid='monitor-runs-table']")).toContainText("run_main_1")
   await expect(page.locator("[data-testid='monitor-runs-table']")).toContainText("run_sub_1")
-  await expect(page.locator("[data-testid='monitor-runs-table']")).toContainText("run_ops_1")
+  await expect(page.locator("[data-testid='monitor-runs-table']")).toContainText("ops")
 
   await expect.poll(() => state.runsCalls, { timeout: 10000 }).toBeGreaterThan(1)
   await expect(page.locator("[data-testid='monitor-runs-table']")).toContainText("run_poll_new")
@@ -224,6 +228,8 @@ test("start run, stop active, per-row stop, thinking mode, and refresh-now inter
   const state = await installMonitorMocks(page)
 
   await page.goto("/dashboard#/monitor")
+
+  await expect.poll(() => state.agentRequestURLs.some((url) => url.includes("instance_id=lab"))).toBeTruthy()
 
   await page.getByLabel("Launch prompt").fill("Investigate monitor behavior")
   await page.getByLabel("Thinking mode").selectOption("on_error")

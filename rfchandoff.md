@@ -181,6 +181,7 @@ Current capabilities:
 - instance-agent admin routes now return structured `403` errors when `instance_agents` is disabled
 - eval results routes now return structured `403` errors when the `eval` feature is disabled
 - control-plane feature introspection remains ungated so operators can still discover disabled features
+- `/api/admin/agents` now also returns structured `403` errors when `instance_agents` is disabled, so agent selection/bootstrap matches the rest of the instance-agent control plane
 
 ### 2.10 Dashboard inbox lifecycle APIs and chat identity threading
 
@@ -204,6 +205,7 @@ Current capabilities:
 - chat queue/request/response types now carry additive `instance_id` and `agent_id`
 - dashboard chat send, run polling, SSE subscribe, and cancel flows now thread composite identity through the operator UI
 - chat nav/direct-access behavior now honors the shared `instance_agents` feature state, suppressing agent/session bootstrap work and rendering an explicit disabled-state panel with disabled controls when the feature is off
+- `/api/admin/agents` now resolves against the active or explicitly requested instance config and keeps dashboard active-agent pointers isolated per instance-scoped room, so Chat/Monitor selection no longer leaks root-config/global pointer behavior across instances
 
 ### 2.11 Dashboard eval metadata consumer adoption
 
@@ -316,6 +318,8 @@ Verified:
 - `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/sessions.spec.ts --reporter=line`
 - `go test ./internal/channels/dashboard -run TestIntegrationDashboardPagesUseSharedShadcnUIComponents -count=1`
 - `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/chat.spec.ts --reporter=line`
+- `go test ./internal/channels/dashboard -run 'TestAdminAgentsEndpointListAndSetActive|TestAdminAgentsEndpointUsesActiveInstanceConfigAndInstanceScopedPointers|TestAdminAgentsEndpointRequiresInstanceAgentsFeature|TestMonitorRoutesRequireInstanceAgentsFeature|TestSessionsRoutesRequireInstanceAgentsFeature|TestInstanceFeatureFlagEnforcement' -count=1`
+- `cd internal/channels/dashboard/ui && npm run typecheck && npm run build && CI=1 npx playwright test tests/e2e/chat.spec.ts tests/e2e/monitor.spec.ts --reporter=line`
 
 Note: one broader `go test ./internal/runtime ./...` package pass exposed an existing flaky/unrelated failure in `TestEngineExecuteIngestsMemoryEventsWhenEnabled`, but the focused rerun of that test passed immediately and the targeted package suites for the changed slices passed.
 
@@ -482,6 +486,7 @@ Status update:
 - shared feature-state presentation now also covers Monitor, Contract, and Prompt Stack; remaining UI work should push the same determinism into more instance-agent-dependent pages and read-only surfaces
 - shared feature-state presentation now also covers Sessions, Monitor, Contract, and Prompt Stack; remaining UI work should push the same determinism into Chat and other instance-agent-dependent pages
 - shared feature-state presentation now also covers Chat, Sessions, Monitor, Contract, and Prompt Stack; remaining UI work should push the same determinism into additional instance-agent-dependent pages and remaining backend guardrails where useful
+- shared feature-state presentation now also covers Chat, Sessions, Monitor, Contract, and Prompt Stack, and the shared `/api/admin/agents` selector route is now instance-aware; remaining work should keep pushing that same convergence into additional operator surfaces
 
 Do not:
 

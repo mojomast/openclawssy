@@ -38,6 +38,7 @@ type AgentSummary = {
 type AgentsResponse = {
   agents?: unknown
   agent_summaries?: unknown
+  instance_id?: unknown
 }
 
 type MonitorRunsResponse = {
@@ -267,8 +268,16 @@ export function AgentMonitorPage() {
     }
 
     try {
+      const agentParams = new URLSearchParams({
+        channel: "dashboard",
+        user_id: "dashboard_user",
+        room_id: "dashboard",
+      })
+      if (activeInstanceID) {
+        agentParams.set("instance_id", activeInstanceID)
+      }
       const [agentPayload, runPayload] = await Promise.all([
-        api.get<AgentsResponse>("/api/admin/agents?channel=dashboard&user_id=dashboard_user&room_id=dashboard"),
+        api.get<AgentsResponse>(`/api/admin/agents?${agentParams.toString()}`),
         api.get<MonitorRunsResponse>("/api/admin/monitor/runs?limit=120"),
       ])
 
@@ -281,6 +290,9 @@ export function AgentMonitorPage() {
 
       setAvailableAgents(mergedAgents.length > 0 ? mergedAgents : ["default"])
       setAgentSummaries(normalizeAgentSummaries(agentPayload.agent_summaries))
+      if (asText(agentPayload.instance_id).trim()) {
+        setActiveInstanceID(asText(agentPayload.instance_id).trim())
+      }
       setRuns(normalizedRuns)
       setError("")
     } catch (loadError) {
@@ -288,7 +300,7 @@ export function AgentMonitorPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [activeInstanceID])
 
   const loadActiveInstance = useCallback(async () => {
     try {

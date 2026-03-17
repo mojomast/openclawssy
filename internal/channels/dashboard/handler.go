@@ -1404,6 +1404,9 @@ func (h *Handler) chatSessionMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
+	if !h.requireInstanceAgentsFeature(w) {
+		return
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -1419,22 +1422,26 @@ func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
 	roomID := ""
 	selectedAgentID := ""
 	targetAgentID := ""
+	instanceID := ""
 	if r.Method == http.MethodGet {
+		instanceID = strings.TrimSpace(r.URL.Query().Get("instance_id"))
 		channel = strings.TrimSpace(r.URL.Query().Get("channel"))
 		userID = strings.TrimSpace(r.URL.Query().Get("user_id"))
 		roomID = strings.TrimSpace(r.URL.Query().Get("room_id"))
 		selectedAgentID = strings.TrimSpace(r.URL.Query().Get("agent_id"))
 	} else {
 		var req struct {
-			Channel string `json:"channel"`
-			UserID  string `json:"user_id"`
-			RoomID  string `json:"room_id"`
-			AgentID string `json:"agent_id"`
+			InstanceID string `json:"instance_id"`
+			Channel    string `json:"channel"`
+			UserID     string `json:"user_id"`
+			RoomID     string `json:"room_id"`
+			AgentID    string `json:"agent_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid json body", http.StatusBadRequest)
 			return
 		}
+		instanceID = strings.TrimSpace(req.InstanceID)
 		channel = strings.TrimSpace(req.Channel)
 		userID = strings.TrimSpace(req.UserID)
 		roomID = strings.TrimSpace(req.RoomID)
@@ -1451,6 +1458,22 @@ func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
 	if roomID == "" {
 		roomID = "dashboard"
 	}
+	resolvedInstanceID, err := h.resolveDashboardAgentInstanceID(instanceID)
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "instances.load_failed", err.Error(), nil)
+		return
+	}
+	cfg, err := h.loadDashboardConfigForInstance(resolvedInstanceID)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			writeDashboardError(w, http.StatusNotFound, "instances.not_found", "instance not found", map[string]any{"instance_id": resolvedInstanceID})
+			return
+		}
+		writeDashboardError(w, http.StatusInternalServerError, "config.load_failed", err.Error(), nil)
+		return
+	}
+	agentIDs := listDashboardAgentIDsForConfig(cfg)
+	pointerRoomID := dashboardAgentPointerRoomID(resolvedInstanceID, roomID)
 
 	if r.Method == http.MethodPost {
 		normalizedAgentID, normErr := normalizeDashboardAgentID(targetAgentID)
@@ -1458,7 +1481,11 @@ func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, normErr.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := store.SetActiveAgentPointer(channel, userID, roomID, normalizedAgentID); err != nil {
+		if !containsString(agentIDs, normalizedAgentID) {
+			writeDashboardError(w, http.StatusNotFound, "instances.agent_not_found", "agent not found", map[string]any{"instance_id": resolvedInstanceID, "agent_id": normalizedAgentID})
+			return
+		}
+		if err := store.SetActiveAgentPointer(channel, userID, pointerRoomID, normalizedAgentID); err != nil {
 			http.Error(w, "failed to set active agent", http.StatusInternalServerError)
 			return
 		}
@@ -1476,16 +1503,22 @@ func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	active := ""
-	if agentID, err := store.GetActiveAgentPointer(channel, userID, roomID); err == nil {
+	if agentID, err := store.GetActiveAgentPointer(channel, userID, pointerRoomID); err == nil {
 		active = agentID
+	}
+	if active != "" && !containsString(agentIDs, active) {
+		active = ""
 	}
 	if active == "" {
 		active = targetAgentID
 	}
+	if active != "" && !containsString(agentIDs, active) {
+		active = ""
+	}
 	if selectedAgentID == "" {
 		selectedAgentID = active
 	}
-	if selectedAgentID == "" {
+	if selectedAgentID == "" || !containsString(agentIDs, selectedAgentID) {
 		selectedAgentID = "default"
 	}
 
@@ -1502,41 +1535,39 @@ func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	agentsConfig := map[string]any{}
 	agentSummaries := map[string]any{}
-	cfgPath := filepath.Join(h.rootDir, ".openclawssy", "config.json")
-	if cfg, err := config.LoadOrDefault(cfgPath); err == nil {
-		agentsConfig = map[string]any{
-			"allow_inter_agent_messaging": cfg.Agents.AllowInterAgentMessaging,
-			"allow_agent_model_overrides": cfg.Agents.AllowAgentModelOverrides,
-			"self_improvement_enabled":    cfg.Agents.SelfImprovementEnabled,
-			"enabled_agent_ids":           cfg.Agents.EnabledAgentIDs,
-		}
-		if profile, ok := cfg.Agents.Profiles[selectedAgentID]; ok {
-			profileContext["exists"] = true
-			if profile.Enabled != nil {
-				profileContext["enabled"] = *profile.Enabled
-			}
-			profileContext["self_improvement"] = profile.SelfImprovement
-			if provider := strings.TrimSpace(profile.Model.Provider); provider != "" {
-				profileContext["model_provider"] = provider
-				profileContext["model_override"] = true
-			}
-			if name := strings.TrimSpace(profile.Model.Name); name != "" {
-				profileContext["model_name"] = name
-				profileContext["model_override"] = true
-			}
-			if profile.Model.MaxTokens > 0 {
-				profileContext["model_max_tokens"] = profile.Model.MaxTokens
-				profileContext["model_override"] = true
-			}
-			if profile.Model.TimeoutMS > 0 {
-				profileContext["model_timeout_ms"] = profile.Model.TimeoutMS
-				profileContext["model_override"] = true
-			}
-		}
-		agentSummaries = h.buildDashboardAgentSummaries(cfg)
+	agentsConfig = map[string]any{
+		"allow_inter_agent_messaging": cfg.Agents.AllowInterAgentMessaging,
+		"allow_agent_model_overrides": cfg.Agents.AllowAgentModelOverrides,
+		"self_improvement_enabled":    cfg.Agents.SelfImprovementEnabled,
+		"enabled_agent_ids":           cfg.Agents.EnabledAgentIDs,
 	}
+	if profile, ok := cfg.Agents.Profiles[selectedAgentID]; ok {
+		profileContext["exists"] = true
+		if profile.Enabled != nil {
+			profileContext["enabled"] = *profile.Enabled
+		}
+		profileContext["self_improvement"] = profile.SelfImprovement
+		if provider := strings.TrimSpace(profile.Model.Provider); provider != "" {
+			profileContext["model_provider"] = provider
+			profileContext["model_override"] = true
+		}
+		if name := strings.TrimSpace(profile.Model.Name); name != "" {
+			profileContext["model_name"] = name
+			profileContext["model_override"] = true
+		}
+		if profile.Model.MaxTokens > 0 {
+			profileContext["model_max_tokens"] = profile.Model.MaxTokens
+			profileContext["model_override"] = true
+		}
+		if profile.Model.TimeoutMS > 0 {
+			profileContext["model_timeout_ms"] = profile.Model.TimeoutMS
+			profileContext["model_override"] = true
+		}
+	}
+	agentSummaries = h.buildDashboardAgentSummariesForAgentIDs(cfg, agentIDs)
 	writeJSON(w, map[string]any{
-		"agents":          h.listDashboardAgentIDs(),
+		"instance_id":     resolvedInstanceID,
+		"agents":          agentIDs,
 		"active_agent":    active,
 		"selected_agent":  selectedAgentID,
 		"channel":         channel,
@@ -1549,7 +1580,10 @@ func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) buildDashboardAgentSummaries(cfg config.Config) map[string]any {
-	agentIDs := h.listDashboardAgentIDs()
+	return h.buildDashboardAgentSummariesForAgentIDs(cfg, h.listDashboardAgentIDs())
+}
+
+func (h *Handler) buildDashboardAgentSummariesForAgentIDs(cfg config.Config, agentIDs []string) map[string]any {
 	summaries := make(map[string]any, len(agentIDs))
 	for _, agentID := range agentIDs {
 		summary := map[string]any{
@@ -1588,6 +1622,58 @@ func (h *Handler) buildDashboardAgentSummaries(cfg config.Config) map[string]any
 		summaries[agentID] = summary
 	}
 	return summaries
+}
+
+func dashboardAgentPointerRoomID(instanceID, roomID string) string {
+	base := strings.TrimSpace(roomID)
+	if base == "" {
+		base = "dashboard"
+	}
+	return normalizeDashboardInstanceID(instanceID) + ":" + base
+}
+
+func listDashboardAgentIDsForConfig(cfg config.Config) []string {
+	ids := map[string]struct{}{normalizeDashboardDefaultAgentID(cfg.Chat.DefaultAgentID): {}}
+	for _, agentID := range cfg.Agents.EnabledAgentIDs {
+		if normalized, err := normalizeDashboardAgentID(agentID); err == nil {
+			ids[normalized] = struct{}{}
+		}
+	}
+	for agentID := range cfg.Agents.Profiles {
+		if normalized, err := normalizeDashboardAgentID(agentID); err == nil {
+			ids[normalized] = struct{}{}
+		}
+	}
+	for _, agentID := range []string{cfg.Chat.DefaultAgentID, cfg.Discord.DefaultAgentID, cfg.Telegram.DefaultAgentID} {
+		if normalized, err := normalizeDashboardAgentID(agentID); err == nil {
+			ids[normalized] = struct{}{}
+		}
+	}
+	if len(ids) == 0 {
+		return []string{"default"}
+	}
+	out := make([]string, 0, len(ids))
+	for id := range ids {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func normalizeDashboardDefaultAgentID(raw string) string {
+	normalized, err := normalizeDashboardAgentID(raw)
+	if err != nil || normalized == "" {
+		return "default"
+	}
+	return normalized
+}
+
+func (h *Handler) resolveDashboardAgentInstanceID(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return instances.LoadActiveInstanceID(h.rootDir)
+	}
+	return normalizeInstanceID(trimmed)
 }
 
 func (h *Handler) handleMonitorRuns(w http.ResponseWriter, r *http.Request) {
@@ -2906,50 +2992,11 @@ func (h *Handler) readAgentDocInInstance(instanceID, agentID, name string) (agen
 }
 
 func (h *Handler) listDashboardAgentIDs() []string {
-	ids := map[string]struct{}{"default": {}}
-
 	cfgPath := filepath.Join(h.rootDir, ".openclawssy", "config.json")
 	if cfg, err := config.LoadOrDefault(cfgPath); err == nil {
-		for _, agentID := range cfg.Agents.EnabledAgentIDs {
-			if normalized, err := normalizeDashboardAgentID(agentID); err == nil {
-				ids[normalized] = struct{}{}
-			}
-		}
-		for agentID := range cfg.Agents.Profiles {
-			if normalized, err := normalizeDashboardAgentID(agentID); err == nil {
-				ids[normalized] = struct{}{}
-			}
-		}
-		for _, agentID := range []string{cfg.Chat.DefaultAgentID, cfg.Discord.DefaultAgentID, cfg.Telegram.DefaultAgentID} {
-			if normalized, err := normalizeDashboardAgentID(agentID); err == nil {
-				ids[normalized] = struct{}{}
-			}
-		}
+		return listDashboardAgentIDsForConfig(cfg)
 	}
-
-	agentsDir := filepath.Join(h.rootDir, ".openclawssy", "agents")
-	entries, err := os.ReadDir(agentsDir)
-	if err == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			id, err := normalizeDashboardAgentID(entry.Name())
-			if err != nil {
-				continue
-			}
-			ids[id] = struct{}{}
-		}
-	}
-	if len(ids) == 0 {
-		return []string{"default"}
-	}
-	out := make([]string, 0, len(ids))
-	for id := range ids {
-		out = append(out, id)
-	}
-	sort.Strings(out)
-	return out
+	return []string{"default"}
 }
 
 func resolveDashboardDocNames(raw string) (displayName string, resolvedName string, aliasFor string, ok bool) {
