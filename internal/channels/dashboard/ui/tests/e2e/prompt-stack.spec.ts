@@ -24,6 +24,8 @@ type PromptSnapshot = {
 }
 
 type PromptStackState = {
+  instances: Array<{ id: string; name: string }>
+  activeInstanceID: string
   agents: string[]
   selectedAgent: string
   contextWindow: number
@@ -156,6 +158,11 @@ function createPromptStackState(): PromptStackState {
   }))
 
   return {
+    instances: [
+      { id: "default", name: "Default" },
+      { id: "lab", name: "Lab" },
+    ],
+    activeInstanceID: "lab",
     agents: ["default", "reviewer"],
     selectedAgent: "default",
     contextWindow: 24,
@@ -210,14 +217,34 @@ async function installPromptStackMocks(page: Page, state: PromptStackState): Pro
       return
     }
 
+    if (pathname === "/api/admin/instances" && method === "GET") {
+      await json({ instances: state.instances, active_instance_id: state.activeInstanceID })
+      return
+    }
+
+    if (pathname === "/api/admin/instances/active" && method === "GET") {
+      const instance = state.instances.find((item) => item.id === state.activeInstanceID) || state.instances[0]
+      await json({ instance })
+      return
+    }
+
     if (pathname === "/api/admin/agents" && method === "GET") {
       await json({ agents: state.agents, selected_agent: state.selectedAgent })
       return
     }
 
-    const promptStackMatch = pathname.match(/^\/api\/admin\/agents\/([^/]+)\/prompt-stack(?:\/([^/]+))?$/)
+    const instanceAgentsMatch = pathname.match(/^\/api\/admin\/instances\/([^/]+)\/agents$/)
+    if (instanceAgentsMatch && method === "GET") {
+      await json({
+        instance_id: decodeURIComponent(instanceAgentsMatch[1]),
+        agents: state.agents.map((agentID) => ({ agent_id: agentID })),
+      })
+      return
+    }
+
+    const promptStackMatch = pathname.match(/^\/api\/admin\/instances\/([^/]+)\/agents\/([^/]+)\/prompt-stack(?:\/([^/]+))?$/)
     if (promptStackMatch) {
-      const action = promptStackMatch[2] || ""
+      const action = promptStackMatch[3] || ""
 
       if (!action && method === "GET") {
         await json({
@@ -394,6 +421,7 @@ test("renders all prompt layers with merged preview and overflow warning", async
   await page.goto("/dashboard#/prompt-stack")
 
   await expect(page.getByRole("heading", { name: "Prompt Stack", level: 2 })).toBeVisible()
+  await expect(page.locator("#prompt-stack-instance-selector")).toHaveValue("lab")
   await expect(page.locator("#prompt-stack-agent-selector")).toHaveValue("default")
 
   for (const layerID of LAYER_ORDER) {
@@ -440,6 +468,9 @@ test("diff, rollback, lint, and structural tests are visible and actionable", as
   await page.getByTestId("prompt-stack-save-layer").click()
   await page.getByTestId("prompt-stack-editor").fill("Identity version two")
   await page.getByTestId("prompt-stack-save-layer").click()
+
+  await expect.poll(() => state.saveRequests.length).toBe(2)
+  await expect(page.getByTestId("prompt-stack-version-list").locator("li")).toHaveCount(7)
 
   await page.locator("#prompt-stack-diff-from").selectOption("6")
   await page.locator("#prompt-stack-diff-to").selectOption("7")

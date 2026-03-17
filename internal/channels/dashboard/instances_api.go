@@ -461,9 +461,27 @@ func (h *Handler) handleInstanceByID(w http.ResponseWriter, r *http.Request) {
 			h.handlePromptStackAPI(w, r, instanceID, agentID, segments[3:])
 			return
 		}
+		if len(segments) >= 3 && isInstanceContractAction(segments[2]) {
+			agentID, err := normalizeDashboardAgentID(segments[1])
+			if err != nil {
+				writeDashboardError(w, http.StatusBadRequest, "instances.invalid_agent_id", "invalid agent id", nil)
+				return
+			}
+			h.handleAgentContractRoute(w, r, instanceID, agentID, segments[2:], true)
+			return
+		}
 		h.handleInstanceAgents(w, r, instanceID, segments[1:])
 	default:
 		http.NotFound(w, r)
+	}
+}
+
+func isInstanceContractAction(segment string) bool {
+	switch strings.TrimSpace(segment) {
+	case "resolved", "validate", "diff", "rollback-snapshot", "rollback-restore":
+		return true
+	default:
+		return false
 	}
 }
 

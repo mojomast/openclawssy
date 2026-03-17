@@ -219,6 +219,54 @@ Current capabilities:
 - delegation/decomposition metadata is now visible in the dashboard without requiring raw JSON inspection
 - dashboard nav now hides the Eval entry when the feature is disabled, and direct Eval page access renders a disabled-state panel instead of pretending the feature is available
 
+### 2.12 Sessions lifecycle consumer adoption
+
+Implemented in:
+
+- `internal/channels/dashboard/ui/src/pages/SessionsPage.tsx`
+- `internal/channels/dashboard/handler_test.go`
+- `internal/channels/dashboard/ui/tests/e2e/sessions.spec.ts`
+
+Current capabilities:
+
+- dashboard session-message normalization now preserves lifecycle envelope metadata such as `message_id`, `status`, `instance_id`, sender/recipient IDs, task linkage, and related run linkage
+- Sessions detail now renders operator-facing lifecycle cards for system/lifecycle events instead of flattening everything into generic system text
+- dashboard session-message API coverage now verifies lifecycle metadata survives the backend/UI boundary
+
+### 2.13 Instance-aware Agent Contract and Prompt Stack consumers
+
+Implemented in:
+
+- `internal/channels/dashboard/contract_api.go`
+- `internal/channels/dashboard/instances_api.go`
+- `internal/channels/dashboard/contract_api_test.go`
+- `internal/channels/dashboard/ui/src/pages/AgentContractPage.tsx`
+- `internal/channels/dashboard/ui/src/pages/PromptStackPage.tsx`
+- `internal/channels/dashboard/ui/tests/e2e/contract.spec.ts`
+- `internal/channels/dashboard/ui/tests/e2e/prompt-stack.spec.ts`
+
+Current capabilities:
+
+- Agent Contract resolved/diff/rollback flows now accept explicit `instance_id` and no longer silently depend on `LoadActiveInstanceID(...)`
+- dashboard Agent Contract and Prompt Stack pages now load instance list, active instance, and instance-scoped agent routes before fetching stack/contract data
+- legacy flat `/api/admin/agents/{agent_id}/...` contract routes remain as active-instance compatibility wrappers while instance-scoped routes are now the canonical path
+
+### 2.14 Shared compatibility feature loading and eval CLI runtime gating
+
+Implemented in:
+
+- `internal/instances/features.go`
+- `internal/instances/features_test.go`
+- `internal/instances/store.go`
+- `cmd/openclawssy/eval_cli.go`
+- `cmd/openclawssy/main_test.go`
+
+Current capabilities:
+
+- control-plane compatibility feature flags are now loaded from `.openclawssy/controlplane/instances.json` through shared `internal/instances` helpers
+- `instances.ResolveEffectiveRuntime(...)` now consumes that shared feature state instead of assuming `DefaultFeatureSet()`
+- `openclawssy eval` now blocks operational subcommands (`run`, `list`, `results`, `baseline`, `compare`) when eval is disabled, while leaving help/usage reachable
+
 ### 3. Tests currently passing
 
 Verified:
@@ -243,6 +291,10 @@ Verified:
 - `cd internal/channels/dashboard/ui && npm run build`
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/runs.spec.ts`
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/chat.spec.ts tests/e2e/eval.spec.ts`
+- `go test ./internal/channels/dashboard ./internal/instances ./cmd/openclawssy`
+- `go test ./internal/channels/dashboard -run 'TestInstanceScopedPromptStackRoutesIsolateSameAgentID|TestInstanceScopedContractResolvedAndDiffEndpointsUseRequestedInstance|TestChatSessionMessagesEndpointIncludesLifecycleMetadata' -count=1`
+- `cd internal/channels/dashboard/ui && npm run build && CI=1 npx playwright test tests/e2e/contract.spec.ts tests/e2e/prompt-stack.spec.ts --reporter=line`
+- `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/sessions.spec.ts --reporter=line`
 
 Note: one broader `go test ./internal/runtime ./...` package pass exposed an existing flaky/unrelated failure in `TestEngineExecuteIngestsMemoryEventsWhenEnabled`, but the focused rerun of that test passed immediately and the targeted package suites for the changed slices passed.
 
@@ -304,10 +356,10 @@ Rules:
 Not finished:
 
 - canonical wizard backend
-- dashboard/UI integration
+- dashboard/UI integration beyond the newly landed Sessions, Agent Contract, and Prompt Stack instance-aware consumers
 - deepen first-class messaging / inbox lifecycle wiring so more producers/consumers emit `running` / `completed` / `failed` updates through the same message model
 - finish composite run identity adoption across remaining runtime + HTTP + eval/dashboard consumers beyond the newly landed SSE/event-bus, Runs page, and Delegation page slices
-- feature flag enforcement from one canonical source across UI/API/runtime beyond the newly landed dashboard API route guards
+- feature flag enforcement from one canonical source across UI/API/runtime beyond the newly landed dashboard API route guards, eval dashboard gating, and eval CLI runtime gating
 - connect richer eval/delegation metadata to more real producers/CLI flows and more dashboard surfaces beyond the current additive storage contract + eval detail/Runs detail panels
 - migration cleanup of remaining legacy flat-agent callers
 
@@ -362,6 +414,10 @@ Next tasks:
 - add stronger parity tests for preview == runtime prompt source
 - add materialization/export helpers if missing
 
+Status update:
+
+- instance-scoped prompt-stack and Agent Contract routes are now wired through the dashboard UI, so the next prompt-unifier slice should focus on mirror-editor clarity and stronger preview/runtime parity validation rather than basic route adoption
+
 Do not:
 
 - reintroduce direct legacy doc reads as runtime truth
@@ -397,6 +453,10 @@ Next tasks:
 - add wizard flows backed by canonical APIs
 - expose prompt source clearly
 - expose disabled/read-only feature flags clearly
+
+Status update:
+
+- Sessions, Agent Contract, and Prompt Stack pages now consume canonical instance identity more explicitly; remaining UI work should prioritize broader active-instance visibility, canonical wizard flows, and consistent feature-state presentation across the rest of the dashboard
 
 Do not:
 
@@ -438,6 +498,10 @@ Next tasks:
 - add messaging permission tests
 - add feature-flag enforcement tests
 - add wizard preview/create equality tests against canonical manifests
+
+Status update:
+
+- eval CLI runtime gating is now covered, so the next qa/eval work should focus on remaining producer adoption, broader dashboard consumers, and wizard parity/feature-guard regression coverage
 
 Do not:
 
@@ -484,12 +548,12 @@ And also:
 
 ## Recommended Completion Order
 
-1. extend messaging/concurrency model from compatibility layer to first-class inbox lifecycle
+1. extend messaging/concurrency model from compatibility layer to first-class inbox lifecycle across more producers and consumers
 2. deepen eval/delegation metadata normalization and parent linkage adoption
-3. finish composite identity adoption in any remaining dashboard/eval/runtime consumers
-5. wire dashboard UI to canonical APIs
-6. finish feature-flag enforcement in API/runtime/UI
-7. run broader validation
+3. finish composite identity adoption in remaining dashboard/eval/runtime consumers beyond the latest Sessions/Contract/Prompt Stack slices
+4. wire the remaining dashboard UI surfaces to canonical instance-aware APIs
+5. finish feature-flag enforcement in API/runtime/UI from the same canonical source
+6. run broader validation
 
 ## Minimum Validation Before Declaring Done
 

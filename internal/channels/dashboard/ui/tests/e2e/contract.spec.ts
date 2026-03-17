@@ -11,6 +11,8 @@ type DiffEntry = {
 }
 
 type ContractState = {
+  instances: Array<{ id: string; name: string }>
+  activeInstanceID: string
   agents: string[]
   resolvedByAgent: Record<string, ContractResponse>
   config: Record<string, unknown>
@@ -199,6 +201,11 @@ function flattenContract(contract: ContractResponse): Record<string, unknown> {
 
 function createState(): ContractState {
   return {
+    instances: [
+      { id: "default", name: "Default" },
+      { id: "lab", name: "Lab" },
+    ],
+    activeInstanceID: "lab",
     agents: ["default", "reviewer", "ops"],
     resolvedByAgent: {
       default: createResolvedContract("default", "hatz", "global"),
@@ -245,15 +252,35 @@ async function installContractMocks(page: Page, state: ContractState) {
       return
     }
 
+    if (pathname === "/api/admin/instances" && method === "GET") {
+      await json({ instances: state.instances, active_instance_id: state.activeInstanceID })
+      return
+    }
+
+    if (pathname === "/api/admin/instances/active" && method === "GET") {
+      const instance = state.instances.find((item) => item.id === state.activeInstanceID) || state.instances[0]
+      await json({ instance })
+      return
+    }
+
     if (pathname === "/api/admin/agents" && method === "GET") {
       await json({ agents: state.agents, selected_agent: "default", active_agent: "default" })
       return
     }
 
-    const contractMatch = pathname.match(/^\/api\/admin\/agents\/([^/]+)\/(resolved|diff)$/)
+    const instanceAgentsMatch = pathname.match(/^\/api\/admin\/instances\/([^/]+)\/agents$/)
+    if (instanceAgentsMatch && method === "GET") {
+      await json({
+        instance_id: decodeURIComponent(instanceAgentsMatch[1]),
+        agents: state.agents.map((agentID) => ({ agent_id: agentID })),
+      })
+      return
+    }
+
+    const contractMatch = pathname.match(/^\/api\/admin\/instances\/([^/]+)\/agents\/([^/]+)\/(resolved|diff)$/)
     if (contractMatch && method === "GET") {
-      const agentID = decodeURIComponent(contractMatch[1])
-      const action = contractMatch[2]
+      const agentID = decodeURIComponent(contractMatch[2])
+      const action = contractMatch[3]
       const target = deepClone(state.resolvedByAgent[agentID] || state.resolvedByAgent.default)
 
       if (action === "resolved") {
@@ -293,7 +320,7 @@ async function installContractMocks(page: Page, state: ContractState) {
       return
     }
 
-    const rollbackSaveMatch = pathname.match(/^\/api\/admin\/agents\/([^/]+)\/rollback-snapshot\/?$/)
+    const rollbackSaveMatch = pathname.match(/^\/api\/admin\/instances\/([^/]+)\/agents\/([^/]+)\/rollback-snapshot\/?$/)
     if (rollbackSaveMatch && method === "POST") {
       const snapshot = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -305,7 +332,7 @@ async function installContractMocks(page: Page, state: ContractState) {
       return
     }
 
-    const rollbackRestoreMatch = pathname.match(/^\/api\/admin\/agents\/([^/]+)\/rollback-restore\/?$/)
+    const rollbackRestoreMatch = pathname.match(/^\/api\/admin\/instances\/([^/]+)\/agents\/([^/]+)\/rollback-restore\/?$/)
     if (rollbackRestoreMatch && method === "POST") {
       const body = JSON.parse(request.postData() || "{}") as { snapshot_id?: string }
       const snapshotID = (body.snapshot_id || "").trim()
@@ -344,6 +371,7 @@ test("Agent Contract page is reachable from sidebar and lists configured agents"
 
   await expect(page).toHaveURL(/#\/agent-contract$/)
   await expect(page.getByRole("heading", { name: "Agent Contract", level: 2 })).toBeVisible()
+  await expect(page.locator("#agent-contract-instance-selector")).toHaveValue("lab")
   await expect(page.locator("#agent-contract-agent-selector option")).toHaveCount(3)
   await expect(page.locator("#agent-contract-agent-selector")).toHaveValue("default")
 })

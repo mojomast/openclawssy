@@ -1950,6 +1950,71 @@ func TestChatSessionMessagesEndpointIncludesToolMetadata(t *testing.T) {
 	}
 }
 
+func TestChatSessionMessagesEndpointIncludesLifecycleMetadata(t *testing.T) {
+	root := t.TempDir()
+	store, err := chatstore.NewStore(filepath.Join(root, ".openclawssy", "agents"))
+	if err != nil {
+		t.Fatalf("new chat store: %v", err)
+	}
+	session, err := store.CreateSession(chatstore.CreateSessionInput{AgentID: "default", Channel: "dashboard", UserID: "dashboard_user", RoomID: "dashboard"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := store.AppendMessage(session.SessionID, chatstore.Message{
+		Role:            "system",
+		Content:         `{"message":"queued for execution"}`,
+		MessageID:       "msg_123",
+		Status:          "acknowledged",
+		InstanceID:      "lab",
+		FromAgentID:     "planner",
+		ToAgentID:       "implementer",
+		TaskID:          "task_9",
+		Subject:         "handoff",
+		SourceSessionID: "source_session_1",
+		RelatedRunID:    "run_314",
+		Note:            "dashboard acknowledged",
+		Error:           "",
+	}); err != nil {
+		t.Fatalf("append lifecycle message: %v", err)
+	}
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/chat/sessions/"+session.SessionID+"/messages?limit=10", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rr.Code)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	msgs, ok := payload["messages"].([]any)
+	if !ok || len(msgs) != 1 {
+		t.Fatalf("expected one message, got %#v", payload["messages"])
+	}
+	msg, ok := msgs[0].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected message shape: %#v", msgs[0])
+	}
+	if msg["message_id"] != "msg_123" || msg["status"] != "acknowledged" {
+		t.Fatalf("expected lifecycle id/status fields, got %#v", msg)
+	}
+	if msg["instance_id"] != "lab" || msg["from_agent_id"] != "planner" || msg["to_agent_id"] != "implementer" {
+		t.Fatalf("expected lifecycle routing fields, got %#v", msg)
+	}
+	if msg["task_id"] != "task_9" || msg["subject"] != "handoff" || msg["source_session_id"] != "source_session_1" {
+		t.Fatalf("expected lifecycle linkage fields, got %#v", msg)
+	}
+	if msg["related_run_id"] != "run_314" || msg["note"] != "dashboard acknowledged" {
+		t.Fatalf("expected lifecycle note/run fields, got %#v", msg)
+	}
+}
+
 func TestChatSessionMessagesEndpointPreservesMultiStepOrder(t *testing.T) {
 	root := t.TempDir()
 	store, err := chatstore.NewStore(filepath.Join(root, ".openclawssy", "agents"))

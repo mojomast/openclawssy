@@ -36,6 +36,17 @@ type SessionMessage = {
   runID: string
   toolCallID: string
   toolName: string
+  messageID: string
+  status: string
+  instanceID: string
+  fromAgentID: string
+  toAgentID: string
+  taskID: string
+  subject: string
+  sourceSessionID: string
+  relatedRunID: string
+  note: string
+  error: string
 }
 
 type ToolEvent = {
@@ -259,6 +270,17 @@ function normalizeMessage(value: unknown): SessionMessage | null {
     runID: asText(raw.run_id).trim(),
     toolCallID: asText(raw.tool_call_id).trim(),
     toolName: asText(raw.tool_name).trim(),
+    messageID: asText(raw.message_id).trim(),
+    status: asText(raw.status).trim(),
+    instanceID: asText(raw.instance_id).trim(),
+    fromAgentID: asText(raw.from_agent_id).trim(),
+    toAgentID: asText(raw.to_agent_id).trim(),
+    taskID: asText(raw.task_id).trim(),
+    subject: asText(raw.subject).trim(),
+    sourceSessionID: asText(raw.source_session_id).trim(),
+    relatedRunID: asText(raw.related_run_id).trim(),
+    note: asText(raw.note).trim(),
+    error: asText(raw.error).trim(),
   }
 }
 
@@ -339,6 +361,33 @@ function toToolEvent(message: SessionMessage, index: number): ToolEvent {
     ts: message.ts,
     index,
   }
+}
+
+function isLifecycleMessage(message: SessionMessage): boolean {
+  return message.role === "system"
+}
+
+function lifecycleSummary(message: SessionMessage): string {
+  return firstNonEmpty(
+    message.subject,
+    message.note,
+    message.error,
+    compactText(asDisplayText(message.content), 180),
+    message.status ? `Lifecycle update: ${message.status}` : "Lifecycle update"
+  )
+}
+
+function lifecycleDetails(message: SessionMessage): Array<{ label: string; value: string }> {
+  return [
+    { label: "Message", value: message.messageID },
+    { label: "Status", value: message.status },
+    { label: "Instance", value: message.instanceID },
+    { label: "From", value: message.fromAgentID },
+    { label: "To", value: message.toAgentID },
+    { label: "Task", value: message.taskID },
+    { label: "Source session", value: message.sourceSessionID },
+    { label: "Run", value: firstNonEmpty(message.relatedRunID, message.runID) },
+  ].filter((entry) => entry.value)
 }
 
 function buildSessionsListQuery(limit: number, offset: number): string {
@@ -749,6 +798,61 @@ export function SessionsPage() {
           {selectedSessionID && !messagesLoading && !messagesError && messages.length > 0 ? (
             <div className="space-y-3" data-testid="sessions-message-stream">
               {messages.map((message, index) => {
+                if (isLifecycleMessage(message)) {
+                  const details = lifecycleDetails(message)
+                  return (
+                    <article
+                      key={`lifecycle-${message.messageID || message.ts || index}`}
+                      className={[
+                        "space-y-2 rounded-md border p-3",
+                        message.error ? "border-destructive/40 bg-destructive/5" : "bg-sky-50/40",
+                      ].join(" ")}
+                      data-testid="sessions-lifecycle-event"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="text-sm font-semibold">Lifecycle</h3>
+                        {message.status ? <Badge variant="secondary">{message.status}</Badge> : null}
+                      </div>
+
+                      <p className="text-xs text-muted-foreground">
+                        {[message.ts ? formatDateTime(message.ts) : "", message.messageID ? `message ${message.messageID}` : ""]
+                          .filter(Boolean)
+                          .join(" · ") || "system lifecycle event"}
+                      </p>
+
+                      <p className="text-sm">{lifecycleSummary(message)}</p>
+
+                      {details.length > 0 ? (
+                        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                          {details.map((entry) => (
+                            <span key={`${entry.label}-${entry.value}`} className="rounded-full border bg-background/80 px-2 py-1">
+                              {entry.label}: {entry.value}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {message.content ? (
+                        <details className="rounded-md border bg-background/80 p-2">
+                          <summary className="cursor-pointer text-sm">Payload</summary>
+                          <pre className="mt-2 max-h-64 overflow-auto text-xs">{compactText(asDisplayText(message.content), 4000)}</pre>
+                        </details>
+                      ) : null}
+
+                      {message.note ? (
+                        <p className="text-xs text-muted-foreground">Note: {message.note}</p>
+                      ) : null}
+
+                      {message.error ? (
+                        <details className="rounded-md border bg-background/80 p-2" open>
+                          <summary className="cursor-pointer text-sm">Error</summary>
+                          <pre className="mt-2 max-h-64 overflow-auto text-xs">{message.error}</pre>
+                        </details>
+                      ) : null}
+                    </article>
+                  )
+                }
+
                 if (message.role === "user" || message.role === "assistant") {
                   return (
                     <article

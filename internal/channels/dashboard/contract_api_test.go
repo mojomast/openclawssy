@@ -417,6 +417,90 @@ func TestContractRollbackRestoreSnapshotNotFound(t *testing.T) {
 	}
 }
 
+func TestInstanceScopedContractResolvedAndDiffEndpointsUseRequestedInstance(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	writeContractDashboardConfig(t, root, cfg)
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	alphaCfg := config.Default()
+	alphaCfg.Agents.Profiles["default"] = config.AgentProfile{Model: config.ModelConfig{Provider: "openai", Name: "gpt-4o-mini"}}
+	alphaInstance, err := buildDashboardInstance(instanceBuildInput{ID: "alpha", Name: "Alpha", Config: alphaCfg})
+	if err != nil {
+		t.Fatalf("build alpha instance: %v", err)
+	}
+	if err := h.saveProjectedInstance(alphaInstance); err != nil {
+		t.Fatalf("save alpha instance: %v", err)
+	}
+
+	betaCfg := config.Default()
+	betaCfg.Agents.Profiles["default"] = config.AgentProfile{Model: config.ModelConfig{Provider: "openrouter", Name: "moonshot/test"}}
+	betaInstance, err := buildDashboardInstance(instanceBuildInput{ID: "beta", Name: "Beta", Config: betaCfg})
+	if err != nil {
+		t.Fatalf("build beta instance: %v", err)
+	}
+	if err := h.saveProjectedInstance(betaInstance); err != nil {
+		t.Fatalf("save beta instance: %v", err)
+	}
+
+	alphaStore, err := h.promptStackStore("alpha")
+	if err != nil {
+		t.Fatalf("alpha prompt stack store: %v", err)
+	}
+	betaStore, err := h.promptStackStore("beta")
+	if err != nil {
+		t.Fatalf("beta prompt stack store: %v", err)
+	}
+	if _, err := alphaStore.UpdateLayer("default", "agent_identity", "alpha identity"); err != nil {
+		t.Fatalf("seed alpha stack: %v", err)
+	}
+	if _, err := betaStore.UpdateLayer("default", "agent_identity", "beta identity"); err != nil {
+		t.Fatalf("seed beta stack: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	alphaReq := httptest.NewRequest(http.MethodGet, "/api/admin/instances/alpha/agents/default/resolved", nil)
+	alphaRR := httptest.NewRecorder()
+	mux.ServeHTTP(alphaRR, alphaReq)
+	if alphaRR.Code != http.StatusOK {
+		t.Fatalf("expected alpha resolved status 200, got %d (%s)", alphaRR.Code, alphaRR.Body.String())
+	}
+	var alphaPayload agentcontract.AgentContract
+	if err := json.Unmarshal(alphaRR.Body.Bytes(), &alphaPayload); err != nil {
+		t.Fatalf("decode alpha resolved: %v", err)
+	}
+	if !strings.Contains(alphaPayload.SystemPrompt.Content, "alpha identity") {
+		t.Fatalf("expected alpha prompt stack in resolved contract, got %q", alphaPayload.SystemPrompt.Content)
+	}
+	if strings.Contains(alphaPayload.SystemPrompt.Content, "beta identity") {
+		t.Fatalf("did not expect beta prompt stack content in alpha contract: %q", alphaPayload.SystemPrompt.Content)
+	}
+
+	diffReq := httptest.NewRequest(http.MethodGet, "/api/admin/instances/beta/agents/default/diff?base=global", nil)
+	diffRR := httptest.NewRecorder()
+	mux.ServeHTTP(diffRR, diffReq)
+	if diffRR.Code != http.StatusOK {
+		t.Fatalf("expected beta diff status 200, got %d (%s)", diffRR.Code, diffRR.Body.String())
+	}
+	betaResolved := getResolvedContractForInstance(t, mux, "beta", "default")
+	if !strings.Contains(betaResolved.SystemPrompt.Content, "beta identity") {
+		t.Fatalf("expected beta resolved prompt stack, got %q", betaResolved.SystemPrompt.Content)
+	}
+	var diffPayload struct {
+		AgentID     string                     `json:"agent_id"`
+		Base        string                     `json:"base"`
+		Differences []contractDiffFieldPayload `json:"differences"`
+	}
+	if err := json.Unmarshal(diffRR.Body.Bytes(), &diffPayload); err != nil {
+		t.Fatalf("decode beta diff: %v", err)
+	}
+	if diffPayload.AgentID != "default" || diffPayload.Base != "global" {
+		t.Fatalf("unexpected diff metadata: %+v", diffPayload)
+	}
+}
+
 type contractDiffFieldPayload struct {
 	Field        string `json:"field"`
 	TargetValue  any    `json:"target_value"`
@@ -450,6 +534,23 @@ func contractErrorCode(t *testing.T, body []byte) string {
 func getResolvedContractForAgent(t *testing.T, mux *http.ServeMux, agentID string) agentcontract.AgentContract {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/agents/"+agentID+"/resolved", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusOK, rr.Code, rr.Body.String())
+	}
+
+	var payload agentcontract.AgentContract
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	return payload
+}
+
+func getResolvedContractForInstance(t *testing.T, mux *http.ServeMux, instanceID, agentID string) agentcontract.AgentContract {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/instances/"+instanceID+"/agents/"+agentID+"/resolved", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 

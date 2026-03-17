@@ -31,6 +31,9 @@ Date: 2026-03-16
 - Dashboard inbox APIs now support list/detail/ack/run over the shared `message_id` lifecycle and reuse the same subagent runner path as runtime-triggered inbox execution.
 - Dashboard chat now threads `instance_id` and `agent_id` through send, run polling, SSE streaming, and cancel paths.
 - Dashboard eval now honors the eval feature flag in both API and UI: the nav entry hides when disabled and direct page access shows a disabled-state panel.
+- Dashboard Sessions now preserves lifecycle-rich message metadata and renders operator-facing lifecycle cards for status transitions and related run/task context.
+- Dashboard Agent Contract and Prompt Stack pages now load canonical instance-scoped routes using the selected instance, while legacy flat agent routes remain active-instance compatibility wrappers.
+- Shared control-plane compatibility feature loading now lives in `internal/instances`, and `openclawssy eval` operational subcommands are blocked when eval is disabled.
 
 ## Validation completed
 
@@ -51,10 +54,14 @@ Date: 2026-03-16
 - `go test ./internal/runtime ./internal/tools ./internal/channels/dashboard`
 - `go test ./internal/chatstore ./internal/tools ./internal/channels/chat ./internal/channels/http ./internal/channels/dashboard ./internal/runtime ./cmd/openclawssy`
 - `go test ./internal/channels/dashboard -run 'TestEvalResultsEndpoint|TestControlPlaneFeaturesAndWizardEndpoints|TestInstanceFeatureFlagEnforcement' -count=1`
+- `go test ./internal/channels/dashboard ./internal/instances ./cmd/openclawssy`
+- `go test ./internal/channels/dashboard -run 'TestInstanceScopedPromptStackRoutesIsolateSameAgentID|TestInstanceScopedContractResolvedAndDiffEndpointsUseRequestedInstance|TestChatSessionMessagesEndpointIncludesLifecycleMetadata' -count=1`
 - `cd internal/channels/dashboard/ui && npm run typecheck`
 - `cd internal/channels/dashboard/ui && npm run build`
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/runs.spec.ts`
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/chat.spec.ts tests/e2e/eval.spec.ts`
+- `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/sessions.spec.ts --reporter=line`
+- `cd internal/channels/dashboard/ui && npm run build && CI=1 npx playwright test tests/e2e/contract.spec.ts tests/e2e/prompt-stack.spec.ts --reporter=line`
 
 Note:
 
@@ -91,15 +98,15 @@ Note:
 Highest priority next:
 
 1. Extend the new messaging lifecycle foundation so more producers/consumers emit `running` / `completed` / `failed` updates through the same `message_id` model.
-2. Finish composite identity adoption in remaining dashboard/runtime consumers beyond the newly landed SSE/event-bus, Runs page, Delegation page, and `run.cancel` slices.
+2. Finish composite identity adoption in remaining dashboard/runtime consumers beyond the newly landed SSE/event-bus, Runs page, Delegation page, Sessions page, and Contract/Prompt Stack slices.
 3. Connect the richer eval/delegation metadata contract to more real producers and more dashboard consumers beyond the eval detail and Runs detail panels.
-4. Finish broader runtime-side feature enforcement so disabled features cannot still be reached through non-dashboard execution paths.
+4. Finish broader runtime-side feature enforcement so disabled features cannot still be reached through non-dashboard execution paths beyond the newly landed eval CLI gating.
 
 Still open overall:
 
 - wizard preview/create parity validation against canonical manifests
-- dashboard UI wiring for canonical instance flows
-- full feature-flag enforcement polish in UI/API/runtime
+- dashboard UI wiring for canonical instance flows beyond Sessions, Agent Contract, and Prompt Stack
+- full feature-flag enforcement polish in UI/API/runtime beyond the current dashboard API/UI and eval CLI coverage
 - migration cleanup of remaining legacy flat-agent assumptions
 - broader validation pass (`go test ./...`, build, doctor, dashboard/e2e as needed)
 
@@ -108,10 +115,10 @@ Still open overall:
 - Dashboard instance projection still has lossy compatibility shaping in some paths.
 - Canonical clone fidelity and metadata provenance are not fully complete.
 - Messaging is now instance-scoped and lifecycle-aware, but it is still chatstore-backed rather than a dedicated canonical inbox store.
-- Dashboard/eval/decision views and some API guards are improved, but broader composite identity adoption, UI/runtime feature gating, and delegation metadata rollout are still incomplete.
-- The dashboard UI fix landed for chat/eval operator flows, but more pages still need to consume the shared control-plane feature hook and canonical instance identity consistently.
+- Dashboard/eval/decision views and some API/runtime guards are improved, but broader composite identity adoption, UI/runtime feature gating, and delegation metadata rollout are still incomplete.
+- The dashboard UI fix landed for chat/eval operator flows plus Sessions/Contract/Prompt Stack, but more pages still need to consume the shared control-plane feature hook and canonical instance identity consistently.
 
 ## Recommended next starting point
 
 - Re-read `rfchandoff.md`, `devplan.md`, and `orchestrator_prompt.md`.
-- Then inspect delegation and messaging lifecycle paths so the next slice can build on the new dashboard/eval identity metadata without inventing a parallel model.
+- Then inspect delegation and messaging lifecycle paths so the next slice can build on the new dashboard/eval/session identity metadata without inventing a parallel model.

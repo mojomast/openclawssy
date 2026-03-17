@@ -18,6 +18,7 @@ import (
 	"openclawssy/internal/channels/telegram"
 	"openclawssy/internal/chatstore"
 	"openclawssy/internal/config"
+	"openclawssy/internal/instances"
 	"openclawssy/internal/messagecontent"
 	"openclawssy/internal/scheduler"
 )
@@ -606,6 +607,48 @@ func TestEvalServiceCompareHighlightsRegressions(t *testing.T) {
 	}
 	if !strings.Contains(compareOut, "\x1b[31m") {
 		t.Fatalf("expected red regression highlight in compare output, got %q", compareOut)
+	}
+}
+
+func TestEvalServiceRejectsOperationalCommandsWhenEvalFeatureDisabled(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmp := t.TempDir()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir temp: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(wd)
+	})
+
+	controlPlaneDir := filepath.Join(".openclawssy", "controlplane")
+	if err := os.MkdirAll(controlPlaneDir, 0o755); err != nil {
+		t.Fatalf("mkdir control plane: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(controlPlaneDir, "instances.json"), []byte("{\n  \"features\": {\n    \"eval\": false\n  }\n}\n"), 0o644); err != nil {
+		t.Fatalf("write control plane store: %v", err)
+	}
+
+	commands := [][]string{{"list"}, {"run", "--suite", "basic"}, {"results"}, {"baseline", "set"}, {"compare"}}
+	for _, args := range commands {
+		var out bytes.Buffer
+		var errOut bytes.Buffer
+		svc := evalService{out: &out, err: &errOut}
+		if code := svc.HandleEval(context.Background(), args); code == 0 {
+			t.Fatalf("HandleEval(%v) code = %d, want non-zero when eval feature disabled", args, code)
+		}
+		if !strings.Contains(errOut.String(), instances.EvalFeatureDisabledError().Error()) {
+			t.Fatalf("expected disabled eval error for %v, got %q", args, errOut.String())
+		}
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	svc := evalService{out: &out, err: &errOut}
+	if code := svc.HandleEval(context.Background(), []string{"help"}); code != 0 {
+		t.Fatalf("HandleEval(help) code = %d, want 0; stderr=%q", code, errOut.String())
 	}
 }
 

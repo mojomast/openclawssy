@@ -196,13 +196,16 @@ Completed or substantially landed:
 - runtime `RunTracker` now has first-class composite track/cancel/remove helpers for `(instance_id, agent_id, run_id)` while preserving bare `run_id` compatibility
 - `run.cancel` now accepts composite identity and prefers precise composite cancellation when `instance_id` and `agent_id` are supplied together
 - dashboard instance, instance-agent, and wizard admin APIs now hard-fail with feature-specific 403s when their control-plane flags are disabled
+- dashboard Sessions now preserves lifecycle-rich inbox metadata and renders operator-facing lifecycle cards for message status transitions
+- Agent Contract and Prompt Stack dashboard flows now resolve against explicit selected `instance_id` routes, while legacy flat agent routes remain active-instance compatibility wrappers
+- control-plane compatibility feature loading now lives in `internal/instances`, and `openclawssy eval` operational CLI commands are runtime-gated when eval is disabled
 
 Still open:
 
 - first-class inbox/message lifecycle model
-- dashboard/UI instance wiring completion
-- deeper eval/delegation metadata normalization
-- end-to-end feature flag enforcement polish
+- dashboard/UI instance wiring completion beyond the newly landed Sessions, Agent Contract, and Prompt Stack pages
+- deeper eval/delegation metadata normalization beyond the current additive schema and operator detail views
+- end-to-end feature flag enforcement polish beyond the newly landed dashboard API/UI guards and eval CLI runtime gating
 - broader validation and migration cleanup
 
 ## Milestone 1: Foundation
@@ -278,6 +281,8 @@ Progress update:
 - inbox lifecycle foundation is landed (`message_id`, `queued`, `acknowledged`) and dashboard inbox ack/run APIs now reuse the same lifecycle model, but broader runtime/UI wiring and canonical storage cleanup are still open
 - inbox lifecycle is now exercised by real auto-run, proactive-memory, and delegated-subagent producer paths, but more producers/consumers still need to converge on the same model
 - API-side feature-flag enforcement now covers wizard, instance-control, instance-agent, and eval routes, and the dashboard UI now hides/disables eval when that feature is off, but broader UI/runtime read-only and visibility enforcement remains open
+- dashboard Sessions now consumes lifecycle metadata from session messages and surfaces the queue/running/completed/failed flow as dedicated lifecycle cards for operators
+- dashboard Agent Contract and Prompt Stack flows now consume canonical instance-scoped routes instead of silently binding to the active instance, while preserving legacy flat-route compatibility wrappers
 
 ## Milestone 6: Wizard
 
@@ -309,6 +314,8 @@ Progress update:
 - eval storage and API now carry richer additive identity/runtime metadata (`instance_id`, `agent_id`, `run_id`, `parent_run_id`, `root_run_id`, `source`, `task_id`, `session_id`, artifact/checkpoint/delegation metadata)
 - dashboard/eval consumers have stronger composite identity and lineage adoption, and chat now threads composite identity through its operator flows, but delegation producers and broader consumers still need follow-through
 - dashboard eval detail panels now consume and render additive identity/runtime/delegation metadata, but richer producer coverage and more operator views still remain
+- `internal/instances.ResolveEffectiveRuntime(...)` now loads control-plane compatibility feature state from the shared instance store instead of hardcoding default feature flags
+- `openclawssy eval` now blocks `run`, `list`, `results`, `baseline`, and `compare` when eval is disabled, while preserving help/usage output for discoverability
 
 ## 7. Detailed task list by agent
 

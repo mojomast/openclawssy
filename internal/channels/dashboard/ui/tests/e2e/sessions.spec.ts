@@ -18,6 +18,17 @@ type MockSessionMessage = {
   run_id?: string
   tool_call_id?: string
   tool_name?: string
+  message_id?: string
+  status?: string
+  instance_id?: string
+  from_agent_id?: string
+  to_agent_id?: string
+  task_id?: string
+  subject?: string
+  source_session_id?: string
+  related_run_id?: string
+  note?: string
+  error?: string
 }
 
 type SessionMockOptions = {
@@ -271,6 +282,56 @@ test("opening a session shows messages and tool events with collapsible args/out
   await page.getByLabel("Messages").selectOption("500")
   await expect.poll(() => state.messageQueries.at(-1)?.sessionID).toBe("session_tool")
   await expect.poll(() => state.messageQueries.at(-1)?.limit).toBe("500")
+})
+
+test("session detail renders lifecycle cards for system message events", async ({ page }) => {
+  await installSessionsMocks(page, {
+    sessions: [
+      {
+        session_id: "session_lifecycle",
+        title: "Lifecycle Session",
+        user_id: "operator",
+        room_id: "ops",
+        updated_at: "2026-03-14T14:00:00Z",
+        created_at: "2026-03-14T13:00:00Z",
+      },
+    ],
+    messagesBySessionID: {
+      session_lifecycle: [
+        {
+          role: "system",
+          content: JSON.stringify({ message: "queued for execution" }),
+          ts: "2026-03-14T14:00:03Z",
+          message_id: "msg_123",
+          status: "acknowledged",
+          instance_id: "lab",
+          from_agent_id: "planner",
+          to_agent_id: "implementer",
+          task_id: "task_9",
+          subject: "handoff",
+          source_session_id: "source_session_1",
+          related_run_id: "run_314",
+          note: "dashboard acknowledged",
+        },
+      ],
+    },
+  })
+
+  await page.goto("/dashboard#/sessions")
+  await page.getByRole("button", { name: "Open" }).click()
+
+  const lifecycleCard = page.getByTestId("sessions-lifecycle-event").first()
+  await expect(lifecycleCard).toContainText("Lifecycle")
+  await expect(lifecycleCard).toContainText("acknowledged")
+  await expect(lifecycleCard).toContainText("handoff")
+  await expect(lifecycleCard).toContainText("Message: msg_123")
+  await expect(lifecycleCard).toContainText("Instance: lab")
+  await expect(lifecycleCard).toContainText("From: planner")
+  await expect(lifecycleCard).toContainText("To: implementer")
+  await expect(lifecycleCard).toContainText("Task: task_9")
+  await expect(lifecycleCard).toContainText("Source session: source_session_1")
+  await expect(lifecycleCard).toContainText("Run: run_314")
+  await expect(lifecycleCard).toContainText("dashboard acknowledged")
 })
 
 test("shows loading and empty states for sessions list and message detail", async ({ page }) => {

@@ -25,6 +25,11 @@ type Snapshot = {
   createdAt: string
 }
 
+type InstanceSummary = {
+  id: string
+  name: string
+}
+
 const CONTRACT_SECTIONS = [
   { key: "identity", label: "Identity" },
   { key: "mission", label: "Mission" },
@@ -162,7 +167,35 @@ function normalizeAgentIDs(payload: unknown): string[] {
   return out
 }
 
+function normalizeInstances(payload: unknown): InstanceSummary[] {
+  if (!Array.isArray(payload)) {
+    return []
+  }
+  const out: InstanceSummary[] = []
+  const seen = new Set<string>()
+  for (const item of payload) {
+    const record = asRecord(item)
+    const id = asText(record?.id).trim()
+    if (!id || seen.has(id)) {
+      continue
+    }
+    seen.add(id)
+    out.push({
+      id,
+      name: asText(record?.name).trim() || id,
+    })
+  }
+  return out
+}
+
+function buildInstanceContractRoute(instanceID: string, agentID: string, action: string, query = ""): string {
+  const base = `/api/admin/instances/${encodeURIComponent(instanceID)}/agents/${encodeURIComponent(agentID)}/${action}`
+  return query ? `${base}?${query}` : base
+}
+
 export function AgentContractPage() {
+  const [instances, setInstances] = useState<InstanceSummary[]>([])
+  const [selectedInstance, setSelectedInstance] = useState("")
   const [agents, setAgents] = useState<string[]>([])
   const [selectedAgent, setSelectedAgent] = useState("")
   const [viewMode, setViewMode] = useState<"resolved" | "raw">("resolved")
@@ -184,29 +217,49 @@ export function AgentContractPage() {
   const [rollbackError, setRollbackError] = useState("")
   const [rollingBackSnapshotID, setRollingBackSnapshotID] = useState("")
 
-  const loadAgents = useCallback(async () => {
+  const loadSelectors = useCallback(async () => {
     setLoadingAgents(true)
     setErrorMessage("")
     try {
-      const payload = await api.get<{ agents?: unknown; selected_agent?: unknown }>("/api/admin/agents")
-      const agentIDs = normalizeAgentIDs(payload.agents)
+      const [instancesPayload, activePayload] = await Promise.all([
+        api.get<{ instances?: unknown }>("/api/admin/instances"),
+        api.get<{ instance?: unknown }>("/api/admin/instances/active"),
+      ])
+
+      const nextInstances = normalizeInstances(instancesPayload.instances)
+      const activeInstanceRecord = asRecord(activePayload.instance)
+      const activeInstanceID = asText(activeInstanceRecord?.id).trim()
+      const nextSelectedInstance =
+        (activeInstanceID && nextInstances.some((instance) => instance.id === activeInstanceID) ? activeInstanceID : "") ||
+        nextInstances[0]?.id ||
+        ""
+
+      setInstances(nextInstances)
+      setSelectedInstance(nextSelectedInstance)
+
+      const agentPayload = nextSelectedInstance
+        ? await api.get<{ agents?: unknown }>(`/api/admin/instances/${encodeURIComponent(nextSelectedInstance)}/agents`)
+        : { agents: [] }
+
+      const agentIDs = normalizeAgentIDs(agentPayload.agents)
       setAgents(agentIDs)
 
-      const selected = asText(payload.selected_agent).trim()
-      const nextSelected = selected && agentIDs.includes(selected) ? selected : agentIDs[0] || ""
+      const nextSelected = agentIDs[0] || ""
       setSelectedAgent(nextSelected)
       setDiffBase("global")
     } catch (error) {
+      setInstances([])
+      setSelectedInstance("")
       setAgents([])
       setSelectedAgent("")
-      setErrorMessage(`Failed to load agents: ${extractErrorMessage(error)}`)
+      setErrorMessage(`Failed to load contract controls: ${extractErrorMessage(error)}`)
     } finally {
       setLoadingAgents(false)
     }
   }, [])
 
-  const loadResolvedContract = useCallback(async (agentID: string) => {
-    if (!agentID) {
+  const loadResolvedContract = useCallback(async (instanceID: string, agentID: string) => {
+    if (!instanceID || !agentID) {
       setResolvedContract(null)
       setSourceMap({})
       return
@@ -215,7 +268,7 @@ export function AgentContractPage() {
     setErrorMessage("")
 
     try {
-      const payload = await api.get<unknown>(`/api/admin/agents/${encodeURIComponent(agentID)}/resolved`)
+      const payload = await api.get<unknown>(buildInstanceContractRoute(instanceID, agentID, "resolved"))
       const contract = asRecord(payload)
       if (!contract) {
         throw new Error("Resolved contract response was not an object")
@@ -241,8 +294,8 @@ export function AgentContractPage() {
     }
   }, [])
 
-  const loadDiff = useCallback(async (agentID: string, base: string) => {
-    if (!agentID) {
+  const loadDiff = useCallback(async (instanceID: string, agentID: string, base: string) => {
+    if (!instanceID || !agentID) {
       setDiffRows([])
       setDiffError("")
       return
@@ -251,8 +304,9 @@ export function AgentContractPage() {
     setLoadingDiff(true)
     setDiffError("")
     try {
+      const query = new URLSearchParams({ base }).toString()
       const payload = await api.get<unknown>(
-        `/api/admin/agents/${encodeURIComponent(agentID)}/diff?base=${encodeURIComponent(base)}`
+        buildInstanceContractRoute(instanceID, agentID, "diff", query)
       )
       const record = asRecord(payload)
       const rowsRaw = Array.isArray(record?.differences) ? record.differences : []
@@ -287,25 +341,25 @@ export function AgentContractPage() {
   }, [])
 
   useEffect(() => {
-    void loadAgents()
-  }, [loadAgents])
+    void loadSelectors()
+  }, [loadSelectors])
 
   useEffect(() => {
-    if (!selectedAgent) {
+    if (!selectedInstance || !selectedAgent) {
       return
     }
-    void loadResolvedContract(selectedAgent)
-  }, [loadResolvedContract, selectedAgent])
+    void loadResolvedContract(selectedInstance, selectedAgent)
+  }, [loadResolvedContract, selectedAgent, selectedInstance])
 
   useEffect(() => {
-    if (!selectedAgent) {
+    if (!selectedInstance || !selectedAgent) {
       return
     }
     if (activePanel !== "diff") {
       return
     }
-    void loadDiff(selectedAgent, diffBase)
-  }, [activePanel, diffBase, loadDiff, selectedAgent])
+    void loadDiff(selectedInstance, selectedAgent, diffBase)
+  }, [activePanel, diffBase, loadDiff, selectedAgent, selectedInstance])
 
   const sectionRows = useMemo(() => {
     if (!resolvedContract) {
@@ -337,14 +391,14 @@ export function AgentContractPage() {
   const saveSnapshot = useCallback(async () => {
     setSnapshotMessage("")
     setRollbackError("")
-    if (!selectedAgent) {
-      setRollbackError("Select an agent before saving a rollback snapshot.")
+    if (!selectedInstance || !selectedAgent) {
+      setRollbackError("Select an instance and agent before saving a rollback snapshot.")
       return
     }
     try {
       const payload = await api.post<{
         snapshot?: { id?: unknown; created_at?: unknown }
-      }>(`/api/admin/agents/${encodeURIComponent(selectedAgent)}/rollback-snapshot`, {})
+      }>(buildInstanceContractRoute(selectedInstance, selectedAgent, "rollback-snapshot"), {})
       const snapshotPayload = asRecord(payload.snapshot)
       const id = asText(snapshotPayload?.id).trim()
       const createdAt = asText(snapshotPayload?.created_at).trim()
@@ -360,33 +414,33 @@ export function AgentContractPage() {
     } catch (error) {
       setRollbackError(`Failed to save snapshot: ${extractErrorMessage(error)}`)
     }
-  }, [selectedAgent])
+  }, [selectedAgent, selectedInstance])
 
   const restoreSnapshot = useCallback(async (snapshot: Snapshot) => {
     setSnapshotMessage("")
     setRollbackError("")
-    if (!selectedAgent) {
-      setRollbackError("Select an agent before restoring a rollback snapshot.")
+    if (!selectedInstance || !selectedAgent) {
+      setRollbackError("Select an instance and agent before restoring a rollback snapshot.")
       return
     }
     setRollingBackSnapshotID(snapshot.id)
     try {
-      await api.post(`/api/admin/agents/${encodeURIComponent(selectedAgent)}/rollback-restore`, {
+      await api.post(buildInstanceContractRoute(selectedInstance, selectedAgent, "rollback-restore"), {
         snapshot_id: snapshot.id,
       })
       setSnapshotMessage("Rollback restored successfully.")
-      if (selectedAgent) {
-        await loadResolvedContract(selectedAgent)
+      if (selectedInstance && selectedAgent) {
+        await loadResolvedContract(selectedInstance, selectedAgent)
       }
-      if (selectedAgent && activePanel === "diff") {
-        await loadDiff(selectedAgent, diffBase)
+      if (selectedInstance && selectedAgent && activePanel === "diff") {
+        await loadDiff(selectedInstance, selectedAgent, diffBase)
       }
     } catch (error) {
       setRollbackError(`Failed to restore snapshot: ${extractErrorMessage(error)}`)
     } finally {
       setRollingBackSnapshotID("")
     }
-  }, [activePanel, diffBase, loadDiff, loadResolvedContract, selectedAgent])
+  }, [activePanel, diffBase, loadDiff, loadResolvedContract, selectedAgent, selectedInstance])
 
   return (
     <div className="space-y-4 p-6" data-testid="agent-contract-page">
@@ -403,6 +457,49 @@ export function AgentContractPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <label htmlFor="agent-contract-instance-selector" className="space-y-1 text-sm">
+              <span>Instance</span>
+              <select
+                id="agent-contract-instance-selector"
+                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                value={selectedInstance}
+                disabled={loadingAgents || instances.length === 0}
+                onChange={async (event) => {
+                  const nextInstance = event.target.value
+                  setSelectedInstance(nextInstance)
+                  setSelectedAgent("")
+                  setDiffBase("global")
+                  setSnapshots([])
+                  setSnapshotMessage("")
+                  setRollbackError("")
+                  setResolvedContract(null)
+                  setDiffRows([])
+                  setDiffError("")
+                  setLoadingAgents(true)
+                  try {
+                    const agentPayload = nextInstance
+                      ? await api.get<{ agents?: unknown }>(`/api/admin/instances/${encodeURIComponent(nextInstance)}/agents`)
+                      : { agents: [] }
+                    const agentIDs = normalizeAgentIDs(agentPayload.agents)
+                    setAgents(agentIDs)
+                    setSelectedAgent(agentIDs[0] || "")
+                  } catch (error) {
+                    setAgents([])
+                    setSelectedAgent("")
+                    setErrorMessage(`Failed to load instance agents: ${extractErrorMessage(error)}`)
+                  } finally {
+                    setLoadingAgents(false)
+                  }
+                }}
+              >
+                {instances.map((instance) => (
+                  <option key={instance.id} value={instance.id}>
+                    {instance.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <label htmlFor="agent-contract-agent-selector" className="space-y-1 text-sm">
               <span>Agent</span>
               <select
@@ -472,21 +569,24 @@ export function AgentContractPage() {
 
             <div className="space-y-1 text-sm">
               <span>Rollback</span>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={!selectedAgent}
-                onClick={() => void saveSnapshot()}
-              >
-                Save rollback snapshot
+               <Button
+                 type="button"
+                 size="sm"
+                 variant="outline"
+                 disabled={!selectedInstance || !selectedAgent}
+                 onClick={() => void saveSnapshot()}
+               >
+                 Save rollback snapshot
               </Button>
             </div>
           </div>
 
-          {loadingAgents ? <p className="text-sm text-muted-foreground">Loading agents...</p> : null}
-          {!loadingAgents && agents.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No configured agents found.</p>
+          {loadingAgents ? <p className="text-sm text-muted-foreground">Loading instance and agents...</p> : null}
+          {!loadingAgents && instances.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No configured instances found.</p>
+          ) : null}
+          {!loadingAgents && instances.length > 0 && agents.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No configured agents found in this instance.</p>
           ) : null}
 
           {snapshotMessage ? <p className="text-sm text-green-600">{snapshotMessage}</p> : null}
@@ -519,7 +619,7 @@ export function AgentContractPage() {
       {errorMessage ? (
         <div className="space-y-2 rounded-md border border-destructive/50 bg-destructive/5 p-3">
           <p className="text-sm text-destructive">{errorMessage}</p>
-          <Button type="button" size="sm" variant="outline" onClick={() => void loadAgents()}>
+          <Button type="button" size="sm" variant="outline" onClick={() => void loadSelectors()}>
             Retry
           </Button>
         </div>
