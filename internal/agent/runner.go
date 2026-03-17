@@ -571,6 +571,8 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 				s.recordDelegationEvent(ctx, DelegationEvent{
 					Timestamp:      time.Now().UTC(),
 					TaskID:         routedTask.TaskID,
+					MessageID:      strings.TrimSpace(result.MessageID),
+					RelatedRunID:   strings.TrimSpace(result.RunID),
 					TriggerReason:  strings.TrimSpace(s.delegationReason),
 					SelectedRole:   routedTask.AssignedRole,
 					Confidence:     routedTask.RoutingConfidence,
@@ -600,6 +602,8 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 				s.recordDelegationEvent(ctx, DelegationEvent{
 					Timestamp:      time.Now().UTC(),
 					TaskID:         routedTask.TaskID,
+					MessageID:      strings.TrimSpace(result.MessageID),
+					RelatedRunID:   strings.TrimSpace(result.RunID),
 					TriggerReason:  strings.TrimSpace(s.delegationReason),
 					SelectedRole:   routedTask.AssignedRole,
 					Confidence:     routedTask.RoutingConfidence,
@@ -615,6 +619,8 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 				s.recordDelegationEvent(ctx, DelegationEvent{
 					Timestamp:      time.Now().UTC(),
 					TaskID:         routedTask.TaskID,
+					MessageID:      strings.TrimSpace(result.MessageID),
+					RelatedRunID:   strings.TrimSpace(result.RunID),
 					TriggerReason:  strings.TrimSpace(s.delegationReason),
 					SelectedRole:   routedTask.AssignedRole,
 					Confidence:     routedTask.RoutingConfidence,
@@ -627,6 +633,8 @@ func (r *Runner) executeDelegatedTasks(ctx context.Context, s *runState, tasks [
 				s.recordDelegationEvent(ctx, DelegationEvent{
 					Timestamp:      time.Now().UTC(),
 					TaskID:         routedTask.TaskID,
+					MessageID:      strings.TrimSpace(result.MessageID),
+					RelatedRunID:   strings.TrimSpace(result.RunID),
 					TriggerReason:  strings.TrimSpace(s.delegationReason),
 					SelectedRole:   routedTask.AssignedRole,
 					Confidence:     routedTask.RoutingConfidence,

@@ -187,6 +187,12 @@ Completed or substantially landed:
 - proactive memory hooks now use the same message lifecycle path, preserving `parent_run_id` linkage into the spawned run
 - HTTP SSE/event-bus delivery now supports composite subscription by `instance_id` + `agent_id` while dual-publishing to legacy bare `run_id` subscribers
 - dashboard eval detail views now surface additive identity/runtime/delegation metadata instead of dropping it at the UI layer
+- delegated subagent execution now carries stable delegated `message_id` values and records `message_id` / `related_run_id` in delegation events for shared lifecycle correlation
+- dashboard runs/delegation consumers now thread `instance_id` + `agent_id` into run detail, trace, and decision fetches instead of relying on bare `run_id`
+- dashboard run detail now renders a structured identity/delegation summary for operators (instance, agent, parent run, session, artifact path, delegation plan)
+- runtime `RunTracker` now has first-class composite track/cancel/remove helpers for `(instance_id, agent_id, run_id)` while preserving bare `run_id` compatibility
+- `run.cancel` now accepts composite identity and prefers precise composite cancellation when `instance_id` and `agent_id` are supplied together
+- dashboard instance, instance-agent, and wizard admin APIs now hard-fail with feature-specific 403s when their control-plane flags are disabled
 
 Still open:
 
@@ -267,7 +273,8 @@ Progress update:
 - composite tracker identity is landed in runtime and HTTP queued runs
 - dashboard run/decision surfaces now consume and emit instance-aware identity more consistently
 - inbox lifecycle foundation is landed (`message_id`, `queued`, `acknowledged`), but broader runtime/UI wiring and canonical storage cleanup are still open
-- inbox lifecycle is now exercised by real auto-run and proactive-memory producer paths, but more producers/consumers still need to converge on the same model
+- inbox lifecycle is now exercised by real auto-run, proactive-memory, and delegated-subagent producer paths, but more producers/consumers still need to converge on the same model
+- API-side feature-flag enforcement has started for wizard and instance-control routes, but broader UI/runtime read-only and visibility enforcement remains open
 
 ## Milestone 6: Wizard
 

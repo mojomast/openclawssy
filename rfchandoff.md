@@ -143,8 +143,42 @@ Current capabilities:
 - trace and audit metadata now surface additive `instance_id` / `agent_id` lineage directly instead of forcing all consumers to infer from file paths
 - eval storage now preserves richer additive identity/runtime metadata (`root_run_id`, `source`, `task_id`, `session_id`, artifact/checkpoint/delegation/trace metadata)
 - proactive memory-triggered inbox delivery now uses the shared auto-run lifecycle path and preserves `parent_run_id` linkage into spawned agent execution
+- delegated subagent execution now synthesizes stable delegated `message_id` values and propagates them back through `SubAgentOutput`
+- delegation ledger events now persist additive `message_id` and `related_run_id` fields so delegated task outcomes can be correlated with shared message lifecycle metadata
+- runtime `RunTracker` now exposes composite track/cancel/remove helpers so runtime and tool-layer cancellation can converge on the same `(instance_id, agent_id, run_id)` identity model
+- `run.cancel` now accepts optional `instance_id` and `agent_id`, rejects partial composite identity, and prefers composite cancellation before falling back to legacy bare `run_id`
 
-### 2.8 Dashboard eval metadata consumer adoption
+### 2.8 Dashboard run/delegation composite identity adoption
+
+Implemented in:
+
+- `internal/channels/dashboard/ui/src/lib/decisions.ts`
+- `internal/channels/dashboard/ui/src/pages/RunsPage.tsx`
+- `internal/channels/dashboard/ui/src/pages/DelegationPage.tsx`
+- `internal/channels/dashboard/ui/tests/e2e/runs.spec.ts`
+
+Current capabilities:
+
+- dashboard run and decision parsers now preserve additive `instance_id` metadata instead of dropping it client-side
+- Runs page now threads `instance_id` / `agent_id` into run detail, trace, and decision requests when opening a run
+- Delegation page now threads the same composite identity into plan/detail and run-comparison decision requests
+- Runs detail now renders a structured identity/delegation summary so operators can inspect lineage without opening raw JSON
+
+### 2.9 Dashboard API feature-flag enforcement
+
+Implemented in:
+
+- `internal/channels/dashboard/instances_api.go`
+- `internal/channels/dashboard/instances_api_test.go`
+
+Current capabilities:
+
+- wizard routes now return structured `403` errors when the `wizard` feature is disabled
+- instance CRUD/activate/clone/bootstrap routes now return structured `403` errors when `instance_control` is disabled
+- instance-agent admin routes now return structured `403` errors when `instance_agents` is disabled
+- control-plane feature introspection remains ungated so operators can still discover disabled features
+
+### 2.10 Dashboard eval metadata consumer adoption
 
 Implemented in:
 
@@ -170,8 +204,15 @@ Verified:
 - `go test ./cmd/openclawssy`
 - `go test ./internal/channels/dashboard ./internal/eval ./internal/channels/http ./internal/tools ./internal/runtime ./cmd/openclawssy`
 - `go test ./internal/tools ./internal/runtime ./internal/channels/http`
+- `go test ./internal/agent -run TestExecuteDelegatedTasksRecordsMessageBackedLifecycleMetadata -count=1`
+- `go test ./internal/runtime -run 'TestSubAgentAdapterPassesDefaultRestrictions|TestSubAgentAdapterReturnsMessageIDInOutput' -count=1`
+- `go test ./internal/runtime -run '^TestRunTracker_' -count=1`
+- `go test ./internal/tools -run '^TestRunCancelTool_' -count=1`
+- `go test ./internal/channels/dashboard -run 'TestControlPlaneFeaturesAndWizardEndpoints|TestInstanceFeatureFlagEnforcement' -count=1`
+- `go test ./internal/runtime ./internal/tools ./internal/channels/dashboard`
 - `cd internal/channels/dashboard/ui && npm run typecheck`
 - `cd internal/channels/dashboard/ui && npm run build`
+- `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/runs.spec.ts`
 
 Note: one broader `go test ./internal/runtime ./...` package pass exposed an existing flaky/unrelated failure in `TestEngineExecuteIngestsMemoryEventsWhenEnabled`, but the focused rerun of that test passed immediately and the targeted package suites for the changed slices passed.
 
@@ -235,9 +276,9 @@ Not finished:
 - canonical wizard backend
 - dashboard/UI integration
 - deepen first-class messaging / inbox lifecycle wiring so more producers/consumers emit `running` / `completed` / `failed` updates through the same message model
-- finish composite run identity adoption across remaining runtime + HTTP + eval/dashboard consumers beyond the newly landed SSE/event-bus addressing slice
-- feature flag enforcement from one canonical source across UI/API/runtime
-- connect richer eval/delegation metadata to more real producers/CLI flows and more dashboard surfaces beyond the current additive storage contract + eval detail panel
+- finish composite run identity adoption across remaining runtime + HTTP + eval/dashboard consumers beyond the newly landed SSE/event-bus, Runs page, and Delegation page slices
+- feature flag enforcement from one canonical source across UI/API/runtime beyond the newly landed dashboard API route guards
+- connect richer eval/delegation metadata to more real producers/CLI flows and more dashboard surfaces beyond the current additive storage contract + eval detail/Runs detail panels
 - migration cleanup of remaining legacy flat-agent callers
 
 ## Required Parallel Subagent Plan

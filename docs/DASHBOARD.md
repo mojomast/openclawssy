@@ -85,6 +85,7 @@ All control-plane routes are hash-based under `/dashboard/#/...`.
 - Task Graph Preview reads decomposition plans from selected runs; Run Comparison renders decision-ledger timelines side by side.
 - Decision and monitor payloads now surface explicit `instance_id` alongside `agent_id` and `run_id`, matching the RFC identity direction.
 - Debug trace and monitor payloads now also surface `parent_run_id` when runtime lineage is available.
+- Delegation and Runs pages now thread composite `instance_id` + `agent_id` back into detail/decision requests so duplicate `run_id` values remain disambiguated in the UI.
 - Verification notes:
   - Save policy changes and confirm success state.
   - Load a run with decomposition data and verify graph nodes/edges render.
@@ -106,6 +107,7 @@ All control-plane routes are hash-based under `/dashboard/#/...`.
 - Canonical instance-scoped audits are progressively taking over under `.openclawssy/instances/<instance>/agents/<agent>/audit/events.jsonl`; dashboard decision and monitor flows now preserve `instance_id` where available while keeping compatibility with legacy audit locations.
 - Eval UI data is read from `.openclawssy/eval/results.db`; baseline comparisons use saved baselines under `.openclawssy/eval/baselines/`.
 - HTTP run SSE streams can now be subscribed with `instance_id` and `agent_id` query parameters to follow the composite event-bus identity path while legacy bare `run_id` streams remain available for compatibility.
+- Wizard, instance-control, and instance-agent admin routes now enforce their control-plane feature flags server-side and return structured `403` errors when disabled.
 - Current validation commands for this control-plane surface:
 
 ```bash

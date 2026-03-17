@@ -9,6 +9,8 @@ import { ApiError, api } from "@/lib/api"
 
 type RunSummary = {
   id: string
+  instanceID: string
+  agentID: string
   status: string
   updatedAt: string
   decompositionPlan: DecompositionPlan | null
@@ -84,10 +86,27 @@ function parseRunSummary(value: unknown): RunSummary | null {
 
   return {
     id,
+    instanceID: asText(raw.instance_id).trim(),
+    agentID: asText(raw.agent_id).trim(),
     status: asText(raw.status).trim(),
     updatedAt: asText(raw.updated_at).trim(),
     decompositionPlan,
   }
+}
+
+function buildRunIdentityQuery(run: RunSummary | null): string {
+  if (!run) {
+    return ""
+  }
+  const params = new URLSearchParams()
+  if (run.instanceID) {
+    params.set("instance_id", run.instanceID)
+  }
+  if (run.agentID) {
+    params.set("agent_id", run.agentID)
+  }
+  const query = params.toString()
+  return query ? `?${query}` : ""
 }
 
 function parseRunsPage(payload: unknown): RunsPage {
@@ -333,7 +352,8 @@ export function DelegationPage() {
     setPlanError("")
     setActionNotice("")
     try {
-      const detailPayload = await api.get<unknown>(`/v1/runs/${encodeURIComponent(targetRunID)}`)
+      const selectedSummary = planRuns.find((run) => run.id === targetRunID) || runs.find((run) => run.id === targetRunID) || null
+      const detailPayload = await api.get<unknown>(`/v1/runs/${encodeURIComponent(targetRunID)}${buildRunIdentityQuery(selectedSummary)}`)
       const plan = extractPlanFromRunDetail(detailPayload) || fallbackPlan
       if (!plan) {
         setSelectedPlan(null)
@@ -410,8 +430,8 @@ export function DelegationPage() {
     setComparisonError("")
     try {
       const [leftPayload, rightPayload] = await Promise.all([
-        api.get<unknown>(`/api/admin/runs/${encodeURIComponent(left)}/decisions`),
-        api.get<unknown>(`/api/admin/runs/${encodeURIComponent(right)}/decisions`),
+        api.get<unknown>(`/api/admin/runs/${encodeURIComponent(left)}/decisions${buildRunIdentityQuery(runs.find((run) => run.id === left) || null)}`),
+        api.get<unknown>(`/api/admin/runs/${encodeURIComponent(right)}/decisions${buildRunIdentityQuery(runs.find((run) => run.id === right) || null)}`),
       ])
 
       const leftNode = parseRunDecisionNode(leftPayload)

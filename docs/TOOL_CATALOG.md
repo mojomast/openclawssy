@@ -196,8 +196,8 @@ All tools are deny-by-default through capability policy, and all tool inputs are
 
 ### `run.cancel`
 - Required: `run_id`
-- Optional: none
-- Notes: cancels in-flight tracked run contexts.
+- Optional: `instance_id`, `agent_id`
+- Notes: cancels in-flight tracked run contexts. When `instance_id` and `agent_id` are both supplied, cancellation prefers the composite `(instance_id, agent_id, run_id)` tracker entry before falling back to legacy bare `run_id`. Partial composite identity is rejected.
 
 ### `metrics.get`
 - Required: none

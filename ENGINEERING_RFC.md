@@ -16,6 +16,21 @@ This RFC turns the current branch into an operator-grade system with:
 - guided wizards for creating instances and agents
 - one consistent model across delegation, roles, eval, dashboard, and runtime
 
+## 1.1 Implementation progress snapshot
+
+Substantial portions of Milestones 1-5 are now landed on the current branch, including:
+
+- canonical instance/agent storage and effective runtime resolution
+- prompt stack as runtime truth with legacy docs treated as compatibility mirrors
+- instance-aware HTTP run creation, SSE emission, and composite tracker/cancel identity
+- shared inter-agent message lifecycle metadata (`message_id`, status transitions, additive lineage)
+- delegated subagent propagation of stable delegated `message_id` plus delegation-event linkage via `related_run_id`
+- dashboard eval, Runs, and Delegation consumers adopting additive instance/agent/run metadata
+- composite runtime/tool cancellation for `(instance_id, agent_id, run_id)`
+- first dashboard API feature-flag enforcement for wizard and instance-control surfaces
+
+Remaining work is concentrated in wizard parity, deeper feature-flag enforcement, broader composite-identity rollout, and finishing first-class messaging/eval consumer convergence.
+
 This design is grounded in the current code shape:
 
 - dashboard is already acting as the control-plane surface

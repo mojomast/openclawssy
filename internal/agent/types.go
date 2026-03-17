@@ -138,6 +138,7 @@ type SubAgentRunner interface {
 // SubAgentOutput is returned from subagent execution.
 type SubAgentOutput struct {
 	RunID     string `json:"run_id"`
+	MessageID string `json:"message_id,omitempty"`
 	FinalText string `json:"final_text"`
 	Success   bool   `json:"success"`
 	Error     string `json:"error,omitempty"`

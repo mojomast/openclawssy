@@ -46,6 +46,41 @@ type upsertInstanceAgentRequest struct {
 	Profile config.AgentProfile `json:"profile"`
 }
 
+func (h *Handler) requireControlPlaneFeature(w http.ResponseWriter, code string, enabled bool, disabledCode, disabledMessage string) bool {
+	if enabled {
+		return true
+	}
+	writeDashboardError(w, http.StatusForbidden, disabledCode, disabledMessage, map[string]any{"feature": code})
+	return false
+}
+
+func (h *Handler) requireWizardFeature(w http.ResponseWriter) bool {
+	store, err := h.loadControlPlaneStore()
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "control_plane.load_failed", err.Error(), nil)
+		return false
+	}
+	return h.requireControlPlaneFeature(w, "wizard", store.Features.Wizard, "feature.wizard_disabled", "wizard routes are disabled")
+}
+
+func (h *Handler) requireInstanceControlFeature(w http.ResponseWriter) bool {
+	store, err := h.loadControlPlaneStore()
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "control_plane.load_failed", err.Error(), nil)
+		return false
+	}
+	return h.requireControlPlaneFeature(w, "instance_control", store.Features.InstanceControl, "feature.instance_control_disabled", "instance control routes are disabled")
+}
+
+func (h *Handler) requireInstanceAgentsFeature(w http.ResponseWriter) bool {
+	store, err := h.loadControlPlaneStore()
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "control_plane.load_failed", err.Error(), nil)
+		return false
+	}
+	return h.requireControlPlaneFeature(w, "instance_agents", store.Features.InstanceAgents, "feature.instance_agents_disabled", "instance agent routes are disabled")
+}
+
 func (h *Handler) handleControlPlaneFeatures(w http.ResponseWriter, r *http.Request) {
 	store, err := h.loadControlPlaneStore()
 	if err != nil {
@@ -82,6 +117,9 @@ func (h *Handler) handleControlPlaneFeatures(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *Handler) handleInstances(w http.ResponseWriter, r *http.Request) {
+	if !h.requireInstanceControlFeature(w) {
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		h.listInstances(w)
@@ -167,6 +205,9 @@ func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleActiveInstance(w http.ResponseWriter, r *http.Request) {
+	if !h.requireInstanceControlFeature(w) {
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 		return
@@ -201,6 +242,9 @@ func (h *Handler) handleActiveInstance(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleBootstrapInstanceFromCurrent(w http.ResponseWriter, r *http.Request) {
+	if !h.requireInstanceControlFeature(w) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 		return
@@ -268,6 +312,9 @@ func (h *Handler) handleInstanceByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(segments) == 0 {
+		if !h.requireInstanceControlFeature(w) {
+			return
+		}
 		switch r.Method {
 		case http.MethodGet:
 			h.getInstance(w, instanceID)
@@ -283,18 +330,27 @@ func (h *Handler) handleInstanceByID(w http.ResponseWriter, r *http.Request) {
 
 	switch segments[0] {
 	case "activate":
+		if !h.requireInstanceControlFeature(w) {
+			return
+		}
 		if len(segments) != 1 || r.Method != http.MethodPost {
 			writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 			return
 		}
 		h.activateInstance(w, instanceID)
 	case "clone":
+		if !h.requireInstanceControlFeature(w) {
+			return
+		}
 		if len(segments) != 1 || r.Method != http.MethodPost {
 			writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 			return
 		}
 		h.cloneInstance(w, r, instanceID)
 	case "agents":
+		if !h.requireInstanceAgentsFeature(w) {
+			return
+		}
 		if len(segments) >= 3 && segments[2] == "prompt-stack" {
 			agentID, err := normalizeDashboardAgentID(segments[1])
 			if err != nil {
@@ -664,6 +720,9 @@ func (h *Handler) persistInstanceAgent(w http.ResponseWriter, instanceID, agentI
 }
 
 func (h *Handler) handleWizardTemplates(w http.ResponseWriter, r *http.Request) {
+	if !h.requireWizardFeature(w) {
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 		return
@@ -675,6 +734,9 @@ func (h *Handler) handleWizardTemplates(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) handleWizardInstancePlan(w http.ResponseWriter, r *http.Request) {
+	if !h.requireWizardFeature(w) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 		return
@@ -693,6 +755,9 @@ func (h *Handler) handleWizardInstancePlan(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handler) handleWizardInstanceCreate(w http.ResponseWriter, r *http.Request) {
+	if !h.requireWizardFeature(w) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 		return
@@ -730,6 +795,9 @@ func (h *Handler) handleWizardInstanceCreate(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *Handler) handleWizardAgentPlan(w http.ResponseWriter, r *http.Request) {
+	if !h.requireWizardFeature(w) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 		return
@@ -752,6 +820,9 @@ func (h *Handler) handleWizardAgentPlan(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) handleWizardAgentCreate(w http.ResponseWriter, r *http.Request) {
+	if !h.requireWizardFeature(w) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
 		return

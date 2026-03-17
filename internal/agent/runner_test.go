@@ -2270,6 +2270,42 @@ func TestExecuteDelegatedTasksAssignsRoleRoutingAndConstraints(t *testing.T) {
 	}
 }
 
+func TestExecuteDelegatedTasksRecordsMessageBackedLifecycleMetadata(t *testing.T) {
+	t.Parallel()
+
+	subRunner := &mockSubAgentRunner{
+		result: SubAgentOutput{RunID: "sub-run-1", MessageID: "delegated_discover-1_default", FinalText: "ok", Success: true},
+	}
+	runner := Runner{SubAgentRunner: subRunner}
+	state := newRunState(RunInput{Message: "delegate"}, runner)
+
+	tasks := []DecomposedTask{{
+		TaskID:      "discover-1",
+		AgentID:     "default",
+		Message:     "inspect files",
+		ParentRunID: "run-parent",
+		Priority:    1,
+	}}
+
+	if err := runner.executeDelegatedTasks(context.Background(), state, tasks, RunInput{RunID: "run-parent", Message: "delegate"}); err != nil {
+		t.Fatalf("executeDelegatedTasks() error = %v", err)
+	}
+
+	if len(state.out.DelegationEvents) == 0 {
+		t.Fatal("expected delegation events to be recorded")
+	}
+	last := state.out.DelegationEvents[len(state.out.DelegationEvents)-1]
+	if last.MessageID != "delegated_discover-1_default" {
+		t.Fatalf("expected message-backed delegation event, got %+v", last)
+	}
+	if last.RelatedRunID != "sub-run-1" {
+		t.Fatalf("expected related run id in delegation event, got %+v", last)
+	}
+	if len(subRunner.calls) != 1 || subRunner.calls[0].ParentRunID != "run-parent" {
+		t.Fatalf("expected delegated task parent linkage, got %#v", subRunner.calls)
+	}
+}
+
 func TestDelegationDirectivesEmphasizeFocusedExecution(t *testing.T) {
 	trigger := &DelegationTrigger{
 		Reason:       "stuck in failure loop",
