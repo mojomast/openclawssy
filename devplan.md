@@ -205,7 +205,7 @@ Completed or substantially landed:
 - Agent Monitor UI now threads explicit `instance_id` / `agent_id` on launch and cancel operations, reducing another remaining bare-`run_id` operator path
 - dashboard Workspace backend now resolves through canonical effective runtime identity instead of legacy host workspace fallback, and Docker mode now browses the live sandbox `/workspace` volume for the selected agent
 - dashboard Workspace UI now requests active-instance-scoped workspace data and surfaces resolved workspace mode plus instance/agent identity to reduce operator confusion about where files actually live
-- local `becomussy` integration is unblocked again: the Compose service now starts with the matching database credential and the bot can perform live continuity plus project/memory create calls against `http://becomussy:8000`
+- local `becomussy` integration is unblocked again: the Compose service now starts with the matching database credential, mounts runtime overrides for project/memory/thread/journal services, and a full 45-call live API sweep from the bot container passes against `http://becomussy:8000`
 
 Still open:
 

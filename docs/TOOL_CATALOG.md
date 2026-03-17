@@ -241,6 +241,8 @@ All tools are deny-by-default through capability policy, and all tool inputs are
 
 Requires `becomussy.enabled=true` in config. All tools communicate with a running becomussy instance at `becomussy.base_url`.
 
+In the local Docker Compose stack, use `http://becomussy:8000` from inside containers. The current local dev setup also mounts service overrides for becomussy project, memory, thread, and journal handlers until the same fixes are committed in the upstream becomussy repo.
+
 ### Config Fields
 
 | Field | Type | Default | Description |

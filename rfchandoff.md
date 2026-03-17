@@ -320,6 +320,8 @@ Implemented in:
 - `docker-compose.yml`
 - `docker/becomussy-overrides/app/services/projects/__init__.py`
 - `docker/becomussy-overrides/app/services/memory/__init__.py`
+- `docker/becomussy-overrides/app/services/threads/__init__.py`
+- `docker/becomussy-overrides/app/services/journal/__init__.py`
 - `.factory/library/environment.md`
 - `docs/TOOL_CATALOG.md`
 
@@ -327,9 +329,10 @@ Current capabilities:
 
 - the local Compose `becomussy` service now defaults to the same Postgres password as `infrastructure-db-1` (`becoming`), fixing the startup auth failure that had left the service unhealthy and unreachable from the bot
 - the `becomussy` service now uses `restart: unless-stopped`, matching the current expectation that the companion continuity service stays available across host/container restarts
-- local override mounts now patch the upstream becomussy project and memory services to eagerly load response relationships, preventing `MissingGreenlet` 500s on project/memory create and list/get responses
+- local override mounts now patch the upstream becomussy project, memory, thread, and journal services so write paths re-fetch through safe eager-loading reads before serialization, preventing `MissingGreenlet` 500s on project/memory/thread/journal create, get, list, patch, and reinforce responses
 - operator docs now explicitly call out the current local DB credential default and the need to use `http://becomussy:8000` from inside Docker Compose instead of `localhost`
-- live verification from `openclawssy-openclawssy-1` confirmed `becomussy` health plus successful continuity, project-create, and memory-create requests
+- live verification from `openclawssy-openclawssy-1` confirmed `becomussy` health plus a full 45-call API sweep with zero `500` responses across continuity, threads, projects, commitments, memory, journal, self-model, approvals, and audit routes
+- the matching service-file fixes were also copied into the local upstream source tree under `/tmp/becomussy/backend/app/services/...`, though that separate repo still needs its own commit
 
 ### 3. Tests currently passing
 
@@ -378,6 +381,7 @@ Verified:
 - `cd internal/channels/dashboard/ui && npm run build && npm run e2e:test -- tests/e2e/workspace.spec.ts tests/e2e/auth.spec.ts tests/e2e/cross-area-integration.spec.ts`
 - `docker exec openclawssy-openclawssy-1 sh -lc 'wget -qO- http://becomussy:8000/api/v1/health'`
 - `docker exec openclawssy-openclawssy-1 sh -lc 'python - <<"PY" ... continuity/project/memory requests ... PY'`
+- `docker exec openclawssy-openclawssy-1 sh -lc 'python - <<"PY" ... 45-call becomussy API sweep ... PY'`
 
 Note: one broader `go test ./internal/runtime ./...` package pass exposed an existing flaky/unrelated failure in `TestEngineExecuteIngestsMemoryEventsWhenEnabled`, but the focused rerun of that test passed immediately and the targeted package suites for the changed slices passed.
 

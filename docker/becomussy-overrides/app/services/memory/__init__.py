@@ -89,9 +89,7 @@ class MemoryService:
 			after_json=_memory_to_dict(item),
 		)
 
-		await session.refresh(item, attribute_names=["outgoing_links", "incoming_links"])
-
-		return item
+		return await MemoryService.get(session, item.id)
 
 	@staticmethod
 	async def get(session: AsyncSession, memory_id: uuid.UUID) -> MemoryItem:
@@ -221,9 +219,7 @@ class MemoryService:
 			after_json=_memory_to_dict(item),
 		)
 
-		await session.refresh(item, attribute_names=["outgoing_links", "incoming_links"])
-
-		return item
+		return await MemoryService.get(session, item.id)
 
 	@staticmethod
 	async def reinforce(
@@ -265,9 +261,7 @@ class MemoryService:
 			provenance_json={"source_ref": source_ref} if source_ref else None,
 		)
 
-		await session.refresh(item, attribute_names=["outgoing_links", "incoming_links"])
-
-		return item
+		return await MemoryService.get(session, item.id)
 
 	@staticmethod
 	async def contradict(

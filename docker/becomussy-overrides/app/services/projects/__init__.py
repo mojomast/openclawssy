@@ -94,9 +94,7 @@ class ProjectService:
 			after_json=_project_to_dict(project),
 		)
 
-		await session.refresh(project, attribute_names=["commitments"])
-
-		return project
+		return await ProjectService.get(session, project.id)
 
 	@staticmethod
 	async def get(session: AsyncSession, project_id: uuid.UUID) -> Project:
@@ -170,9 +168,7 @@ class ProjectService:
 			after_json=_project_to_dict(project),
 		)
 
-		await session.refresh(project, attribute_names=["commitments"])
-
-		return project
+		return await ProjectService.get(session, project.id)
 
 
 class CommitmentService:
@@ -305,4 +301,4 @@ class CommitmentService:
 			after_json=_commitment_to_dict(commitment),
 		)
 
-		return commitment
+		return await CommitmentService.get(session, commitment.id)

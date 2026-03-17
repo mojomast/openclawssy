@@ -59,7 +59,7 @@ What works now:
 - **Hatz provider support**: API key ingestion via secrets or env, OpenAI-style model use, and provider model discovery in dashboard settings
 - **Wizard dashboard flows**: operators can now browse template catalogs, preview/create instances, preview/create agents into existing instances, and continue from instance creation directly into agent targeting from the same `/wizard` session
 - **Workspace/runtime alignment**: dashboard workspace browsing now resolves through canonical instance/agent runtime identity, surfaces workspace mode plus instance/agent context, and in Docker mode reads the live sandbox `/workspace` volume instead of a silent host fallback path
-- **Becomussy Docker integration restored**: the local Compose service now uses the correct Postgres default password, restarts automatically, and live create/read flows from the bot to `becomussy` are working again
+- **Becomussy Docker integration restored**: the local Compose service now uses the correct Postgres default password, restarts automatically, mounts runtime fixes for project/memory/thread/journal services, and a full live 45-call becomussy API sweep from the bot now completes without `500`s
 
 What is not production-ready:
 - compatibility and schema stability

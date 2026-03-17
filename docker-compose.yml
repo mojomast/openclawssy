@@ -61,6 +61,8 @@ services:
     volumes:
       - ./docker/becomussy-overrides/app/services/projects/__init__.py:/app/app/services/projects/__init__.py
       - ./docker/becomussy-overrides/app/services/memory/__init__.py:/app/app/services/memory/__init__.py
+      - ./docker/becomussy-overrides/app/services/threads/__init__.py:/app/app/services/threads/__init__.py
+      - ./docker/becomussy-overrides/app/services/journal/__init__.py:/app/app/services/journal/__init__.py
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
       interval: 10s
