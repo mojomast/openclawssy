@@ -44,6 +44,7 @@ type Server struct {
 }
 
 type ChatMessage struct {
+	InstanceID   string                `json:"instance_id,omitempty"`
 	UserID       string                `json:"user_id"`
 	RoomID       string                `json:"room_id"`
 	AgentID      string                `json:"agent_id,omitempty"`
@@ -57,10 +58,12 @@ type ChatConnector interface {
 }
 
 type ChatResponse struct {
-	ID        string `json:"id,omitempty"`
-	Status    string `json:"status,omitempty"`
-	Response  string `json:"response,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
+	InstanceID string `json:"instance_id,omitempty"`
+	AgentID    string `json:"agent_id,omitempty"`
+	ID         string `json:"id,omitempty"`
+	Status     string `json:"status,omitempty"`
+	Response   string `json:"response,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
 }
 
 type ExecutionInput struct {
@@ -184,6 +187,14 @@ func (s *Server) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req.ThinkingMode = normalized
+	}
+	if strings.TrimSpace(req.InstanceID) != "" {
+		validated, err := instances.ValidateInstanceID(req.InstanceID)
+		if err != nil {
+			writeErrorJSON(w, http.StatusBadRequest, "request.invalid_instance_id", "instance_id is invalid", 0)
+			return
+		}
+		req.InstanceID = validated
 	}
 
 	req.RoomID = strings.TrimSpace(req.RoomID)

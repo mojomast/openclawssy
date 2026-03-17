@@ -4,6 +4,7 @@ const RESUME_INTERRUPTED_RUN_MESSAGE =
   "Resume your previous response from the exact interruption point. Continue from the cutoff without repeating already-completed text unless needed for coherence."
 
 type RouteState = {
+  activeInstanceID: string
   selectedAgent: string
   chatPosts: Array<Record<string, unknown>>
   cancelCalls: string[]
@@ -33,6 +34,7 @@ async function installChatRoutes(
   } = {}
 ): Promise<RouteState> {
   const state: RouteState = {
+    activeInstanceID: "instance-a",
     selectedAgent: "default",
     chatPosts: [],
     cancelCalls: [],
@@ -60,6 +62,11 @@ async function installChatRoutes(
 
     if (pathname === "/api/admin/status") {
       await json({ ok: true })
+      return
+    }
+
+    if (pathname === "/api/admin/instances/active" && method === "GET") {
+      await json({ instance: { id: state.activeInstanceID, name: "Instance A" } })
       return
     }
 
@@ -137,11 +144,19 @@ async function installChatRoutes(
       state.chatPosts.push(payload)
       state.runStatuses.run_chat_1 = "running"
       state.runPolls.run_chat_1 = 0
-      await json({ id: "run_chat_1", status: "running", session_id: sessionID })
+      await json({
+        instance_id: state.activeInstanceID,
+        agent_id: String(payload.agent_id || state.selectedAgent || "default"),
+        id: "run_chat_1",
+        status: "running",
+        session_id: sessionID,
+      })
       return
     }
 
     if (pathname === "/v1/runs/run_chat_1" && method === "GET") {
+      expect(url.searchParams.get("instance_id")).toBe(state.activeInstanceID)
+      expect(url.searchParams.get("agent_id")).toBeTruthy()
       state.runPolls.run_chat_1 = (state.runPolls.run_chat_1 || 0) + 1
       const attempt = state.runPolls.run_chat_1
       const customRun = options.onRunPoll?.("run_chat_1", attempt, state)
@@ -156,6 +171,8 @@ async function installChatRoutes(
 
       await json({
         id: "run_chat_1",
+        instance_id: state.activeInstanceID,
+        agent_id: state.selectedAgent,
         status: state.runStatuses.run_chat_1 || "running",
         session_id: sessionID,
         updated_at: "2026-03-14T00:00:01Z",
@@ -164,6 +181,8 @@ async function installChatRoutes(
     }
 
     if (pathname === "/v1/runs/run_chat_1/cancel" && method === "POST") {
+      expect(url.searchParams.get("instance_id")).toBe(state.activeInstanceID)
+      expect(url.searchParams.get("agent_id")).toBeTruthy()
       state.cancelCalls.push("run_chat_1")
       state.runStatuses.run_chat_1 = "canceling"
       await json({ id: "run_chat_1", status: "canceling", cancelled: true })
@@ -176,6 +195,8 @@ async function installChatRoutes(
     }
 
     if (pathname === "/v1/runs/events/run_chat_1" && method === "GET") {
+      expect(url.searchParams.get("instance_id")).toBe(state.activeInstanceID)
+      expect(url.searchParams.get("agent_id")).toBeTruthy()
       state.streamRequests.run_chat_1 = (state.streamRequests.run_chat_1 || 0) + 1
       const attempt = state.streamRequests.run_chat_1
       const streamResponse = options.onStreamRequest?.("run_chat_1", attempt)
@@ -276,6 +297,7 @@ test("sends a message, streams model_text SSE events, and finalizes on completed
   await expect(page.getByText("Run: run_chat_1")).toBeVisible()
 
   expect(state.chatPosts).toHaveLength(1)
+  expect(state.chatPosts[0]?.instance_id).toBe("instance-a")
   expect(state.chatPosts[0]?.message).toBe("Explain the migration")
 })
 
@@ -392,7 +414,8 @@ test("agent picker switches active agent and subsequent send uses the selected a
   await page.getByLabel("Message composer").fill("Use research agent")
   await page.getByRole("button", { name: "Send" }).click()
 
-  expect(state.chatPosts).toHaveLength(1)
+  await expect.poll(() => state.chatPosts.length).toBe(1)
+  expect(state.chatPosts[0]?.instance_id).toBe("instance-a")
   expect(state.chatPosts[0]?.agent_id).toBe("research")
 })
 

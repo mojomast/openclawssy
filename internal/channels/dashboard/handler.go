@@ -34,6 +34,7 @@ import (
 	"openclawssy/internal/scheduler"
 	"openclawssy/internal/secrets"
 	"openclawssy/internal/skillcatalog"
+	"openclawssy/internal/tools"
 )
 
 type Handler struct {
@@ -41,6 +42,7 @@ type Handler struct {
 	store                 httpchannel.RunStore
 	schedulerStore        *scheduler.Store
 	runCanceller          dashboardRunCanceller
+	agentRunner           tools.AgentRunner
 	effectiveConfig       *config.Config
 	monitorRunMu          sync.Mutex
 	monitorRuns           map[string]monitorRunState
@@ -64,6 +66,7 @@ type dashboardCompositeRunCanceller interface {
 type Options struct {
 	SchedulerStore  *scheduler.Store
 	RunCanceller    dashboardRunCanceller
+	AgentRunner     tools.AgentRunner
 	EffectiveConfig *config.Config
 }
 
@@ -176,6 +179,7 @@ func NewWithOptions(rootDir string, store httpchannel.RunStore, opts Options) *H
 		store:                 store,
 		schedulerStore:        opts.SchedulerStore,
 		runCanceller:          opts.RunCanceller,
+		agentRunner:           opts.AgentRunner,
 		effectiveConfig:       effectiveConfig,
 		monitorRuns:           make(map[string]monitorRunState),
 		promptStackByInstance: make(map[string]*promptstack.VersionStore),
@@ -212,6 +216,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/instances/active", h.handleActiveInstance)
 	mux.HandleFunc("/api/admin/instances/bootstrap-from-current", h.handleBootstrapInstanceFromCurrent)
 	mux.HandleFunc("/api/admin/instances/", h.handleInstanceByID)
+	mux.HandleFunc("/api/admin/instances/inbox", h.handleInstanceInbox)
 	mux.HandleFunc("/api/admin/wizard/templates", h.handleWizardTemplates)
 	mux.HandleFunc("/api/admin/wizard/instances/plan", h.handleWizardInstancePlan)
 	mux.HandleFunc("/api/admin/wizard/instances/create", h.handleWizardInstanceCreate)

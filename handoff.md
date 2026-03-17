@@ -28,6 +28,9 @@ Date: 2026-03-16
 - Dashboard eval detail panels now render additive identity/runtime/delegation metadata instead of dropping it in the UI.
 - Dashboard Runs and Delegation pages now thread composite identity into detail/trace/decision fetches, and Runs detail renders a structured lineage/delegation summary.
 - Dashboard wizard, instance-control, and instance-agent admin APIs now enforce their control-plane feature flags with structured `403` responses.
+- Dashboard inbox APIs now support list/detail/ack/run over the shared `message_id` lifecycle and reuse the same subagent runner path as runtime-triggered inbox execution.
+- Dashboard chat now threads `instance_id` and `agent_id` through send, run polling, SSE streaming, and cancel paths.
+- Dashboard eval now honors the eval feature flag in both API and UI: the nav entry hides when disabled and direct page access shows a disabled-state panel.
 
 ## Validation completed
 
@@ -46,9 +49,12 @@ Date: 2026-03-16
 - `go test ./internal/tools -run '^TestRunCancelTool_' -count=1`
 - `go test ./internal/channels/dashboard -run 'TestControlPlaneFeaturesAndWizardEndpoints|TestInstanceFeatureFlagEnforcement' -count=1`
 - `go test ./internal/runtime ./internal/tools ./internal/channels/dashboard`
+- `go test ./internal/chatstore ./internal/tools ./internal/channels/chat ./internal/channels/http ./internal/channels/dashboard ./internal/runtime ./cmd/openclawssy`
+- `go test ./internal/channels/dashboard -run 'TestEvalResultsEndpoint|TestControlPlaneFeaturesAndWizardEndpoints|TestInstanceFeatureFlagEnforcement' -count=1`
 - `cd internal/channels/dashboard/ui && npm run typecheck`
 - `cd internal/channels/dashboard/ui && npm run build`
 - `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/runs.spec.ts`
+- `cd internal/channels/dashboard/ui && CI=1 npx playwright test tests/e2e/chat.spec.ts tests/e2e/eval.spec.ts`
 
 Note:
 
@@ -87,6 +93,7 @@ Highest priority next:
 1. Extend the new messaging lifecycle foundation so more producers/consumers emit `running` / `completed` / `failed` updates through the same `message_id` model.
 2. Finish composite identity adoption in remaining dashboard/runtime consumers beyond the newly landed SSE/event-bus, Runs page, Delegation page, and `run.cancel` slices.
 3. Connect the richer eval/delegation metadata contract to more real producers and more dashboard consumers beyond the eval detail and Runs detail panels.
+4. Finish broader runtime-side feature enforcement so disabled features cannot still be reached through non-dashboard execution paths.
 
 Still open overall:
 
@@ -102,6 +109,7 @@ Still open overall:
 - Canonical clone fidelity and metadata provenance are not fully complete.
 - Messaging is now instance-scoped and lifecycle-aware, but it is still chatstore-backed rather than a dedicated canonical inbox store.
 - Dashboard/eval/decision views and some API guards are improved, but broader composite identity adoption, UI/runtime feature gating, and delegation metadata rollout are still incomplete.
+- The dashboard UI fix landed for chat/eval operator flows, but more pages still need to consume the shared control-plane feature hook and canonical instance identity consistently.
 
 ## Recommended next starting point
 

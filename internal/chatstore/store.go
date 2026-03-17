@@ -21,6 +21,7 @@ import (
 
 var ErrSessionNotFound = errors.New("chatstore: session not found")
 var ErrSessionClosed = errors.New("chatstore: session closed")
+var ErrMessageNotFound = errors.New("chatstore: message not found")
 
 const DefaultMaxHistoryCount = 200
 
@@ -385,6 +386,30 @@ func (s *Store) ReadRecentMessages(sessionID string, limit int) ([]Message, erro
 	return all, nil
 }
 
+func (s *Store) FindLatestMessage(agentID, messageID string) (Session, Message, error) {
+	if err := validateSegment("agent_id", agentID); err != nil {
+		return Session{}, Message{}, err
+	}
+	if err := validateSegment("message_id", messageID); err != nil {
+		return Session{}, Message{}, err
+	}
+
+	sessions, err := s.ListSessions(agentID, "", "", "agent-mail")
+	if err != nil {
+		return Session{}, Message{}, err
+	}
+	for _, session := range sessions {
+		msg, ok, err := s.findLatestMessageInSession(session.SessionID, messageID)
+		if err != nil {
+			return Session{}, Message{}, err
+		}
+		if ok {
+			return session, msg, nil
+		}
+	}
+	return Session{}, Message{}, ErrMessageNotFound
+}
+
 func (s *Store) GetSession(sessionID string) (Session, error) {
 	if err := validateSegment("session_id", sessionID); err != nil {
 		return Session{}, err
@@ -666,6 +691,66 @@ func (s *Store) sessionDirByIDLocked(sessionID string) (string, error) {
 		}
 	}
 	return "", ErrSessionNotFound
+}
+
+func (s *Store) findLatestMessageInSession(sessionID, messageID string) (Message, bool, error) {
+	if err := validateSegment("session_id", sessionID); err != nil {
+		return Message{}, false, err
+	}
+
+	s.mu.RLock()
+	dir, err := s.sessionDirByIDLocked(sessionID)
+	s.mu.RUnlock()
+	if err != nil {
+		return Message{}, false, err
+	}
+
+	path := filepath.Join(dir, "messages.jsonl")
+	lockPath := filepath.Join(dir, ".chatstore.lock")
+	var found Message
+	matched := false
+	if err := withCrossProcessLock(lockPath, lockAcquireTimeout, func() error {
+		f, err := os.Open(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return fmt.Errorf("chatstore: open messages: %w", err)
+		}
+		defer f.Close()
+
+		scanner, err := NewReverseScanner(f, messageScanBufferInit, messageScanBufferMax)
+		if err != nil {
+			return fmt.Errorf("chatstore: init scanner: %w", err)
+		}
+
+		for scanner.Scan() {
+			line := bytes.TrimSpace(scanner.Bytes())
+			if len(line) == 0 {
+				continue
+			}
+			var msg Message
+			if err := json.Unmarshal(line, &msg); err != nil {
+				continue
+			}
+			if strings.TrimSpace(msg.MessageID) != messageID {
+				continue
+			}
+			found = msg
+			matched = true
+			return nil
+		}
+		if err := scanner.Err(); err != nil {
+			if errors.Is(err, bufio.ErrTooLong) {
+				return fmt.Errorf("chatstore: scan messages: message exceeds %d bytes", messageScanBufferMax)
+			}
+			return fmt.Errorf("chatstore: scan messages: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return Message{}, false, err
+	}
+	return found, matched, nil
 }
 
 func readSessionMeta(path string) (Session, error) {

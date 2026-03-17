@@ -24,6 +24,7 @@ type controlPlaneFeatures struct {
 	InstanceControl bool `json:"instance_control"`
 	InstanceAgents  bool `json:"instance_agents"`
 	Wizard          bool `json:"wizard"`
+	Eval            bool `json:"eval"`
 }
 
 type controlPlaneStore struct {
@@ -50,6 +51,7 @@ func defaultControlPlaneFeatures() controlPlaneFeatures {
 		InstanceControl: true,
 		InstanceAgents:  true,
 		Wizard:          true,
+		Eval:            true,
 	}
 }
 

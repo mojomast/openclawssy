@@ -148,3 +148,25 @@ func TestEvalResultsEndpointRejectsInvalidLimit(t *testing.T) {
 		t.Fatalf("expected %d, got %d", http.StatusBadRequest, rr.Code)
 	}
 }
+
+func TestEvalResultsEndpointHonorsEvalFeatureFlag(t *testing.T) {
+	root := t.TempDir()
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	store := defaultControlPlaneStore()
+	store.Features.Eval = false
+	if err := h.saveControlPlaneStore(store); err != nil {
+		t.Fatalf("save control plane store: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/eval/results", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusForbidden, rr.Code, rr.Body.String())
+	}
+	assertDashboardErrorCode(t, rr.Body.Bytes(), "feature.eval_disabled")
+}

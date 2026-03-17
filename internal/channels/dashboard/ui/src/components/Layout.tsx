@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { useState, useEffect } from 'react'
 import { Sun, Moon, Menu, X, HelpCircle, Search, ChevronLeft, ChevronRight, PanelRightOpen } from 'lucide-react'
 import { Input } from './ui/input'
+import { useControlPlaneFeatures } from '../hooks/useControlPlaneFeatures'
 
 interface NavSection {
   title: string
@@ -52,6 +53,7 @@ const navSections: NavSection[] = [
 export function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
+  const { features, loading: featuresLoading } = useControlPlaneFeatures()
   const { theme, setTheme, sidebar, inspector, setSidebarOpen, setInspectorOpen, setSidebarWidth, setInspectorWidth } = useUIStore()
   const [isMobile, setIsMobile] = useState(false)
   const [showMobileNav, setShowMobileNav] = useState(false)
@@ -123,6 +125,11 @@ export function Layout() {
   const handleInspectorResize = (width: number) => {
     setInspectorWidth(width)
   }
+
+  const visibleNavSections = navSections.map((section) => ({
+    ...section,
+    items: section.items.filter((item) => (item.path === '/eval' ? !featuresLoading && features.eval : true)),
+  })).filter((section) => section.items.length > 0)
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -212,7 +219,7 @@ export function Layout() {
                   <ChevronLeft className="h-4 w-4 mr-1" />
                   Collapse
                 </Button>
-                {navSections.map((section) => (
+                {visibleNavSections.map((section) => (
                   <div key={section.title}>
                     <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-3">
                       {section.title}
@@ -261,7 +268,7 @@ export function Layout() {
               <ChevronRight className="h-4 w-4" />
             </Button>
             <div className="w-full h-px bg-border my-1" />
-            {navSections.map((section) => (
+            {visibleNavSections.map((section) => (
               <div key={section.title} className="flex flex-col gap-1">
                 {section.items.slice(0, 3).map((item) => {
                   const isActive = location.pathname === item.path ||
@@ -358,7 +365,7 @@ export function Layout() {
                 <X className="h-5 w-5" />
               </Button>
             </div>
-            {navSections.map((section) => (
+            {visibleNavSections.map((section) => (
               <div key={section.title} className="mb-4">
                 <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-3">
                   {section.title}

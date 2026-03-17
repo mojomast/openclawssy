@@ -19,6 +19,7 @@ import (
 type testChatConnector struct {
 	err      error
 	response ChatResponse
+	lastMsg  ChatMessage
 }
 
 type rateLimitedTestError struct {
@@ -49,6 +50,7 @@ func (e cancelBlockingExecutor) Execute(ctx context.Context, _ ExecutionInput) (
 
 func (c testChatConnector) HandleMessage(ctx context.Context, msg ChatMessage) (ChatResponse, error) {
 	_ = ctx
+	c.lastMsg = msg
 	if strings.TrimSpace(msg.Message) == "" && len(msg.ContentParts) == 0 {
 		return ChatResponse{}, errors.New("missing content")
 	}
@@ -59,6 +61,17 @@ func (c testChatConnector) HandleMessage(ctx context.Context, msg ChatMessage) (
 		return c.response, nil
 	}
 	return ChatResponse{ID: "run-chat", Status: "queued"}, nil
+}
+
+type captureChatConnector struct {
+	lastMsg ChatMessage
+	resp    ChatResponse
+}
+
+func (c *captureChatConnector) HandleMessage(ctx context.Context, msg ChatMessage) (ChatResponse, error) {
+	_ = ctx
+	c.lastMsg = msg
+	return c.resp, nil
 }
 
 func TestServer_ChatAcceptsContentPartsWithoutMessage(t *testing.T) {
@@ -608,6 +621,50 @@ func TestServer_ChatMessageIncludesSessionIDWhenProvided(t *testing.T) {
 	}
 	if resp.SessionID != "session-1" {
 		t.Fatalf("expected session id in response, got %+v", resp)
+	}
+}
+
+func TestServer_ChatMessageAcceptsInstanceIDAndReturnsCompositeIdentity(t *testing.T) {
+	chat := &captureChatConnector{resp: ChatResponse{InstanceID: "instance-a", AgentID: "agent-2", ID: "run-chat", Status: "queued", SessionID: "session-1"}}
+	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore(), Executor: NopExecutor{}, Chat: chat})
+	body := bytes.NewBufferString(`{"instance_id":"instance-a","user_id":"u1","room_id":"r1","agent_id":"agent-2","message":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/messages", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	rr := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected %d, got %d body=%s", http.StatusAccepted, rr.Code, rr.Body.String())
+	}
+	if chat.lastMsg.InstanceID != "instance-a" {
+		t.Fatalf("expected instance_id propagated to connector, got %+v", chat.lastMsg)
+	}
+	var resp ChatResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode chat response: %v", err)
+	}
+	if resp.InstanceID != "instance-a" || resp.AgentID != "agent-2" {
+		t.Fatalf("expected composite identity in response, got %+v", resp)
+	}
+}
+
+func TestServer_ChatRejectsInvalidInstanceID(t *testing.T) {
+	s := NewServer(Config{BearerToken: "secret", Store: NewInMemoryRunStore(), Executor: NopExecutor{}, Chat: testChatConnector{}})
+	body := bytes.NewBufferString(`{"instance_id":"../bad","user_id":"u1","room_id":"r1","message":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/messages", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	rr := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d", http.StatusBadRequest, rr.Code)
+	}
+	var resp errorResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if resp.Error.Code != "request.invalid_instance_id" {
+		t.Fatalf("unexpected error code: %#v", resp)
 	}
 }
 

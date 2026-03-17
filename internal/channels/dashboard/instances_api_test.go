@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,8 +10,16 @@ import (
 	"testing"
 
 	httpchannel "openclawssy/internal/channels/http"
+	"openclawssy/internal/chatstore"
 	"openclawssy/internal/config"
+	"openclawssy/internal/tools"
 )
+
+type stubInboxAgentRunner struct{}
+
+func (stubInboxAgentRunner) ExecuteSubAgent(_ context.Context, input tools.AgentRunInput) (tools.AgentRunOutput, error) {
+	return tools.AgentRunOutput{RunID: "run-inbox-1", FinalText: "done", Status: tools.AgentMessageStatusCompleted, MessageID: input.MessageID}, nil
+}
 
 func TestInstancesBootstrapCloneActivateAndDeleteFlow(t *testing.T) {
 	root := t.TempDir()
@@ -325,6 +334,116 @@ func TestInstanceFeatureFlagEnforcement(t *testing.T) {
 		t.Fatalf("expected instance agents status %d, got %d (%s)", http.StatusForbidden, agentRR.Code, agentRR.Body.String())
 	}
 	assertDashboardErrorCode(t, agentRR.Body.Bytes(), "feature.instance_agents_disabled")
+}
+
+func TestInstanceInboxListAckAndRunFlow(t *testing.T) {
+	root := t.TempDir()
+	h := NewWithOptions(root, httpchannel.NewInMemoryRunStore(), Options{AgentRunner: stubInboxAgentRunner{}})
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	createInstanceReq := httptest.NewRequest(http.MethodPost, "/api/admin/instances", bytes.NewBufferString(`{"id":"alpha","name":"Alpha"}`))
+	createInstanceRR := httptest.NewRecorder()
+	mux.ServeHTTP(createInstanceRR, createInstanceReq)
+	if createInstanceRR.Code != http.StatusCreated {
+		t.Fatalf("expected create instance status %d, got %d (%s)", http.StatusCreated, createInstanceRR.Code, createInstanceRR.Body.String())
+	}
+
+	createAgentReq := httptest.NewRequest(http.MethodPost, "/api/admin/instances/alpha/agents", bytes.NewBufferString(`{"agent_id":"receiver","profile":{"enabled":true}}`))
+	createAgentRR := httptest.NewRecorder()
+	mux.ServeHTTP(createAgentRR, createAgentReq)
+	if createAgentRR.Code != http.StatusCreated {
+		t.Fatalf("expected create agent status %d, got %d (%s)", http.StatusCreated, createAgentRR.Code, createAgentRR.Body.String())
+	}
+
+	store, err := chatstore.NewStore(filepath.Join(root, ".openclawssy", "agents"))
+	if err != nil {
+		t.Fatalf("new chat store: %v", err)
+	}
+	session, err := store.CreateSession(chatstore.CreateSessionInput{AgentID: "receiver", Channel: "agent-mail", UserID: "sender", RoomID: "task-1"})
+	if err != nil {
+		t.Fatalf("create inbox session: %v", err)
+	}
+	if err := store.AppendMessage(session.SessionID, chatstore.Message{
+		Role:        "user",
+		Content:     `{"message_id":"msg-1","status":"queued","instance_id":"alpha","from_agent_id":"sender","to_agent_id":"receiver","message":"hello","task_id":"task-1"}`,
+		MessageID:   "msg-1",
+		Status:      "queued",
+		InstanceID:  "alpha",
+		FromAgentID: "sender",
+		ToAgentID:   "receiver",
+		TaskID:      "task-1",
+	}); err != nil {
+		t.Fatalf("append inbox message: %v", err)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/instances/alpha/agents/inbox", nil)
+	listRR := httptest.NewRecorder()
+	mux.ServeHTTP(listRR, listReq)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("expected inbox list status %d, got %d (%s)", http.StatusOK, listRR.Code, listRR.Body.String())
+	}
+	var listPayload struct {
+		Messages []struct {
+			MessageID string `json:"message_id"`
+			Status    string `json:"status"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(listRR.Body.Bytes(), &listPayload); err != nil {
+		t.Fatalf("decode list payload: %v", err)
+	}
+	if len(listPayload.Messages) != 1 || listPayload.Messages[0].MessageID != "msg-1" || listPayload.Messages[0].Status != "queued" {
+		t.Fatalf("unexpected inbox list payload: %+v", listPayload.Messages)
+	}
+
+	ackReq := httptest.NewRequest(http.MethodPost, "/api/admin/instances/alpha/agents/receiver/inbox/msg-1/ack", bytes.NewBufferString(`{}`))
+	ackRR := httptest.NewRecorder()
+	mux.ServeHTTP(ackRR, ackReq)
+	if ackRR.Code != http.StatusOK {
+		t.Fatalf("expected inbox ack status %d, got %d (%s)", http.StatusOK, ackRR.Code, ackRR.Body.String())
+	}
+	var ackPayload struct {
+		Message struct {
+			Status string `json:"status"`
+			Note   string `json:"note"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(ackRR.Body.Bytes(), &ackPayload); err != nil {
+		t.Fatalf("decode ack payload: %v", err)
+	}
+	if ackPayload.Message.Status != "acknowledged" {
+		t.Fatalf("expected acknowledged status, got %+v", ackPayload.Message)
+	}
+	if ackPayload.Message.Note == "" {
+		t.Fatalf("expected ack note, got %+v", ackPayload.Message)
+	}
+	if _, err := h.loadInstanceInboxMessage(store, "alpha", "receiver", "msg-1"); err != nil {
+		t.Fatalf("load inbox message after ack: %v", err)
+	}
+
+	runReq := httptest.NewRequest(http.MethodPost, "/api/admin/instances/alpha/agents/receiver/inbox/msg-1/run", bytes.NewBufferString(`{"source":"dashboard/test"}`))
+	runRR := httptest.NewRecorder()
+	mux.ServeHTTP(runRR, runReq)
+	if runRR.Code != http.StatusOK {
+		t.Fatalf("expected inbox run status %d, got %d (%s)", http.StatusOK, runRR.Code, runRR.Body.String())
+	}
+	var runPayload struct {
+		RunID   string `json:"run_id"`
+		Status  string `json:"status"`
+		Message struct {
+			Status       string `json:"status"`
+			RelatedRunID string `json:"related_run_id"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(runRR.Body.Bytes(), &runPayload); err != nil {
+		t.Fatalf("decode run payload: %v", err)
+	}
+	if runPayload.RunID != "run-inbox-1" || runPayload.Status != "completed" {
+		t.Fatalf("unexpected run payload: %+v", runPayload)
+	}
+	if runPayload.Message.Status != "completed" || runPayload.Message.RelatedRunID != "run-inbox-1" {
+		t.Fatalf("expected completed lifecycle message, got %+v", runPayload.Message)
+	}
 }
 
 func assertDashboardErrorCode(t *testing.T, body []byte, want string) {
