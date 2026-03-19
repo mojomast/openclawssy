@@ -111,7 +111,7 @@ All sandbox settings are configurable in `config.json` under `sandbox.docker`:
 |---------|---------|-------------|
 | `sandbox.active` | `true` | Enable sandbox isolation |
 | `sandbox.provider` | `docker` | Sandbox provider |
-| `sandbox.docker.image` | `ubuntu:24.04` | Base image for sandbox containers |
+| `sandbox.docker.image` | `ubuntu:24.04` | Base image for sandbox containers; the bundled Docker Compose setup overrides this to `openclawssy-openclawssy` so sandboxed bots have the same shell-ready toolchain, including `python3` |
 | `sandbox.docker.host` | inherited | Optional Docker daemon endpoint (`unix://`, `tcp://`, `ssh://`) |
 | `sandbox.docker.cpu_limit` | `1.0` | CPU limit per sandbox container |
 | `sandbox.docker.memory_limit_mb` | `2048` | Memory limit in MB |

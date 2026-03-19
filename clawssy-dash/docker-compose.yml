@@ -1,0 +1,20 @@
+services:
+  clawssy-dash:
+    build:
+      context: .
+    container_name: clawssy-dash
+    ports:
+      - "0.0.0.0:9090:8050"
+    volumes:
+      - openclawssy_ws_default:/data/workspace:ro
+      - /home/mojo/projects/openclawssy/workspace:/data/host-workspace:ro
+      - /home/mojo/projects/openclawssy/.openclawssy:/data/controlplane:ro
+    environment:
+      - WORKSPACE_ROOT=/data/workspace
+      - HOST_WORKSPACE_ROOT=/data/host-workspace
+      - CONTROLPLANE_ROOT=/data/controlplane
+    restart: unless-stopped
+
+volumes:
+  openclawssy_ws_default:
+    external: true

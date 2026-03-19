@@ -10,6 +10,7 @@ NC='\033[0m' # No Color
 PROVIDER_OVERRIDE="$(printf '%s' "${OPENCLAWSSY_MODEL_PROVIDER:-}" | tr '[:upper:]' '[:lower:]')"
 MODEL_OVERRIDE="$(printf '%s' "${OPENCLAWSSY_MODEL_NAME:-}")"
 OPENAI_COMPAT_BASE_OVERRIDE="$(printf '%s' "${OPENAI_COMPAT_BASE_URL:-}" | sed 's:/*$::')"
+SANDBOX_IMAGE_OVERRIDE="$(printf '%s' "${OPENCLAWSSY_SANDBOX_DOCKER_IMAGE:-}" | sed 's/^ *//;s/ *$//')"
 
 default_model_for_provider() {
     case "$1" in
@@ -68,6 +69,31 @@ apply_provider_overrides() {
     fi
     mv "$tmp_config" "$config_file"
     echo -e "${GREEN}✓ Applied provider override: ${target_provider}/${target_model}${NC}"
+}
+
+apply_sandbox_overrides() {
+    if [ -z "$SANDBOX_IMAGE_OVERRIDE" ]; then
+        return
+    fi
+
+    config_file="/app/.openclawssy/config.json"
+    if [ ! -s "$config_file" ]; then
+        return
+    fi
+
+    tmp_config="/app/.openclawssy/config.json.tmp.$$"
+    jq --arg image "$SANDBOX_IMAGE_OVERRIDE" '
+        (.sandbox //= {}) |
+        (.sandbox.docker //= {}) |
+        .sandbox.docker.image = $image |
+        if ((.sandbox.docker.allowed_images // []) | length) > 0 then
+            .sandbox.docker.allowed_images = (((.sandbox.docker.allowed_images // []) + [$image]) | unique)
+        else
+            .
+        end
+    ' "$config_file" > "$tmp_config"
+    mv "$tmp_config" "$config_file"
+    echo -e "${GREEN}✓ Applied sandbox image override: ${SANDBOX_IMAGE_OVERRIDE}${NC}"
 }
 
 echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
@@ -163,6 +189,7 @@ else
 fi
 
 apply_provider_overrides
+apply_sandbox_overrides
 
 ACTIVE_PROVIDER="$(jq -r '.model.provider // "zai"' /app/.openclawssy/config.json 2>/dev/null || printf 'zai')"
 

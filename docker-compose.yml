@@ -1,5 +1,6 @@
 services:
   openclawssy:
+    image: openclawssy-openclawssy
     build:
       context: .
       dockerfile: Dockerfile
@@ -16,6 +17,7 @@ services:
       
       # Optional: Discord bot token for Discord integration
       # - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - OPENCLAWSSY_SANDBOX_DOCKER_IMAGE=${OPENCLAWSSY_SANDBOX_DOCKER_IMAGE:-openclawssy-openclawssy}
     volumes:
       # Persist configuration and secrets across runs
       - ./.openclawssy:/app/.openclawssy
@@ -45,7 +47,7 @@ services:
 
   becomussy:
     build:
-      context: /tmp/becomussy/backend
+      context: ../becomussy/backend
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:

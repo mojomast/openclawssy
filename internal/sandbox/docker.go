@@ -756,6 +756,7 @@ func (p *DockerProvider) ensureContainer(cli *client.Client, ctx context.Context
 	resp, err := cli.ContainerCreate(ctx,
 		&container.Config{
 			Image:      p.image,
+			Entrypoint: []string{},
 			WorkingDir: "/workspace",
 			Env:        p.extraEnv,
 			Labels: map[string]string{

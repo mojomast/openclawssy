@@ -301,6 +301,34 @@ This is still a prototype under active development.
 - Use isolated environments and test credentials only.
 - Do not run production-critical workloads on it yet.
 
+## Artifact Dashboard (clawssy-dash)
+
+A standalone read-only dashboard for visualizing everything the openclawssy agent bot produces: workspace files, agent runs, chat sessions, scheduler jobs, and cross-references between artifacts.
+
+- **Live at:** `http://100.72.41.9:9090` (Tailscale)
+- **Stack:** FastAPI backend + single-file HTML/CSS/JS frontend with D3 force graph
+- **Deployment:** Docker container (`clawssy-dash`) with three read-only volume mounts
+
+### What it shows
+
+| Tab | Description |
+| --- | --- |
+| Overview | Stat counters, recent file activity, provenance bar |
+| Graph View | Interactive D3 force graph of files, folders, agents, runs, and chat sessions with clickable nodes, floating panels, and neighbor highlighting |
+| Timeline | All workspace files sorted by modification time with category-coded dots |
+| Scheduler | Job cards with schedule, status, and expandable prompts |
+| Artifacts | Three-column file inspector with dual workspace trees, markdown/code rendering, and metadata |
+| Provenance | System info, mount status, and agent roster with expandable run details |
+
+### Quick deploy
+
+```bash
+cd clawssy-dash
+docker compose up -d --build
+```
+
+For full details, see [`clawssy-dash/README.md`](clawssy-dash/README.md).
+
 ## Documentation Map
 
 Detailed operational/reference content has been moved out of the README into `docs/`.
@@ -319,6 +347,8 @@ Detailed operational/reference content has been moved out of the README into `do
 - Contracts + acceptance: [`docs/specs/CONTRACTS.md`](docs/specs/CONTRACTS.md), [`docs/specs/ACCEPTANCE.md`](docs/specs/ACCEPTANCE.md)
 - Threat model: [`docs/security/THREAT_MODEL.md`](docs/security/THREAT_MODEL.md)
 - Project status: [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md)
+- Artifact dashboard: [`clawssy-dash/README.md`](clawssy-dash/README.md)
+- Artifact dashboard handoff: [`clawssy-dash/HANDOFF.md`](clawssy-dash/HANDOFF.md)
 - Contributing guide: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - Contributors notes: [`CONTRIBUTORS.md`](CONTRIBUTORS.md)
 

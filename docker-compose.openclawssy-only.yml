@@ -1,0 +1,30 @@
+services:
+  openclawssy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    environment:
+      - ZAI_API_KEY=${ZAI_API_KEY}
+      - OPENCLAWSSY_TOKEN=${OPENCLAWSSY_TOKEN:-change-me}
+    volumes:
+      - ./.openclawssy:/app/.openclawssy
+      - ./workspace:/app/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - default
+      - infra
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/dashboard"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  default:
+  infra:
+    external: true
+    name: infrastructure_default
