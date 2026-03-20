@@ -533,3 +533,55 @@ func TestValidateDelegationModeRejectsInvalidTopLevelMode(t *testing.T) {
 		t.Fatalf("expected agents.delegation_mode error, got %v", err)
 	}
 }
+
+func TestValidateAcceptsOAuthProviders(t *testing.T) {
+	for _, provider := range []string{"openai_codex", "anthropic"} {
+		t.Run(provider, func(t *testing.T) {
+			cfg := Default()
+			cfg.Model.Provider = provider
+			cfg.Model.Name = "test-model"
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("expected %s to be valid, got: %v", provider, err)
+			}
+		})
+	}
+}
+
+func TestDefaultConfigSetsOAuthProviderBaseURLs(t *testing.T) {
+	cfg := Default()
+	if cfg.Providers.OpenAICodex.BaseURL != "https://chatgpt.com/backend-api" {
+		t.Fatalf("expected openai_codex base_url, got %q", cfg.Providers.OpenAICodex.BaseURL)
+	}
+	if cfg.Providers.Anthropic.BaseURL != "https://api.anthropic.com" {
+		t.Fatalf("expected anthropic base_url, got %q", cfg.Providers.Anthropic.BaseURL)
+	}
+}
+
+func TestRedactedClearsOAuthProviderAPIKeys(t *testing.T) {
+	cfg := Default()
+	cfg.Providers.OpenAICodex.APIKey = "secret1"
+	cfg.Providers.Anthropic.APIKey = "secret2"
+	redacted := cfg.Redacted()
+	if redacted.Providers.OpenAICodex.APIKey != "" {
+		t.Fatal("expected openai_codex api_key to be redacted")
+	}
+	if redacted.Providers.Anthropic.APIKey != "" {
+		t.Fatal("expected anthropic api_key to be redacted")
+	}
+}
+
+func TestValidateAcceptsOAuthAgentProfileProvider(t *testing.T) {
+	for _, provider := range []string{"openai_codex", "anthropic"} {
+		t.Run(provider, func(t *testing.T) {
+			cfg := Default()
+			enabled := true
+			cfg.Agents.Profiles["test-agent"] = AgentProfile{
+				Enabled: &enabled,
+				Model:   ModelConfig{Provider: provider, Name: "test-model"},
+			}
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("expected agent profile with %s to be valid, got: %v", provider, err)
+			}
+		})
+	}
+}

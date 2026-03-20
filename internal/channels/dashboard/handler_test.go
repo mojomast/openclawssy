@@ -2718,3 +2718,252 @@ func TestSchedulerAdminEndpointsCRUDAndPauseResume(t *testing.T) {
 		t.Fatalf("expected empty scheduler after deletion, got %+v", jobStore.List())
 	}
 }
+
+func newOAuthTestRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	masterPath := filepath.Join(root, ".openclawssy", "master.key")
+	if _, err := secrets.GenerateAndWriteMasterKey(masterPath); err != nil {
+		t.Fatalf("generate master key: %v", err)
+	}
+	cfg := config.Default()
+	cfg.Secrets.MasterKeyFile = masterPath
+	cfg.Secrets.StoreFile = filepath.Join(root, ".openclawssy", "secrets.enc")
+	if err := config.Save(filepath.Join(root, ".openclawssy", "config.json"), cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	return root
+}
+
+func TestAdminOAuthStatusReturnsProviderStatus(t *testing.T) {
+	root := newOAuthTestRoot(t)
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/oauth/status", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusOK, rr.Code, rr.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	providers, ok := payload["providers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected providers map, got %#v", payload["providers"])
+	}
+	for _, name := range []string{"openai_codex", "anthropic"} {
+		entry, ok := providers[name].(map[string]any)
+		if !ok {
+			t.Fatalf("expected %s entry as map, got %#v", name, providers[name])
+		}
+		if entry["status"] != "not_configured" {
+			t.Fatalf("expected %s status=not_configured, got %#v", name, entry["status"])
+		}
+	}
+}
+
+func TestAdminOAuthStatusMethodNotAllowed(t *testing.T) {
+	root := newOAuthTestRoot(t)
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/oauth/status", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected %d, got %d", http.StatusMethodNotAllowed, rr.Code)
+	}
+}
+
+func TestAdminOAuthStartReturnsSessionAndAuthorizeURL(t *testing.T) {
+	root := newOAuthTestRoot(t)
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/oauth/openai_codex/start", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusOK, rr.Code, rr.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	sessionID, ok := payload["session_id"].(string)
+	if !ok || sessionID == "" {
+		t.Fatalf("expected non-empty session_id, got %#v", payload["session_id"])
+	}
+	authorizeURL, ok := payload["authorize_url"].(string)
+	if !ok || authorizeURL == "" {
+		t.Fatalf("expected non-empty authorize_url, got %#v", payload["authorize_url"])
+	}
+	if !strings.Contains(authorizeURL, "response_type=code") {
+		t.Fatalf("expected authorize_url to contain response_type=code, got %q", authorizeURL)
+	}
+	if !strings.Contains(authorizeURL, "code_challenge_method=S256") {
+		t.Fatalf("expected authorize_url to contain code_challenge_method=S256, got %q", authorizeURL)
+	}
+	expiresAt, ok := payload["expires_at"].(string)
+	if !ok || expiresAt == "" {
+		t.Fatalf("expected non-empty expires_at, got %#v", payload["expires_at"])
+	}
+}
+
+func TestAdminOAuthStartAnthropicProvider(t *testing.T) {
+	root := newOAuthTestRoot(t)
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/oauth/anthropic/start", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusOK, rr.Code, rr.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if _, ok := payload["session_id"].(string); !ok {
+		t.Fatalf("expected session_id string, got %#v", payload["session_id"])
+	}
+}
+
+func TestAdminOAuthDeleteRemovesCredentials(t *testing.T) {
+	root := newOAuthTestRoot(t)
+
+	// Pre-store a fake credential so delete has something to remove.
+	cfg, _ := config.LoadOrDefault(filepath.Join(root, ".openclawssy", "config.json"))
+	store, err := secrets.NewStore(cfg)
+	if err != nil {
+		t.Fatalf("new secret store: %v", err)
+	}
+	if err := store.Set("oauth/openai_codex/access_token", "fake-token"); err != nil {
+		t.Fatalf("set fake token: %v", err)
+	}
+
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	// Verify status shows active before delete.
+	statusReq := httptest.NewRequest(http.MethodGet, "/api/admin/oauth/status", nil)
+	statusResp := httptest.NewRecorder()
+	mux.ServeHTTP(statusResp, statusReq)
+	if statusResp.Code != http.StatusOK {
+		t.Fatalf("status expected 200, got %d", statusResp.Code)
+	}
+	var statusPayload map[string]any
+	if err := json.Unmarshal(statusResp.Body.Bytes(), &statusPayload); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	providers := statusPayload["providers"].(map[string]any)
+	if entry, ok := providers["openai_codex"].(map[string]any); !ok || entry["status"] == "not_configured" {
+		t.Fatalf("expected openai_codex active before delete, got %#v", providers["openai_codex"])
+	}
+
+	// Delete credentials.
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/admin/oauth/openai_codex", nil)
+	deleteResp := httptest.NewRecorder()
+	mux.ServeHTTP(deleteResp, deleteReq)
+	if deleteResp.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusOK, deleteResp.Code, deleteResp.Body.String())
+	}
+	var deletePayload map[string]any
+	if err := json.Unmarshal(deleteResp.Body.Bytes(), &deletePayload); err != nil {
+		t.Fatalf("decode delete response: %v", err)
+	}
+	if deletePayload["ok"] != true {
+		t.Fatalf("expected ok=true, got %#v", deletePayload)
+	}
+	if deletePayload["provider"] != "openai_codex" {
+		t.Fatalf("expected provider=openai_codex, got %#v", deletePayload["provider"])
+	}
+
+	// Status should now show not_configured.
+	statusReq2 := httptest.NewRequest(http.MethodGet, "/api/admin/oauth/status", nil)
+	statusResp2 := httptest.NewRecorder()
+	mux.ServeHTTP(statusResp2, statusReq2)
+	if statusResp2.Code != http.StatusOK {
+		t.Fatalf("status2 expected 200, got %d", statusResp2.Code)
+	}
+	var statusPayload2 map[string]any
+	if err := json.Unmarshal(statusResp2.Body.Bytes(), &statusPayload2); err != nil {
+		t.Fatalf("decode status2: %v", err)
+	}
+	providers2 := statusPayload2["providers"].(map[string]any)
+	entry2, ok := providers2["openai_codex"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected openai_codex map, got %#v", providers2["openai_codex"])
+	}
+	if entry2["status"] != "not_configured" {
+		t.Fatalf("expected not_configured after delete, got %#v", entry2["status"])
+	}
+}
+
+func TestAdminOAuthInvalidProviderReturnsError(t *testing.T) {
+	root := newOAuthTestRoot(t)
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/oauth/invalid_provider/start", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusBadRequest, rr.Code, rr.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	errObj, ok := payload["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected error object, got %#v", payload)
+	}
+	if errObj["code"] != "oauth.invalid_provider" {
+		t.Fatalf("expected oauth.invalid_provider code, got %#v", errObj["code"])
+	}
+}
+
+func TestAdminOAuthCompleteExpiredSessionReturnsError(t *testing.T) {
+	root := newOAuthTestRoot(t)
+	h := New(root, httpchannel.NewInMemoryRunStore())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	body := bytes.NewBufferString(`{"session_id":"nonexistent-session-id","input":"authcode123"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/oauth/openai_codex/complete", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d (%s)", http.StatusBadRequest, rr.Code, rr.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	errObj, ok := payload["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected error object, got %#v", payload)
+	}
+	if errObj["code"] != "oauth.session_expired" {
+		t.Fatalf("expected oauth.session_expired code, got %#v", errObj["code"])
+	}
+}

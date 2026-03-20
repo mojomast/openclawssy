@@ -85,6 +85,8 @@ func main() {
 		code = handleOpenClaw(ctx, os.Args[2:])
 	case "eval":
 		code = evalSvc.HandleEval(ctx, os.Args[2:])
+	case "login":
+		code = handleLogin(ctx, os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n\n", os.Args[1])
 		printUsage(os.Stderr)
@@ -96,7 +98,7 @@ func main() {
 
 func printUsage(w *os.File) {
 	fmt.Fprintln(w, "usage: openclawssy <subcommand> [flags]")
-	fmt.Fprintln(w, "subcommands: init, setup, ask, run, serve, cron, doctor, remote, openclaw, eval")
+	fmt.Fprintln(w, "subcommands: init, setup, ask, run, serve, cron, doctor, remote, openclaw, eval, login")
 }
 
 func handleOpenClaw(ctx context.Context, args []string) int {
@@ -760,6 +762,16 @@ func (doctorService) Doctor(_ context.Context, input cli.DoctorInput) (string, e
 					} else {
 						providerState = fmt.Sprintf("%s/%s key=missing (%s)", cfg.Model.Provider, cfg.Model.Name, endpoint.APIKeyEnv)
 					}
+					// Also check for OAuth credentials for OAuth-only providers
+					if providerState == "not configured" || strings.Contains(providerState, "key=missing") {
+						oauthProvider := strings.ToLower(cfg.Model.Provider)
+						if oauthProvider == "openai_codex" || oauthProvider == "anthropic" {
+							if v, ok, _ := store.Get("oauth/" + oauthProvider + "/access_token"); ok && strings.TrimSpace(v) != "" {
+								providerState = fmt.Sprintf("%s/%s auth=oauth", cfg.Model.Provider, cfg.Model.Name)
+								secretState = "ok"
+							}
+						}
+					}
 				}
 			}
 		}
@@ -1192,6 +1204,10 @@ func providerForDoctor(cfg config.Config) (config.ProviderEndpointConfig, error)
 		return cfg.Providers.ZAI, nil
 	case "openai_compat":
 		return cfg.Providers.OpenAICompat, nil
+	case "openai_codex":
+		return cfg.Providers.OpenAICodex, nil
+	case "anthropic":
+		return cfg.Providers.Anthropic, nil
 	default:
 		return config.ProviderEndpointConfig{}, errors.New("unsupported provider")
 	}

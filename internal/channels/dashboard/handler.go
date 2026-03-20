@@ -29,6 +29,7 @@ import (
 	"openclawssy/internal/instances"
 	"openclawssy/internal/memory"
 	memorystore "openclawssy/internal/memory/store"
+	"openclawssy/internal/oauth"
 	"openclawssy/internal/promptstack"
 	"openclawssy/internal/runtime"
 	"openclawssy/internal/sandbox"
@@ -46,6 +47,7 @@ type Handler struct {
 	agentRunner           tools.AgentRunner
 	effectiveConfig       *config.Config
 	restartFunc           func()
+	oauthPending          *oauth.PendingStore
 	monitorRunMu          sync.Mutex
 	monitorRuns           map[string]monitorRunState
 	promptStackMu         sync.Mutex
@@ -198,6 +200,7 @@ func NewWithOptions(rootDir string, store httpchannel.RunStore, opts Options) *H
 		agentRunner:           opts.AgentRunner,
 		effectiveConfig:       effectiveConfig,
 		restartFunc:           opts.RestartFunc,
+		oauthPending:          oauth.NewPendingStore(),
 		monitorRuns:           make(map[string]monitorRunState),
 		promptStackByInstance: make(map[string]*promptstack.VersionStore),
 		rollbackByAgent:       make(map[string][]agentRollbackSnapshot),
@@ -249,6 +252,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/eval/results", h.handleEvalResults)
 	mux.HandleFunc("/api/admin/debug/runs/", h.getRunTrace)
 	mux.HandleFunc("/api/admin/memory/", h.getAgentMemory)
+	mux.HandleFunc("/api/admin/oauth/status", h.handleOAuthStatus)
+	mux.HandleFunc("/api/admin/oauth/", h.handleOAuth)
 }
 
 func (h *Handler) serveDashboardFavicon(w http.ResponseWriter, r *http.Request) {
@@ -639,8 +644,8 @@ func (h *Handler) handleProviderTest(w http.ResponseWriter, r *http.Request) {
 		writeDashboardError(w, http.StatusBadRequest, "provider_test.invalid_input", "provider and base_url are required", nil)
 		return
 	}
-	if !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "openai_compat": true}[provider] {
-		writeDashboardError(w, http.StatusBadRequest, "provider_test.invalid_provider", "provider must be one of openai, openrouter, requesty, hatz, zai, openai_compat", nil)
+	if !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "openai_compat": true, "openai_codex": true, "anthropic": true}[provider] {
+		writeDashboardError(w, http.StatusBadRequest, "provider_test.invalid_provider", "provider must be one of openai, openrouter, requesty, hatz, zai, openai_compat, openai_codex, anthropic", nil)
 		return
 	}
 	client := &http.Client{Timeout: 4 * time.Second}
@@ -674,8 +679,8 @@ func (h *Handler) handleProviderModels(w http.ResponseWriter, r *http.Request) {
 		writeDashboardError(w, http.StatusBadRequest, "provider_models.invalid_provider", "provider is required", nil)
 		return
 	}
-	if !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "openai_compat": true}[provider] {
-		writeDashboardError(w, http.StatusBadRequest, "provider_models.invalid_provider", "provider must be one of openai, openrouter, requesty, hatz, zai, openai_compat", nil)
+	if !map[string]bool{"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "openai_compat": true, "openai_codex": true, "anthropic": true}[provider] {
+		writeDashboardError(w, http.StatusBadRequest, "provider_models.invalid_provider", "provider must be one of openai, openrouter, requesty, hatz, zai, openai_compat, openai_codex, anthropic", nil)
 		return
 	}
 
@@ -3355,4 +3360,193 @@ func firstQueryValue(q map[string][]string, key string) string {
 		return ""
 	}
 	return q[key][0]
+}
+
+func (h *Handler) handleOAuthStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
+		return
+	}
+	cfg, err := config.LoadOrDefault(filepath.Join(h.rootDir, ".openclawssy", "config.json"))
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "config.load_failed", err.Error(), nil)
+		return
+	}
+	secretStore, err := secrets.NewStore(cfg)
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "oauth.secret_store_failed", err.Error(), nil)
+		return
+	}
+
+	providers := make(map[string]any)
+	for _, name := range []string{"openai_codex", "anthropic"} {
+		creds, found, err := oauth.LoadCredentials(secretStore, name)
+		if err != nil {
+			providers[name] = map[string]any{"status": "error", "error": err.Error()}
+			continue
+		}
+		if !found {
+			providers[name] = map[string]any{"status": "not_configured"}
+			continue
+		}
+		status := "active"
+		if !creds.ExpiresAt.IsZero() && time.Now().After(creds.ExpiresAt) {
+			status = "expired"
+		}
+		info := map[string]any{
+			"status": status,
+		}
+		if !creds.ExpiresAt.IsZero() {
+			info["expires_at"] = creds.ExpiresAt.Format(time.RFC3339)
+		}
+		if creds.AccountID != "" {
+			info["account_id"] = creds.AccountID
+		}
+		providers[name] = info
+	}
+	writeJSON(w, map[string]any{"providers": providers})
+}
+
+func (h *Handler) handleOAuth(w http.ResponseWriter, r *http.Request) {
+	// Route: /api/admin/oauth/{provider}/{action}
+	// or /api/admin/oauth/{provider}
+	path := strings.TrimPrefix(r.URL.Path, "/api/admin/oauth/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		writeDashboardError(w, http.StatusBadRequest, "oauth.missing_provider", "provider is required", nil)
+		return
+	}
+	provider := strings.ToLower(strings.TrimSpace(parts[0]))
+	if provider != "openai_codex" && provider != "anthropic" {
+		writeDashboardError(w, http.StatusBadRequest, "oauth.invalid_provider", "provider must be openai_codex or anthropic", nil)
+		return
+	}
+
+	action := ""
+	if len(parts) > 1 {
+		action = strings.ToLower(strings.TrimSpace(parts[1]))
+	}
+
+	switch {
+	case r.Method == http.MethodPost && action == "start":
+		h.handleOAuthStart(w, r, provider)
+	case r.Method == http.MethodPost && action == "complete":
+		h.handleOAuthComplete(w, r, provider)
+	case r.Method == http.MethodDelete && action == "":
+		h.handleOAuthDelete(w, r, provider)
+	default:
+		writeDashboardError(w, http.StatusMethodNotAllowed, "method.not_allowed", "method not allowed", nil)
+	}
+}
+
+func (h *Handler) handleOAuthStart(w http.ResponseWriter, r *http.Request, providerName string) {
+	oauthProvider, ok := oauth.ProviderByName(providerName)
+	if !ok {
+		writeDashboardError(w, http.StatusBadRequest, "oauth.invalid_provider", "unsupported provider", nil)
+		return
+	}
+
+	verifier, err := oauth.GenerateVerifier()
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "oauth.pkce_failed", err.Error(), nil)
+		return
+	}
+	challenge := oauth.ChallengeFromVerifier(verifier)
+	state := fmt.Sprintf("dashboard_%d", time.Now().UnixNano())
+
+	session := h.oauthPending.Create(providerName, verifier, state, "", 10*time.Minute)
+
+	authorizeURL := fmt.Sprintf("%s?response_type=code&client_id=%s&code_challenge=%s&code_challenge_method=S256&scope=%s&state=%s",
+		oauthProvider.AuthorizeURL,
+		oauthProvider.ClientID,
+		challenge,
+		strings.Join(oauthProvider.Scopes, "+"),
+		state,
+	)
+
+	writeJSON(w, map[string]any{
+		"session_id":    session.ID,
+		"authorize_url": authorizeURL,
+		"expires_at":    session.ExpiresAt.Format(time.RFC3339),
+	})
+}
+
+func (h *Handler) handleOAuthComplete(w http.ResponseWriter, r *http.Request, providerName string) {
+	var req struct {
+		SessionID string `json:"session_id"`
+		Input     string `json:"input"` // callback URL or bare code
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeDashboardError(w, http.StatusBadRequest, "oauth.invalid_json", "invalid json body", nil)
+		return
+	}
+
+	session, ok := h.oauthPending.Get(req.SessionID)
+	if !ok {
+		writeDashboardError(w, http.StatusBadRequest, "oauth.session_expired", "login session not found or expired; please start again", nil)
+		return
+	}
+	h.oauthPending.Delete(req.SessionID)
+
+	code, _, err := oauth.ParseManualInput(req.Input)
+	if err != nil {
+		writeDashboardError(w, http.StatusBadRequest, "oauth.invalid_input", err.Error(), nil)
+		return
+	}
+
+	oauthProvider, ok := oauth.ProviderByName(session.Provider)
+	if !ok {
+		writeDashboardError(w, http.StatusBadRequest, "oauth.invalid_provider", "unsupported provider", nil)
+		return
+	}
+
+	tokenResp, err := oauth.ExchangeCode(r.Context(), oauthProvider, code, session.Verifier, "", session.State)
+	if err != nil {
+		writeDashboardError(w, http.StatusBadGateway, "oauth.exchange_failed", err.Error(), nil)
+		return
+	}
+
+	cfg, err := config.LoadOrDefault(filepath.Join(h.rootDir, ".openclawssy", "config.json"))
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "config.load_failed", err.Error(), nil)
+		return
+	}
+	secretStore, err := secrets.NewStore(cfg)
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "oauth.secret_store_failed", err.Error(), nil)
+		return
+	}
+
+	creds := oauth.Credentials{
+		AccessToken:  tokenResp.AccessToken,
+		RefreshToken: tokenResp.RefreshToken,
+		AccountID:    tokenResp.AccountID,
+	}
+	if tokenResp.ExpiresIn > 0 {
+		creds.ExpiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	}
+	if err := oauth.SaveCredentials(secretStore, providerName, creds); err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "oauth.save_failed", err.Error(), nil)
+		return
+	}
+
+	writeJSON(w, map[string]any{"ok": true, "provider": providerName})
+}
+
+func (h *Handler) handleOAuthDelete(w http.ResponseWriter, r *http.Request, providerName string) {
+	cfg, err := config.LoadOrDefault(filepath.Join(h.rootDir, ".openclawssy", "config.json"))
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "config.load_failed", err.Error(), nil)
+		return
+	}
+	secretStore, err := secrets.NewStore(cfg)
+	if err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "oauth.secret_store_failed", err.Error(), nil)
+		return
+	}
+	if err := oauth.DeleteCredentials(secretStore, providerName); err != nil {
+		writeDashboardError(w, http.StatusInternalServerError, "oauth.delete_failed", err.Error(), nil)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "provider": providerName, "message": "credentials deleted"})
 }

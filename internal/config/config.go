@@ -185,6 +185,8 @@ type ProvidersConfig struct {
 	Hatz         ProviderEndpointConfig `json:"hatz"`
 	ZAI          ProviderEndpointConfig `json:"zai"`
 	OpenAICompat ProviderEndpointConfig `json:"openai_compat"`
+	OpenAICodex  ProviderEndpointConfig `json:"openai_codex"`
+	Anthropic    ProviderEndpointConfig `json:"anthropic"`
 }
 
 type ChatConfig struct {
@@ -337,6 +339,12 @@ func Default() Config {
 			OpenAICompat: ProviderEndpointConfig{
 				BaseURL:   "",
 				APIKeyEnv: "OPENAI_COMPAT_API_KEY",
+			},
+			OpenAICodex: ProviderEndpointConfig{
+				BaseURL: "https://chatgpt.com/backend-api",
+			},
+			Anthropic: ProviderEndpointConfig{
+				BaseURL: "https://api.anthropic.com",
 			},
 		},
 		Agents: AgentsConfig{
@@ -629,6 +637,12 @@ func (c *Config) ApplyDefaults() {
 	if c.Providers.OpenAICompat.APIKeyEnv == "" && c.Providers.OpenAICompat.APIKey == "" {
 		c.Providers.OpenAICompat.APIKeyEnv = d.Providers.OpenAICompat.APIKeyEnv
 	}
+	if c.Providers.OpenAICodex.BaseURL == "" {
+		c.Providers.OpenAICodex = d.Providers.OpenAICodex
+	}
+	if c.Providers.Anthropic.BaseURL == "" {
+		c.Providers.Anthropic = d.Providers.Anthropic
+	}
 }
 
 func (c Config) Validate() error {
@@ -703,7 +717,7 @@ func (c Config) Validate() error {
 		if strings.TrimSpace(profile.Model.Provider) != "" {
 			provider := strings.ToLower(strings.TrimSpace(profile.Model.Provider))
 			supported := map[string]bool{
-				"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "openai_compat": true,
+				"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "openai_compat": true, "openai_codex": true, "anthropic": true,
 			}
 			if !supported[provider] {
 				return fmt.Errorf("agents.profiles.%s.model.provider unsupported: %q", agentID, profile.Model.Provider)
@@ -774,7 +788,7 @@ func (c Config) Validate() error {
 
 	provider := strings.ToLower(strings.TrimSpace(c.Model.Provider))
 	supported := map[string]bool{
-		"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "openai_compat": true,
+		"openai": true, "openrouter": true, "requesty": true, "hatz": true, "zai": true, "openai_compat": true, "openai_codex": true, "anthropic": true,
 	}
 	if !supported[provider] {
 		return fmt.Errorf("unsupported model provider: %q", c.Model.Provider)
@@ -956,6 +970,8 @@ func (c Config) Redacted() Config {
 	redacted.Providers.Hatz.APIKey = ""
 	redacted.Providers.ZAI.APIKey = ""
 	redacted.Providers.OpenAICompat.APIKey = ""
+	redacted.Providers.OpenAICodex.APIKey = ""
+	redacted.Providers.Anthropic.APIKey = ""
 	redacted.Discord.Token = ""
 	redacted.Telegram.Token = ""
 	return redacted
