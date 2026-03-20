@@ -268,6 +268,17 @@ func NewProviderModelForConfig(cfg config.Config, modelCfg config.ModelConfig, l
 	}
 	providerTimeout := providerTimeoutForConfig(modelCfg)
 
+	// For Anthropic OAuth with non-adaptive-thinking models, add the
+	// interleaved-thinking beta so thinking blocks stream correctly.
+	// Adaptive models (Opus 4.6, Sonnet 4.6) have it built-in.
+	if pName == "anthropic" && strings.HasPrefix(apiKey, "sk-ant-oat") {
+		if !anthropicModelSupportsAdaptiveThinking(modelCfg.Name) {
+			if beta, ok := headers["anthropic-beta"]; ok && !strings.Contains(beta, "interleaved-thinking") {
+				headers["anthropic-beta"] = beta + ",interleaved-thinking-2025-05-14"
+			}
+		}
+	}
+
 	return &ProviderModel{
 		providerName:      pName,
 		modelName:         modelCfg.Name,
@@ -298,6 +309,12 @@ func ListProviderModels(ctx context.Context, cfg config.Config, provider string,
 	if err != nil {
 		return nil, err
 	}
+
+	// OAuth providers may have limited or no model discovery; use fallback lists
+	if provider == "openai_codex" {
+		return []string{"gpt-5.3-codex", "gpt-5-codex", "gpt-5-codex-mini"}, nil
+	}
+
 	path := providerModelsPath(provider)
 	if path == "" {
 		return nil, fmt.Errorf("provider %q does not support model discovery", provider)
@@ -308,11 +325,8 @@ func ListProviderModels(ctx context.Context, cfg config.Config, provider string,
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("Authorization", "Bearer "+apiKey)
+	applyProviderAuth(request, provider, apiKey, headers)
 	request.Header.Set("Content-Type", "application/json")
-	for k, v := range headers {
-		request.Header.Set(k, v)
-	}
 
 	resp, err := httpClient.Do(request)
 	if err != nil {
@@ -347,6 +361,12 @@ func contextWindowForModel(providerName, modelName string) int {
 		case "glm-4.7", "glm-4.7-flash", "glm-4.7-flashx":
 			return zaiGLM47ContextWindow
 		}
+	}
+	if provider == "anthropic" {
+		return 200000
+	}
+	if provider == "openai_codex" {
+		return 128000
 	}
 	return defaultContextWindow
 }
@@ -429,6 +449,15 @@ func (m *ProviderModel) Generate(ctx context.Context, req agent.ModelRequest) (a
 			return agent.ModelResponse{FinalText: toolResultsText(req.ToolResults)}, nil
 		}
 		return parseToolDirective(msg, req.AllowedTools)
+	}
+
+	// Protocol-specific adapters for non-OpenAI providers.
+	// These handle their own message building and request execution.
+	switch m.providerName {
+	case "openai_codex":
+		return m.generateCodexResponses(ctx, req)
+	case "anthropic":
+		return m.generateAnthropicMessages(ctx, req)
 	}
 
 	systemPrompt := strings.TrimSpace(req.SystemPrompt)
@@ -682,7 +711,9 @@ func (m *ProviderModel) doStreamingChatCompletionOnce(ctx context.Context, raw [
 	if err != nil {
 		return streamingChatCompletionResult{}, err
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+m.apiKey)
+	if m.providerName != "anthropic" {
+		httpReq.Header.Set("Authorization", "Bearer "+m.apiKey)
+	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	for k, v := range m.headers {
 		httpReq.Header.Set(k, v)
@@ -1173,7 +1204,9 @@ func (m *ProviderModel) doChatCompletionOnce(ctx context.Context, raw []byte, pa
 	if err != nil {
 		return 0, err
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+m.apiKey)
+	if m.providerName != "anthropic" {
+		httpReq.Header.Set("Authorization", "Bearer "+m.apiKey)
+	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	for k, v := range m.headers {
 		httpReq.Header.Set(k, v)
@@ -2659,6 +2692,10 @@ func providerEndpoint(cfg config.Config, provider string) (config.ProviderEndpoi
 		return cfg.Providers.ZAI, nil
 	case "openai_compat":
 		return cfg.Providers.OpenAICompat, nil
+	case "openai_codex":
+		return cfg.Providers.OpenAICodex, nil
+	case "anthropic":
+		return cfg.Providers.Anthropic, nil
 	default:
 		return config.ProviderEndpointConfig{}, fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -2673,6 +2710,16 @@ func resolveProviderAccess(endpoint config.ProviderEndpointConfig, provider stri
 	}
 	if apiKey == "" && endpoint.APIKeyEnv != "" {
 		apiKey = strings.TrimSpace(os.Getenv(endpoint.APIKeyEnv))
+	}
+	// OAuth providers may not have a traditional API key — they use OAuth tokens
+	// stored under oauth/{provider}/access_token. Allow them through if no
+	// API key is found yet; the adapter will resolve auth from the secret store.
+	if apiKey == "" && isOAuthProvider(provider) {
+		if lookup != nil {
+			if v, ok, err := lookup("oauth/" + provider + "/access_token"); err == nil && ok && strings.TrimSpace(v) != "" {
+				apiKey = strings.TrimSpace(v)
+			}
+		}
 	}
 	if apiKey == "" {
 		return "", "", nil, fmt.Errorf("model provider %q is missing API key (set %s or providers.%s.api_key)", provider, endpoint.APIKeyEnv, provider)
@@ -2692,7 +2739,46 @@ func resolveProviderAccess(endpoint config.ProviderEndpointConfig, provider stri
 			headers["X-API-Key"] = apiKey
 		}
 	}
+	if provider == "anthropic" && apiKey != "" {
+		// OAuth tokens (sk-ant-oat*) use Bearer auth; API keys use x-api-key.
+		if strings.HasPrefix(apiKey, "sk-ant-oat") {
+			headers["Authorization"] = "Bearer " + apiKey
+			headers["anthropic-beta"] = "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14"
+			headers["anthropic-dangerous-direct-browser-access"] = "true"
+			headers["user-agent"] = "claude-cli/2.1.75"
+			headers["x-app"] = "cli"
+			headers["accept"] = "application/json"
+		} else {
+			headers["x-api-key"] = apiKey
+		}
+		headers["anthropic-version"] = "2023-06-01"
+	}
+	if provider == "openai_codex" && apiKey != "" {
+		headers["OpenAI-Beta"] = "responses=experimental"
+		headers["originator"] = "openclawssy"
+		// Try to get account ID from OAuth store
+		if lookup != nil {
+			if acctID, ok, err := lookup("oauth/openai_codex/account_id"); err == nil && ok && strings.TrimSpace(acctID) != "" {
+				headers["chatgpt-account-id"] = strings.TrimSpace(acctID)
+			}
+		}
+	}
 	return baseURL, apiKey, headers, nil
+}
+
+func isOAuthProvider(provider string) bool {
+	return provider == "openai_codex" || provider == "anthropic"
+}
+
+func applyProviderAuth(req *http.Request, provider, apiKey string, headers map[string]string) {
+	// For anthropic, auth is already in the headers map (Bearer or x-api-key
+	// depending on whether it's an OAuth token or API key).
+	if provider != "anthropic" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 }
 
 func normalizeProviderBaseURL(raw string) string {
@@ -2709,6 +2795,10 @@ func providerModelsPath(provider string) string {
 	switch provider {
 	case "hatz":
 		return "/chat/models"
+	case "anthropic":
+		return "/v1/models"
+	case "openai_codex":
+		return "" // codex doesn't support standard model discovery
 	default:
 		return "/models"
 	}
