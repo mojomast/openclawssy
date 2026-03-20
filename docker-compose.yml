@@ -27,12 +27,6 @@ services:
       # This is a Unix socket mount, not HTTP. The docker CLI inside the
       # container talks to the host daemon directly through this socket.
       - /var/run/docker.sock:/var/run/docker.sock
-    networks:
-      - default
-      - infra
-    depends_on:
-      becomussy:
-        condition: service_healthy
     # Optional: enable advanced network diagnostics (tcpdump, some nmap modes)
     # cap_add:
     #   - NET_ADMIN
@@ -44,36 +38,3 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-
-  becomussy:
-    build:
-      context: ../becomussy/backend
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://${BECOMUSSY_DB_USER:-becoming}:${BECOMUSSY_DB_PASS:-becoming}@infrastructure-db-1:5432/becoming
-      - SYNC_DATABASE_URL=postgresql://${BECOMUSSY_DB_USER:-becoming}:${BECOMUSSY_DB_PASS:-becoming}@infrastructure-db-1:5432/becoming
-      - REDIS_URL=redis://infrastructure-redis-1:6379/0
-      - SECRET_KEY=${BECOMUSSY_SECRET_KEY:-changeme}
-      - ENVIRONMENT=development
-      - LOG_LEVEL=INFO
-    networks:
-      - default
-      - infra
-    volumes:
-      - ./docker/becomussy-overrides/app/services/projects/__init__.py:/app/app/services/projects/__init__.py
-      - ./docker/becomussy-overrides/app/services/memory/__init__.py:/app/app/services/memory/__init__.py
-      - ./docker/becomussy-overrides/app/services/threads/__init__.py:/app/app/services/threads/__init__.py
-      - ./docker/becomussy-overrides/app/services/journal/__init__.py:/app/app/services/journal/__init__.py
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-
-networks:
-  default:
-  infra:
-    external: true
-    name: infrastructure_default
