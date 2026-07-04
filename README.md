@@ -157,7 +157,7 @@ Docker is the fastest way to get started. The backend runs in one container and 
 docker run -d \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v ~/.openclawssy:/app/.openclawssy \
-  -p 8080:8080 \
+  -p 9002:8080 \
   -e ZAI_API_KEY=your-key-here \
   -e OPENCLAWSSY_TOKEN=change-me \
   ghcr.io/openclawssy/openclawssy:latest

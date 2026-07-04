@@ -17,7 +17,7 @@ A Dockerized Openclawssy instance configured to use **Z.AI's GLM-4.7 Coding Plan
 ```
 Remote Device (Tailscale)
     ↓
-Docker Container (Port 8081)
+Docker Container (Port 9002)
     ↓
 Openclawssy Server
     ↓
@@ -36,14 +36,14 @@ Z.AI API (GLM-4.7 Coding Plan)
 
 ### 2. Docker Setup
 - **Dockerfile:** Multi-stage build with Go 1.24
-- **Port:** 8081 (mapped to container's 8080)
+- **Port:** 9002 (mapped to container's 8080; 8081 is reserved for Hermes Dashboard)
 - **Entrypoint:** `docker-entrypoint.sh` - validates ZAI_API_KEY on startup
 - **Volumes:**
   - `./workspace:/app/workspace` - Persistent workspace
   - `./.openclawssy:/app/.openclawssy` - Config and secrets
 
 ### 3. Dashboard Features
-- **URL:** `http://<tailscale-ip>:8081/dashboard?token=<your-token>`
+- **URL:** `http://<tailscale-ip>:9002/dashboard?token=[TOKEN]`
 - **Main Chat Interface:** Full-screen chat with bot
 - **Auto-scroll:** Chat scrolls to show new messages
 - **Code Formatting:** Code blocks rendered with syntax highlighting
@@ -108,7 +108,7 @@ sudo docker compose up --build -d
 
 ### Access Dashboard
 ```
-http://<tailscale-ip>:8081/dashboard?token=change-me
+http://<tailscale-ip>:9002/dashboard?token=[TOKEN]
 ```
 
 ### Chat with Bot
@@ -161,7 +161,7 @@ http://<tailscale-ip>:8081/dashboard?token=change-me
 ```
 /home/mojo/projects/openclawssy/
 ├── Dockerfile                    # Multi-stage build
-├── docker-compose.yml            # Port 8081, env vars
+├── docker-compose.yml            # Port 9002, env vars
 ├── docker-entrypoint.sh          # Setup validation
 ├── .env.example                  # Environment template
 ├── internal/
@@ -205,7 +205,7 @@ http://<tailscale-ip>:8081/dashboard?token=change-me
 - **Z.AI Coding Plan:** https://z.ai/subscribe
 - **Openclawssy Docs:** README.md, DOCKER.md
 - **Tailscale:** https://tailscale.com
-- **Dashboard:** http://localhost:8081/dashboard
+- **Dashboard:** http://localhost:9002/dashboard
 
 ---
 

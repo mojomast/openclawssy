@@ -9,7 +9,7 @@ docker run -d \
   -e ZAI_API_KEY=<your_key> \
   -v ~/.openclawssy:/app/.openclawssy \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -p 8080:8080 \
+  -p 9002:8080 \
   ghcr.io/mojomast/openclawssy:latest
 ```
 
@@ -51,8 +51,8 @@ Openclawssy is pre-configured to use **ZAI's GLM-4.7 Coding Plan** as the defaul
    ```
 
 4. **Access the dashboard:**
-   - Local: http://localhost:8081/dashboard
-   - Tailscale: http://<tailscale-ip>:8081/dashboard (from any device on your tailnet)
+   - Local: http://localhost:9002/dashboard
+   - Tailscale: http://<tailscale-ip>:9002/dashboard (from any device on your tailnet)
    - Enter your bearer token (from `.env` or default: `change-me`)
    - Start chatting with the bot!
 
@@ -182,7 +182,7 @@ cap_add:
   - NET_RAW
 ```
 
-**Note**: The container exposes port 8080 internally. Map it to any available port on your host (e.g., 8081 to avoid conflicts).
+**Note**: The container exposes port 8080 internally. Map it to any available port on your host (e.g., 9002 to avoid conflicts with Hermes Dashboard on 8081).
 
 ## Docker Permissions
 
@@ -198,7 +198,7 @@ Then log out and back in. This is a one-time setup.
 
 ### API Endpoints
 
-- **Dashboard**: http://localhost:8081/dashboard
+- **Dashboard**: http://localhost:9002/dashboard
 - **Chat API**: POST `/v1/chat/messages`
 - **Run API**: POST `/v1/runs`
 - **Admin API**: `/api/admin/*`
@@ -218,8 +218,8 @@ Openclawssy is configured to be accessible over Tailscale for secure remote acce
    ```
 
 3. **Access from any device on your tailnet**:
-   - Dashboard: `http://<tailscale-ip>:8081/dashboard`
-   - API: `http://<tailscale-ip>:8081/v1/...`
+   - Dashboard: `http://<tailscale-ip>:9002/dashboard`
+   - API: `http://<tailscale-ip>:9002/v1/...`
 
 4. **Security considerations**:
    - The server binds to all interfaces (`0.0.0.0`) by default for Docker/Tailscale compatibility
