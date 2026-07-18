@@ -42,7 +42,16 @@ const (
 	transientModelRetryBaseDelay = 500 * time.Millisecond
 	toolParseRetryCap            = 4
 	maxToolRewriteBudget         = 3 // Maximum rewrites to prevent infinite loops
+	defaultContextWindow         = 120000
 )
+
+// delegationAllowedTools is the fixed set of tools permitted when delegation
+// mode is ToolGated or AutoExecute. Defined at package level to avoid
+// allocating a new map on every isToolAllowedInDelegationMode call.
+var delegationAllowedTools = map[string]bool{
+	"agent.list": true,
+	"agent.run":  true,
+}
 
 // runState encapsulates the mutable state of a single agent run loop.
 type runState struct {
@@ -139,6 +148,13 @@ func newRunState(input RunInput, r Runner) *runState {
 		toolTimeout = DefaultToolTimeout
 	}
 
+	// Prefer the context window size configured on the Runner; fall back to
+	// the compile-time default so delegation triggers fire at the right threshold.
+	ctxWindow := r.ContextWindowSize
+	if ctxWindow <= 0 {
+		ctxWindow = defaultContextWindow
+	}
+
 	return &runState{
 		out:                        out,
 		runID:                      strings.TrimSpace(input.RunID),
@@ -159,7 +175,7 @@ func newRunState(input RunInput, r Runner) *runState {
 		structuralBlockerCounts:    make(map[string]int),
 		lastUncacheableOutputs:     make(map[string]string),
 		lastPromptTokens:           0,
-		contextWindow:              120000, // default context window
+		contextWindow:              ctxWindow,
 		delegationMode:             "",
 		delegationCooldown:         0,
 		delegationActive:           false,
@@ -172,6 +188,17 @@ func newRunState(input RunInput, r Runner) *runState {
 		delegationLocked:           false,
 		delegationReason:           "",
 	}
+}
+
+// finalizeOutput stamps the terminal fields on s.out and returns it together
+// with err. Every early-return path in runLoop should call this instead of
+// duplicating the three-line assignment block.
+func (s *runState) finalizeOutput(err error) (RunOutput, error) {
+	s.out.Thinking = s.latestThinking
+	s.out.ThinkingPresent = s.thinkingPresent
+	s.out.ToolParseFailure = s.toolParseFailure
+	s.out.CompletedAt = time.Now().UTC()
+	return s.out, err
 }
 
 func (s *runState) registerToolOutcome(errText string) {
@@ -598,56 +625,11 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 			}
 		}
 
-		// Repetition prevention: detect repeated agent.create calls
-		if call.Name == "agent.create" || call.Name == "agents.create" {
-			agentID := extractAgentIDFromArgs(call.Arguments)
-			if agentID != "" {
-				key := call.Name + "|" + agentID
-				s.repetitionPrevention[key]++
-				if s.repetitionPrevention[key] >= 3 {
-					// Return cached error to prevent infinite loops
-					result := ToolCallResult{
-						ID:     call.ID,
-						Output: "",
-						Error:  fmt.Sprintf("repetition detected: agent '%s' creation was already attempted %d times. If the agent exists, use it directly. If not, check previous errors.", agentID, s.repetitionPrevention[key]),
-					}
-					record := ToolCallRecord{
-						Request:     call,
-						Result:      result,
-						StartedAt:   time.Now().UTC(),
-						CompletedAt: time.Now().UTC(),
-					}
-					s.notifyToolCall(&record, input.OnToolCall)
-					s.out.ToolCalls = append(s.out.ToolCalls, record)
-					s.toolResults = append(s.toolResults, result)
-					s.registerToolOutcome(result.Error)
-					s.emitToolDecision(ctx, call, result)
-					continue
-				}
-			}
-			// Global cap on total agent.create calls to prevent agent spam
-			globalCreateKey := "agent.create|total"
-			s.repetitionPrevention[globalCreateKey]++
-			if s.repetitionPrevention[globalCreateKey] > agentCreateGlobalCap {
-				result := ToolCallResult{
-					ID:     call.ID,
-					Output: "",
-					Error:  fmt.Sprintf("agent creation limit reached: you have already created %d agents in this run. Reuse existing agents or finish with the current roster before creating more.", s.repetitionPrevention[globalCreateKey]-1),
-				}
-				record := ToolCallRecord{
-					Request:     call,
-					Result:      result,
-					StartedAt:   time.Now().UTC(),
-					CompletedAt: time.Now().UTC(),
-				}
-				s.notifyToolCall(&record, input.OnToolCall)
-				s.out.ToolCalls = append(s.out.ToolCalls, record)
-				s.toolResults = append(s.toolResults, result)
-				s.registerToolOutcome(result.Error)
-				s.emitToolDecision(ctx, call, result)
-				continue
-			}
-		}
+		// NOTE: agent.create repetition is fully handled by the generic
+		// repeatedCallRepetitionKey / oneShotMutationRepetitionKey guards
+		// above via the agentCreateGlobalCap constant. The duplicate inline
+		// block that previously appeared here was unreachable and has been
+		// removed to avoid confusion.
 
 		record := ToolCallRecord{
 			Request:   call,
@@ -696,9 +678,6 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 			}
 		} else {
 			// Uncacheable tool: track whether the output actually changed.
-			// If the tool returns the exact same output as its last
-			// invocation with the same name+args, it is not genuine
-			// progress — the no-progress detector should not be reset.
 			stableKey := call.Name + "|" + string(call.Arguments)
 			prevOutput, seen := s.lastUncacheableOutputs[stableKey]
 			currentOutput := strings.TrimSpace(result.Output) + "\x00" + strings.TrimSpace(result.Error)
@@ -709,8 +688,6 @@ func (s *runState) executeTools(ctx context.Context, r Runner, toolCalls []ToolC
 					s.successfulOneShotMutations[oneShotKey] = struct{}{}
 				}
 			}
-			// If output is identical to the previous call (seen && prevOutput == currentOutput),
-			// hadFreshExecution stays false for this call, letting the no-progress counter advance.
 		}
 
 		s.notifyToolCall(&record, input.OnToolCall)
@@ -765,11 +742,9 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 			AskedUserQuestion: DetectUserQuestion(s.getLastModelOutput()),
 		}
 
-		// Use tracked prompt tokens and context window for delegation evaluation
 		promptTokens := s.lastPromptTokens
 		contextWindow := s.contextWindow
 
-		// Only evaluate delegation trigger if not already locked in forced mode
 		if !s.delegationLocked {
 			if trigger := s.computeDelegationTrigger(promptTokens, contextWindow, snapshot); trigger != nil {
 				s.delegationReason = strings.TrimSpace(trigger.Reason)
@@ -812,18 +787,10 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 					}
 				}
 
-				// Planner-led delegation modes should only take over once the
-				// trigger has escalated beyond a prompt-only advisory signal.
-				// Otherwise mild failure signals in modes like full_autonomous
-				// can unexpectedly turn into fully delegated execution loops.
 				if isPlannerDelegationMode(configuredMode) && trigger.Mode != DelegationModePromptOnly {
 					plan, plannedTasks, planErr := GenerateDecompositionPlan(trigger.Reason, configuredMode, trigger.Subtasks, nil)
 					if planErr != nil {
-						s.out.Thinking = s.latestThinking
-						s.out.ThinkingPresent = s.thinkingPresent
-						s.out.ToolParseFailure = s.toolParseFailure
-						s.out.CompletedAt = time.Now().UTC()
-						return s.out, planErr
+						return s.finalizeOutput(planErr)
 					}
 
 					s.out.DecompositionPlan = &plan
@@ -853,31 +820,16 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 
 					if !autoExecute {
 						s.out.FinalText = formatDecompositionPlanForOperator(plan, decisionSummary)
-						s.out.Thinking = s.latestThinking
-						s.out.ThinkingPresent = s.thinkingPresent
-						s.out.ToolParseFailure = s.toolParseFailure
-						s.out.CompletedAt = time.Now().UTC()
-						return s.out, nil
+						return s.finalizeOutput(nil)
 					}
 
 					if err := r.executeDelegatedTasks(ctx, s, plannedTasks, input); err != nil {
-						s.out.Thinking = s.latestThinking
-						s.out.ThinkingPresent = s.thinkingPresent
-						s.out.ToolParseFailure = s.toolParseFailure
-						s.out.CompletedAt = time.Now().UTC()
-						return s.out, err
+						return s.finalizeOutput(err)
 					}
-					s.out.Thinking = s.latestThinking
-					s.out.ThinkingPresent = s.thinkingPresent
-					s.out.ToolParseFailure = s.toolParseFailure
-					s.out.CompletedAt = time.Now().UTC()
-					return s.out, nil
+					return s.finalizeOutput(nil)
 				}
 
-				// Downgrade execution-dependent modes when no SubAgentRunner is
-				// available.  PromptOnly mode is always safe (just a system-prompt
-				// hint) so we keep it; ToolGated and AutoExecute require the runner
-				// and would otherwise fail with "subagent runner not configured".
+				// Downgrade execution-dependent modes when no SubAgentRunner is available.
 				if r.SubAgentRunner == nil && (trigger.Mode == DelegationModeToolGated || trigger.Mode == DelegationModeAutoExecute) {
 					trigger.Mode = DelegationModePromptOnly
 					trigger.AllowedTools = nil
@@ -893,33 +845,20 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 					"cooldown_for":    trigger.CooldownFor,
 				}, fmt.Sprintf("Activated delegation mode constraints (%s).", strings.TrimSpace(string(trigger.Mode))))
 
-				// Lock delegation mode once we enter forced or critical mode
 				if trigger.Mode == DelegationModeToolGated || trigger.Mode == DelegationModeAutoExecute {
 					s.delegationLocked = true
 				}
 
-				// AUTO-EXECUTE mode: bypass model entirely
 				if trigger.Mode == DelegationModeAutoExecute && input.AutoDelegate {
 					if err := r.executeDelegatedTasks(ctx, s, trigger.Subtasks, input); err != nil {
-						s.out.Thinking = s.latestThinking
-						s.out.ThinkingPresent = s.thinkingPresent
-						s.out.ToolParseFailure = s.toolParseFailure
-						s.out.CompletedAt = time.Now().UTC()
-						return s.out, err
+						return s.finalizeOutput(err)
 					}
-					s.out.Thinking = s.latestThinking
-					s.out.ThinkingPresent = s.thinkingPresent
-					s.out.ToolParseFailure = s.toolParseFailure
-					s.out.CompletedAt = time.Now().UTC()
-					return s.out, nil
+					return s.finalizeOutput(nil)
 				}
 
-				// TOOL_GATED mode: inject directive
 				if trigger.Mode == DelegationModeToolGated {
 					systemPrompt = appendPromptDirective(systemPrompt, buildForcedDelegationDirective(trigger))
 				}
-
-				// PROMPT_ONLY mode: soft hint
 				if trigger.Mode == DelegationModePromptOnly {
 					systemPrompt = appendPromptDirective(systemPrompt, buildSoftDelegationHint(trigger))
 				}
@@ -982,37 +921,28 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 		if resp.ToolParseFailure {
 			s.toolParseFailure = true
 		}
-		// Update context tracking from model response
 		if resp.PromptTokens > 0 {
 			s.lastPromptTokens = resp.PromptTokens
 		}
 		if err != nil {
-			s.out.Thinking = s.latestThinking
-			s.out.ThinkingPresent = s.thinkingPresent
-			s.out.ToolParseFailure = s.toolParseFailure
 			if isContextCanceledModelError(ctx, err) {
-				s.out.CompletedAt = time.Now().UTC()
-				return s.out, context.Canceled
+				return s.finalizeOutput(context.Canceled)
 			}
 			if len(s.toolResults) > 0 {
 				if isTransientProviderModelError(err) {
 					if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, input.Source, "# TRANSIENT_MODEL_ERROR_RECOVERY\n- Your previous model turn ended with a transient provider interruption after tool work.\n- Do not call tools in this recovery turn.\n- Use the latest tool results to answer the user directly.\n- If the tool results are incomplete, say what remains and mention that the stream was interrupted."); finalized != "" {
 						s.out.FinalText = strings.TrimSpace(finalized)
-						s.out.CompletedAt = time.Now().UTC()
-						return s.out, nil
+						return s.finalizeOutput(nil)
 					}
 				}
 				s.out.FinalText = recoverFromModelError(err, s.toolResults, s.toolCap)
-				s.out.CompletedAt = time.Now().UTC()
-				return s.out, nil
+				return s.finalizeOutput(nil)
 			}
 			if input.OnTextDelta != nil && (isTransientProviderModelError(err) || isProviderNoChoicesError(err)) {
 				s.out.FinalText = recoverFromInterruptedStream(err)
-				s.out.CompletedAt = time.Now().UTC()
-				return s.out, nil
+				return s.finalizeOutput(nil)
 			}
-			s.out.CompletedAt = time.Now().UTC()
-			return s.out, err
+			return s.finalizeOutput(err)
 		}
 
 		if len(resp.ToolCalls) == 0 {
@@ -1035,11 +965,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 					continue
 				}
 				s.out.FinalText = nonActionableFinalText(resp.FinalText)
-				s.out.Thinking = s.latestThinking
-				s.out.ThinkingPresent = s.thinkingPresent
-				s.out.ToolParseFailure = s.toolParseFailure
-				s.out.CompletedAt = time.Now().UTC()
-				return s.out, nil
+				return s.finalizeOutput(nil)
 			}
 			finalText := strings.TrimSpace(resp.FinalText)
 			if finalText == "" {
@@ -1053,129 +979,92 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 				}
 			}
 			s.out.FinalText = finalText
-			s.out.Thinking = s.latestThinking
-			s.out.ThinkingPresent = s.thinkingPresent
-			s.out.ToolParseFailure = s.toolParseFailure
-			s.out.CompletedAt = time.Now().UTC()
-			return s.out, nil
+			return s.finalizeOutput(nil)
 		}
 
 		if r.ToolExecutor == nil {
-			s.out.Thinking = s.latestThinking
-			s.out.ThinkingPresent = s.thinkingPresent
-			s.out.ToolParseFailure = s.toolParseFailure
-			s.out.CompletedAt = time.Now().UTC()
-			return s.out, ErrToolExecutorRequired
+			return s.finalizeOutput(ErrToolExecutorRequired)
 		}
 
 		if s.toolIterations >= s.toolCap {
-			s.out.Thinking = s.latestThinking
-			s.out.ThinkingPresent = s.thinkingPresent
-			s.out.ToolParseFailure = s.toolParseFailure
 			if len(s.toolResults) > 0 {
 				if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, input.Source, ""); finalized != "" {
 					s.out.FinalText = finalized
-					s.out.CompletedAt = time.Now().UTC()
-					return s.out, nil
+					return s.finalizeOutput(nil)
 				}
 				s.out.FinalText = fallbackFromToolResults(s.toolResults, s.toolCap)
-				s.out.CompletedAt = time.Now().UTC()
-				return s.out, nil
+				return s.finalizeOutput(nil)
 			}
-			s.out.CompletedAt = time.Now().UTC()
-			return s.out, ErrToolIterationCapExceeded
+			return s.finalizeOutput(ErrToolIterationCapExceeded)
 		}
 
 		// === TOOL GATING IN FORCED MODE ===
 		if (s.delegationMode == DelegationModeToolGated || s.delegationMode == DelegationModeAutoExecute) && len(resp.ToolCalls) > 0 {
 			filteredCalls := make([]ToolCallRequest, 0, len(resp.ToolCalls))
+		gatingLoop:
 			for _, call := range resp.ToolCalls {
 				if s.isToolAllowedInDelegationMode(call.Name) {
 					filteredCalls = append(filteredCalls, call)
-				} else {
-					s.emitDecision(ctx, DecisionRecordTypeToolDecision, map[string]any{
-						"tool":             strings.TrimSpace(call.Name),
-						"tool_call_id":     strings.TrimSpace(call.ID),
-						"decision":         "denied",
-						"policy_reference": "policy.delegation_mode",
-						"reason":           fmt.Sprintf("tool %s is blocked while delegation mode is %s", strings.TrimSpace(call.Name), strings.TrimSpace(string(s.delegationMode))),
-					}, fmt.Sprintf("Denied tool %s due to delegation mode constraints.", strings.TrimSpace(call.Name)))
-					// Check rewrite budget to prevent infinite loops
-					if s.toolRewriteCount >= maxToolRewriteBudget {
-						// Execute pending subtasks directly if we have them
-						if len(s.pendingSubtasks) > 0 {
-							slog.Debug("delegation: executing pending subtasks (rewrite budget exceeded)", "pending_count", len(s.pendingSubtasks))
-							if err := r.executeDelegatedTasks(ctx, s, s.pendingSubtasks, input); err != nil {
-								s.out.FinalText = fmt.Sprintf("Delegation failed: %v", err)
-								s.out.Thinking = s.latestThinking
-								s.out.ThinkingPresent = s.thinkingPresent
-								s.out.ToolParseFailure = s.toolParseFailure
-								s.out.CompletedAt = time.Now().UTC()
-								return s.out, nil
-							}
-							// Subtasks completed, unlock delegation and continue
-							s.pendingSubtasks = nil
-							s.delegationLocked = false
-							s.delegationMode = ""
-							slog.Debug("delegation: subtasks completed, unlocking delegation mode")
-							continue
-						}
-						// Budget exceeded - fail fast with clear message
-						s.out.FinalText = fmt.Sprintf("DELEGATION_REWRITE_BUDGET_EXCEEDED: Task requires delegation but exceeded maximum rewrite attempts (%d). The subagent keeps trying to use forbidden tools. Please break this task into smaller, independent subtasks manually.", maxToolRewriteBudget)
-						s.out.Thinking = s.latestThinking
-						s.out.ThinkingPresent = s.thinkingPresent
-						s.out.ToolParseFailure = s.toolParseFailure
-						s.out.CompletedAt = time.Now().UTC()
-						return s.out, nil
-					}
-					// Execute pending subtasks directly instead of rewriting
+					continue
+				}
+				s.emitDecision(ctx, DecisionRecordTypeToolDecision, map[string]any{
+					"tool":             strings.TrimSpace(call.Name),
+					"tool_call_id":     strings.TrimSpace(call.ID),
+					"decision":         "denied",
+					"policy_reference": "policy.delegation_mode",
+					"reason":           fmt.Sprintf("tool %s is blocked while delegation mode is %s", strings.TrimSpace(call.Name), strings.TrimSpace(string(s.delegationMode))),
+				}, fmt.Sprintf("Denied tool %s due to delegation mode constraints.", strings.TrimSpace(call.Name)))
+
+				if s.toolRewriteCount >= maxToolRewriteBudget {
 					if len(s.pendingSubtasks) > 0 {
-						slog.Debug("delegation: executing pending subtasks (forbidden tool attempted)", "pending_count", len(s.pendingSubtasks), "tool", call.Name)
+						slog.Debug("delegation: executing pending subtasks (rewrite budget exceeded)", "pending_count", len(s.pendingSubtasks))
 						if err := r.executeDelegatedTasks(ctx, s, s.pendingSubtasks, input); err != nil {
 							s.out.FinalText = fmt.Sprintf("Delegation failed: %v", err)
-							s.out.Thinking = s.latestThinking
-							s.out.ThinkingPresent = s.thinkingPresent
-							s.out.ToolParseFailure = s.toolParseFailure
-							s.out.CompletedAt = time.Now().UTC()
-							return s.out, nil
+							return s.finalizeOutput(nil)
 						}
-						// Subtasks completed, unlock delegation and continue
 						s.pendingSubtasks = nil
 						s.delegationLocked = false
 						s.delegationMode = ""
 						slog.Debug("delegation: subtasks completed, unlocking delegation mode")
-						continue
+						break gatingLoop
 					}
-					// Rewrite to delegation call (fallback when no pending subtasks)
-					rewritten := s.rewriteToDelegation(call)
-					filteredCalls = append(filteredCalls, rewritten)
-					s.toolRewriteCount++
+					s.out.FinalText = fmt.Sprintf("DELEGATION_REWRITE_BUDGET_EXCEEDED: Task requires delegation but exceeded maximum rewrite attempts (%d). The subagent keeps trying to use forbidden tools. Please break this task into smaller, independent subtasks manually.", maxToolRewriteBudget)
+					return s.finalizeOutput(nil)
 				}
+
+				if len(s.pendingSubtasks) > 0 {
+					slog.Debug("delegation: executing pending subtasks (forbidden tool attempted)", "pending_count", len(s.pendingSubtasks), "tool", call.Name)
+					if err := r.executeDelegatedTasks(ctx, s, s.pendingSubtasks, input); err != nil {
+						s.out.FinalText = fmt.Sprintf("Delegation failed: %v", err)
+						return s.finalizeOutput(nil)
+					}
+					s.pendingSubtasks = nil
+					s.delegationLocked = false
+					s.delegationMode = ""
+					slog.Debug("delegation: subtasks completed, unlocking delegation mode")
+					break gatingLoop
+				}
+				// Rewrite to delegation call (fallback when no pending subtasks)
+				rewritten := s.rewriteToDelegation(call)
+				filteredCalls = append(filteredCalls, rewritten)
+				s.toolRewriteCount++
 			}
 			resp.ToolCalls = filteredCalls
 
-			// If model output plain text with no tool calls in forced mode
 			if len(resp.ToolCalls) == 0 && strings.TrimSpace(resp.FinalText) != "" {
 				s.noProgressIterations++
-				// Execute pending subtasks directly if we have them
 				if s.noProgressIterations >= 1 && len(s.pendingSubtasks) > 0 {
 					slog.Debug("delegation: executing pending subtasks (model produced no tool calls)", "pending_count", len(s.pendingSubtasks))
 					if err := r.executeDelegatedTasks(ctx, s, s.pendingSubtasks, input); err != nil {
 						s.out.FinalText = fmt.Sprintf("Delegation failed: %v", err)
-						s.out.Thinking = s.latestThinking
-						s.out.ThinkingPresent = s.thinkingPresent
-						s.out.ToolParseFailure = s.toolParseFailure
-						s.out.CompletedAt = time.Now().UTC()
-						return s.out, nil
+						return s.finalizeOutput(nil)
 					}
-					// Subtasks completed, unlock delegation and continue to let model process results
 					s.pendingSubtasks = nil
 					s.delegationLocked = false
 					s.delegationMode = ""
 					slog.Debug("delegation: subtasks completed, unlocking delegation mode")
 					continue
 				}
-				// Re-prompt once with stronger directive
 				if s.noProgressIterations <= 1 {
 					s.setLastModelOutput(resp.FinalText)
 					s.messages = append(s.messages, ChatMessage{Role: "assistant", Content: resp.FinalText})
@@ -1184,23 +1073,15 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 			}
 		}
 
-		// Update model output tracking
 		s.setLastModelOutput(resp.FinalText)
 
 		toolOutcome := s.executeTools(ctx, r, resp.ToolCalls, input)
 		s.toolParseReprompts = 0
 		s.updateLastIterationOutcome(len(resp.ToolCalls))
 
-		// Hard-stop on structural blockers.  These are infrastructure
-		// problems (missing directories, permission denials) that cannot
-		// be resolved by retrying.  Escalate to the owner immediately.
 		if blockerCat, blockerCount := s.structuralBlockerTriggered(); blockerCat != "" {
 			s.out.FinalText = formatStructuralBlockerEscalation(blockerCat, blockerCount, s.toolResults)
-			s.out.Thinking = s.latestThinking
-			s.out.ThinkingPresent = s.thinkingPresent
-			s.out.ToolParseFailure = s.toolParseFailure
-			s.out.CompletedAt = time.Now().UTC()
-			return s.out, nil
+			return s.finalizeOutput(nil)
 		}
 
 		if toolOutcome.blockedSuccessfulOneShotMutation && len(s.toolResults) > 0 {
@@ -1209,11 +1090,7 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 			} else {
 				s.out.FinalText = fallbackFromNoProgressToolResults(s.toolResults)
 			}
-			s.out.Thinking = s.latestThinking
-			s.out.ThinkingPresent = s.thinkingPresent
-			s.out.ToolParseFailure = s.toolParseFailure
-			s.out.CompletedAt = time.Now().UTC()
-			return s.out, nil
+			return s.finalizeOutput(nil)
 		}
 
 		if toolOutcome.hadFreshExecution {
@@ -1221,8 +1098,6 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 			s.allBlockedIterations = 0
 		} else {
 			s.noProgressIterations++
-			// Check if ALL results from this iteration were repetition-blocked
-			// (not just cached). If so, finalize faster than the generic no-progress path.
 			allRepetitionBlocked := len(resp.ToolCalls) > 0
 			for _, tr := range s.toolResults[len(s.toolResults)-len(resp.ToolCalls):] {
 				if !strings.Contains(tr.Error, "repetition detected") {
@@ -1237,777 +1112,18 @@ func (s *runState) runLoop(ctx context.Context, r Runner, input RunInput) (final
 			}
 		}
 
-		// Fast-finalize when all tool calls have been repetition-blocked for 2+ iterations
 		if s.allBlockedIterations >= 2 && len(s.toolResults) > 0 {
 			if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, input.Source, ""); finalized != "" {
 				s.out.FinalText = finalized
 			} else {
 				s.out.FinalText = fallbackFromNoProgressToolResults(s.toolResults)
 			}
-			s.out.Thinking = s.latestThinking
-			s.out.ThinkingPresent = s.thinkingPresent
-			s.out.ToolParseFailure = s.toolParseFailure
-			s.out.CompletedAt = time.Now().UTC()
-			return s.out, nil
+			return s.finalizeOutput(nil)
 		}
 
 		if s.failureRecoveryActive && s.failuresSinceRecovery >= failureGuidanceEscalation && len(s.out.ToolCalls) > 0 {
 			s.out.FinalText = finalizeAfterFailureEscalation(input.Message, s.out.ToolCalls)
-			s.out.Thinking = s.latestThinking
-			s.out.ThinkingPresent = s.thinkingPresent
-			s.out.ToolParseFailure = s.toolParseFailure
-			s.out.CompletedAt = time.Now().UTC()
-			return s.out, nil
+			return s.finalizeOutput(nil)
 		}
 
-		if s.noProgressIterations >= repeatedNoProgressLoopCapTrigger && len(s.toolResults) > 0 {
-			if finalized := finalizeFromToolResults(ctx, r.Model, input.AgentID, input.RunID, s.out.Prompt, s.messages, input.Message, input.ToolTimeoutMS, s.toolResults, input.SystemPromptExt, input.Source, ""); finalized != "" {
-				s.out.FinalText = finalized
-			} else {
-				s.out.FinalText = fallbackFromNoProgressToolResults(s.toolResults)
-			}
-			s.out.Thinking = s.latestThinking
-			s.out.ThinkingPresent = s.thinkingPresent
-			s.out.ToolParseFailure = s.toolParseFailure
-			s.out.CompletedAt = time.Now().UTC()
-			return s.out, nil
-		}
-
-		s.toolIterations++
-	}
-}
-
-func (s *runState) updateLastIterationOutcome(callCount int) {
-	s.lastIterationMixed = false
-	s.lastIterationSucceeded = nil
-	s.lastIterationFailed = nil
-	if callCount <= 0 || len(s.out.ToolCalls) < callCount {
-		return
-	}
-	start := len(s.out.ToolCalls) - callCount
-	iterRecords := s.out.ToolCalls[start:]
-	succeeded := make(map[string]struct{})
-	failed := make(map[string]struct{})
-	for _, rec := range iterRecords {
-		name := strings.TrimSpace(rec.Request.Name)
-		if name == "" {
-			name = "unknown.tool"
-		}
-		if strings.TrimSpace(rec.Result.Error) == "" {
-			succeeded[name] = struct{}{}
-		} else {
-			failed[name] = struct{}{}
-		}
-	}
-	if len(succeeded) == 0 || len(failed) == 0 {
-		return
-	}
-	s.lastIterationMixed = true
-	s.lastIterationSucceeded = sortedToolNames(succeeded)
-	s.lastIterationFailed = sortedToolNames(failed)
-}
-
-func sortedToolNames(values map[string]struct{}) []string {
-	if len(values) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(values))
-	for name := range values {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	if len(out) > 6 {
-		out = out[:6]
-	}
-	return out
-}
-
-func shouldRetryToolParseFailure(finalText string, allowedTools []string) bool {
-	if len(allowedTools) == 0 {
-		return false
-	}
-	text := strings.ToLower(strings.TrimSpace(finalText))
-	if strings.Contains(text, "not enabled for this agent") ||
-		strings.Contains(text, "please enable it and retry") ||
-		strings.Contains(text, "network.enabled=true") ||
-		strings.Contains(text, "shell.enable_exec=true") {
-		return false
-	}
-	return true
-}
-
-func isProviderNoChoicesError(err error) bool {
-	if err == nil {
-		return false
-	}
-	text := strings.ToLower(strings.TrimSpace(err.Error()))
-	return strings.Contains(text, "no choices") || strings.Contains(text, "empty choices")
-}
-
-func isTransientProviderModelError(err error) bool {
-	if err == nil {
-		return false
-	}
-	text := strings.ToLower(strings.TrimSpace(err.Error()))
-	if strings.Contains(text, "context canceled") || strings.Contains(text, "context cancelled") {
-		return false
-	}
-	return strings.Contains(text, "stream interrupted") ||
-		strings.Contains(text, "context deadline exceeded") ||
-		strings.Contains(text, "client.timeout") ||
-		strings.Contains(text, "timeout while reading body") ||
-		strings.Contains(text, "i/o timeout") ||
-		strings.Contains(text, "connection reset") ||
-		strings.Contains(text, "unexpected eof") ||
-		strings.Contains(text, "provider returned no choices")
-}
-
-func isContextCanceledModelError(ctx context.Context, err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, context.Canceled) {
-		return true
-	}
-	if ctx != nil && errors.Is(ctx.Err(), context.Canceled) {
-		return true
-	}
-	text := strings.ToLower(strings.TrimSpace(err.Error()))
-	return strings.Contains(text, "context canceled") || strings.Contains(text, "context cancelled")
-}
-
-// extractAgentIDFromArgs extracts the agent_id field from JSON tool arguments
-func extractAgentIDFromArgs(args []byte) string {
-	if len(args) == 0 {
-		return ""
-	}
-	// Simple JSON extraction: look for "agent_id":"value" pattern
-	argsStr := string(args)
-	if idx := strings.Index(argsStr, `"agent_id"`); idx != -1 {
-		rest := argsStr[idx+len(`"agent_id"`):]
-		// Skip whitespace and colon
-		rest = strings.TrimLeft(rest, " \t\n\r:")
-		if strings.HasPrefix(rest, `"`) {
-			rest = rest[1:]
-			if endIdx := strings.Index(rest, `"`); endIdx != -1 {
-				return rest[:endIdx]
-			}
-		}
-	}
-	return ""
-}
-
-func repeatedCallRepetitionKey(call ToolCallRequest) (string, int, bool) {
-	name := strings.TrimSpace(call.Name)
-	if key, ok := oneShotMutationRepetitionKey(name, call.Arguments); ok {
-		if name == "agent.identity.set" {
-			return key, agentIdentitySetCap, true
-		}
-		return key, stateMutationRepetitionCap, true
-	}
-	if name == "agent.message.send" {
-		args, ok := parseToolArgs(call.Arguments)
-		if !ok {
-			return "", 0, false
-		}
-		toAgent := firstTrimmedStringFromMap(args, "to_agent_id", "agent_id", "target_agent", "targetAgent", "agentId")
-		if toAgent == "" {
-			return "", 0, false
-		}
-		taskID := normalizeTaskIDForRepetition(firstTrimmedStringFromMap(args, "task_id", "taskId"))
-		if taskID != "" {
-			return name + "|" + toAgent + "|" + taskID, agentMessageSendCap, true
-		}
-		message := firstTrimmedStringFromMap(args, "message", "content", "text", "body", "prompt")
-		if message == "" {
-			return "", 0, false
-		}
-		return name + "|" + toAgent + "|" + firstN(strings.ToLower(message), 80), agentMessageSendCap, true
-	}
-	if name == "agent.message.inbox" {
-		args, ok := parseToolArgs(call.Arguments)
-		if !ok {
-			return "", 0, false
-		}
-		agentID := firstTrimmedStringFromMap(args, "agent_id", "id", "agent")
-		if agentID == "" {
-			agentID = "self"
-		}
-		return name + "|" + agentID, agentMessageInboxCap, true
-	}
-	if name == "agent.run" {
-		args, ok := parseToolArgs(call.Arguments)
-		if !ok {
-			return "", 0, false
-		}
-		agentID := firstTrimmedStringFromMap(args, "agent_id", "to_agent_id", "target_agent", "targetAgent", "agentId")
-		if agentID == "" {
-			return "", 0, false
-		}
-		taskID := normalizeTaskIDForRepetition(firstTrimmedStringFromMap(args, "task_id", "taskId"))
-		if taskID != "" {
-			return name + "|" + agentID + "|" + taskID, agentRunCap, true
-		}
-		message := firstTrimmedStringFromMap(args, "message", "content", "text", "body", "prompt")
-		if message == "" {
-			return "", 0, false
-		}
-		return name + "|" + agentID + "|" + firstN(strings.ToLower(message), 80), agentRunCap, true
-	}
-	if name == "memory.write" {
-		key, ok := normalizedMemoryWriteKey(call.Arguments)
-		if !ok {
-			return "", 0, false
-		}
-		return "memory.write|" + key, memoryWriteRepetitionCap, true
-	}
-
-	// Control-plane state readers are intentionally uncacheable (their output
-	// can change after mutations within the same run), but they still need a
-	// repetition cap so the model cannot poll them indefinitely.  A cap of 3
-	// is generous — the model should rarely need to read the same state
-	// endpoint more than once or twice per run.
-	switch name {
-	case "scheduler.list", "policy.list", "config.get",
-		"session.list", "agent.list",
-		"run.list", "run.get", "metrics.get":
-		return name, stateReaderRepetitionCap, true
-	}
-
-	// becomussy tools: write tools (create, propose, reinforce) get a tight
-	// cap to prevent duplicate entries; read tools (search, list, get,
-	// resume, current, history, pending) get a higher cap because they are
-	// idempotent and commonly re-invoked during batch workflows.
-	if strings.HasPrefix(name, "becomussy.") {
-		cap := becomussyReadRepetitionCap
-		if strings.HasSuffix(name, ".create") || strings.HasSuffix(name, ".propose") || strings.HasSuffix(name, ".reinforce") {
-			cap = becomussyWriteRepetitionCap
-		}
-		return name + "|" + string(call.Arguments), cap, true
-	}
-
-	// fs.list is uncacheable (directory contents change after writes) but
-	// still needs a repetition cap so the model cannot poll the same
-	// directory indefinitely.
-	if name == "fs.list" {
-		path := extractPathFromToolArgs(call.Arguments)
-		if path == "" {
-			path = "."
-		}
-		return name + "|" + path, defaultRepeatedFileListCap, true
-	}
-	if name == "fs.mkdir" {
-		path := extractPathFromToolArgs(call.Arguments)
-		if path == "" {
-			path = "."
-		}
-		return name + "|" + path, stateMutationRepetitionCap, true
-	}
-
-	if name != "fs.write" && name != "fs.append" && name != "fs.read" && name != "shell.exec" {
-		return "", 0, false
-	}
-
-	// shell.exec: prevent the same shell command from being run more than 3 times
-	if name == "shell.exec" {
-		args, ok := parseToolArgs(call.Arguments)
-		if !ok {
-			return "", 0, false
-		}
-		command := firstTrimmedStringFromMap(args, "command", "cmd")
-		cmdArgs := ""
-		if rawArgs, hasArgs := args["args"]; hasArgs {
-			if encoded, err := json.Marshal(rawArgs); err == nil {
-				cmdArgs = string(encoded)
-			}
-		}
-		key := name + "|" + command + "|" + firstN(cmdArgs, 120)
-		return key, shellExecRepetitionCap, true
-	}
-
-	path := extractPathFromToolArgs(call.Arguments)
-	if path == "" {
-		return "", 0, false
-	}
-	cap, ok := repetitionCapForToolPath(name, path)
-	if !ok {
-		return "", 0, false
-	}
-	return name + "|" + path, cap, true
-}
-
-func repetitionCapForToolPath(toolName, path string) (int, bool) {
-	lower := strings.ToLower(strings.TrimSpace(path))
-	isJournalPath := strings.Contains(lower, "journal") || strings.Contains(lower, "diary")
-	isBuildLogPath := strings.Contains(lower, "build_log")
-	isSpecPath := strings.HasSuffix(lower, "_spec.md") || strings.HasSuffix(lower, "/spec.md")
-	if toolName == "fs.write" || toolName == "fs.append" {
-		if toolName == "fs.append" {
-			if isBuildLogPath {
-				return buildLogFileAppendCap, true
-			}
-			if isJournalPath {
-				return journalFileAppendCap, true
-			}
-			return defaultRepeatedFileAppendCap, true
-		}
-		if isBuildLogPath {
-			return buildLogFileWriteCap, true
-		}
-		if isJournalPath {
-			return journalFileWriteCap, true
-		}
-		return defaultRepeatedFileWriteCap, true
-	}
-	if toolName == "fs.read" && isBuildLogPath {
-		return buildLogFileReadCap, true
-	}
-	if toolName == "fs.read" && isSpecPath {
-		return specFileReadCap, true
-	}
-	if toolName == "fs.read" && isJournalPath {
-		return journalFileReadCap, true
-	}
-	// Default cap for fs.read on non-special paths.  Reading the same file
-	// more than a handful of times in one run is almost always a loop.
-	if toolName == "fs.read" {
-		return defaultRepeatedFileReadCap, true
-	}
-	return 0, false
-}
-
-func oneShotMutationRepetitionKey(name string, argsJSON []byte) (string, bool) {
-	args, ok := parseToolArgs(argsJSON)
-	if !ok {
-		return "", false
-	}
-	canonicalName := strings.TrimSpace(name)
-	switch canonicalName {
-	case "scheduler.add":
-		id := strings.ToLower(firstTrimmedStringFromMap(args, "id"))
-		if id == "" {
-			schedule := strings.ToLower(strings.TrimSpace(firstTrimmedStringFromMap(args, "schedule")))
-			schedule = normalizeSchedulerScheduleForRepetition(schedule)
-			message := strings.ToLower(strings.TrimSpace(firstTrimmedStringFromMap(args, "message", "prompt", "content")))
-			agentID := strings.ToLower(firstTrimmedStringFromMap(args, "agent_id"))
-			if agentID == "" {
-				agentID = "default"
-			}
-			channel := strings.ToLower(firstTrimmedStringFromMap(args, "channel"))
-			userID := strings.ToLower(firstTrimmedStringFromMap(args, "user_id"))
-			roomID := strings.ToLower(firstTrimmedStringFromMap(args, "room_id"))
-			sessionID := strings.ToLower(firstTrimmedStringFromMap(args, "session_id"))
-			if schedule == "" || message == "" {
-				return "", false
-			}
-			return canonicalName + "|semantic|" + schedule + "|" + agentID + "|" + channel + "|" + userID + "|" + roomID + "|" + sessionID + "|" + firstN(message, 160), true
-		}
-		return canonicalName + "|" + id, true
-	case "scheduler.remove", "scheduler.pause", "scheduler.resume":
-		id := strings.ToLower(firstTrimmedStringFromMap(args, "id"))
-		if id == "" {
-			id = "global"
-		}
-		return canonicalName + "|" + id, true
-	case "policy.grant", "policy.revoke":
-		agentID := strings.ToLower(firstTrimmedStringFromMap(args, "agent_id"))
-		capability := strings.ToLower(firstTrimmedStringFromMap(args, "capability", "tool"))
-		if agentID == "" || capability == "" {
-			return "", false
-		}
-		return canonicalName + "|" + agentID + "|" + capability, true
-	case "session.close":
-		sessionID := strings.ToLower(firstTrimmedStringFromMap(args, "session_id", "id"))
-		if sessionID == "" {
-			return "", false
-		}
-		return canonicalName + "|" + sessionID, true
-	case "agent.switch":
-		agentID := strings.ToLower(firstTrimmedStringFromMap(args, "agent_id", "id", "agent"))
-		if agentID == "" {
-			return "", false
-		}
-		scope := strings.ToLower(firstTrimmedStringFromMap(args, "scope"))
-		if scope == "" {
-			scope = "both"
-		}
-		return canonicalName + "|" + agentID + "|" + scope, true
-	case "agent.identity.set":
-		agentID := strings.ToLower(firstTrimmedStringFromMap(args, "agent_id"))
-		if agentID == "" {
-			agentID = "current"
-		}
-		assistantName := strings.ToLower(strings.TrimSpace(firstTrimmedStringFromMap(args, "assistant_name")))
-		userName := strings.ToLower(strings.TrimSpace(firstTrimmedStringFromMap(args, "user_name")))
-		if assistantName == "" || userName == "" {
-			return "", false
-		}
-		return canonicalName + "|" + agentID + "|" + assistantName + "|" + userName, true
-	case "config.set":
-		rawUpdates, ok := args["updates"]
-		if !ok || rawUpdates == nil {
-			return "", false
-		}
-		encoded, err := json.Marshal(rawUpdates)
-		if err != nil {
-			return "", false
-		}
-		dryRun := strings.EqualFold(firstTrimmedStringFromMap(args, "dry_run", "dryRun"), "true")
-		return fmt.Sprintf("%s|dry_run=%t|%s", canonicalName, dryRun, string(encoded)), true
-	default:
-		return "", false
-	}
-}
-
-func parseToolArgs(args []byte) (map[string]any, bool) {
-	if len(args) == 0 {
-		return nil, false
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(args, &payload); err != nil {
-		return nil, false
-	}
-	return payload, true
-}
-
-func toolCallCacheKey(call ToolCallRequest) string {
-	name := strings.TrimSpace(call.Name)
-	// fs.list and fs.read must never be cached — directory contents and file
-	// contents change after writes.  Returning stale cached results causes the
-	// agent to believe files are missing or have old content.
-	if name == "fs.list" || name == "fs.read" {
-		return "|"
-	}
-	// Control-plane state readers must not be cached. Their outputs can change
-	// within a single run after successful mutations such as scheduler.add,
-	// policy.grant, config.set, session.close, or agent.create. Returning stale
-	// cached state makes the model think prior successful actions did not stick,
-	// which leads to repeated mutations.
-	if name == "scheduler.list" ||
-		name == "policy.list" ||
-		name == "config.get" ||
-		name == "session.list" ||
-		name == "agent.list" ||
-		name == "run.list" ||
-		name == "run.get" ||
-		name == "metrics.get" {
-		return "|"
-	}
-	// becomussy tools should not be cached — each call should either
-	// execute fresh (on first use) or be caught by repetition detection
-	// (on subsequent identical calls) so the model gets the explicit
-	// "repetition detected" signal to stop and produce a text response.
-	if strings.HasPrefix(name, "becomussy.") {
-		return "|"
-	}
-	if name == "http.request" || name == "net.fetch" {
-		if key, ok := normalizedHTTPRequestCacheKey(call.Arguments); ok {
-			return "http.request|" + key
-		}
-	}
-	if name == "memory.write" {
-		if key, ok := normalizedMemoryWriteKey(call.Arguments); ok {
-			return "memory.write|" + key
-		}
-	}
-	return call.Name + "|" + string(call.Arguments)
-}
-
-func normalizedHTTPRequestCacheKey(args []byte) (string, bool) {
-	payload, ok := parseToolArgs(args)
-	if !ok {
-		return "", false
-	}
-	rawURL := firstTrimmedStringFromMap(payload, "url", "uri", "endpoint")
-	if rawURL == "" {
-		return "", false
-	}
-	method := strings.ToUpper(firstTrimmedStringFromMap(payload, "method"))
-	if method == "" {
-		method = "GET"
-	}
-	body := firstTrimmedStringFromMap(payload, "body", "data", "payload")
-	return method + "|" + normalizeRequestURL(rawURL) + "|" + firstN(body, 200), true
-}
-
-func normalizedMemoryWriteKey(args []byte) (string, bool) {
-	payload, ok := parseToolArgs(args)
-	if !ok {
-		return "", false
-	}
-	title := firstTrimmedStringFromMap(payload, "title", "name", "key")
-	content := firstTrimmedStringFromMap(payload, "content", "summary", "text", "value")
-	kind := firstTrimmedStringFromMap(payload, "kind", "type")
-	if title == "" && content == "" {
-		return "", false
-	}
-	return strings.ToLower(kind) + "|" + strings.ToLower(title) + "|" + firstN(strings.ToLower(content), 160), true
-}
-
-func normalizeRequestURL(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return ""
-	}
-	parsed, err := url.Parse(trimmed)
-	if err != nil {
-		return strings.ToLower(trimmed)
-	}
-	parsed.Scheme = strings.ToLower(parsed.Scheme)
-	parsed.Host = strings.ToLower(parsed.Host)
-	if strings.HasSuffix(parsed.Host, ":80") && parsed.Scheme == "http" {
-		parsed.Host = strings.TrimSuffix(parsed.Host, ":80")
-	}
-	if strings.HasSuffix(parsed.Host, ":443") && parsed.Scheme == "https" {
-		parsed.Host = strings.TrimSuffix(parsed.Host, ":443")
-	}
-	if parsed.Path == "" {
-		parsed.Path = "/"
-	}
-	parsed.Fragment = ""
-	return parsed.String()
-}
-
-func firstTrimmedStringFromMap(values map[string]any, keys ...string) string {
-	for _, key := range keys {
-		raw, ok := values[key]
-		if !ok || raw == nil {
-			continue
-		}
-		text, ok := raw.(string)
-		if !ok {
-			continue
-		}
-		trimmed := strings.TrimSpace(text)
-		if trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
-}
-
-func firstN(s string, n int) string {
-	if n <= 0 || len(s) <= n {
-		return s
-	}
-	return s[:n]
-}
-
-// repetitionSuffixPattern matches common retry/version/continuation suffixes at the end of task IDs.
-var repetitionSuffixPattern = regexp.MustCompile(`(?i)-(v\d+|retry|continue|attempt\d*|redo|fix)$`)
-
-func normalizeTaskIDForRepetition(taskID string) string {
-	value := strings.ToLower(strings.TrimSpace(taskID))
-	if value == "" {
-		return ""
-	}
-	cut := len(value)
-	for _, sep := range []string{"-", "_", ".", " "} {
-		if idx := strings.Index(value, sep); idx >= 0 && idx < cut {
-			cut = idx
-		}
-	}
-	if cut > 0 {
-		base := strings.TrimSpace(value[:cut])
-		if looksLaneTaskID(base) {
-			return base
-		}
-	}
-	if looksLaneTaskID(value) {
-		return value
-	}
-	// Strip common retry/version/continuation suffixes so that
-	// "task-name-v2", "task-name-retry", "task-name-continue", etc.
-	// all normalize to "task-name".
-	value = repetitionSuffixPattern.ReplaceAllString(value, "")
-	return value
-}
-
-func normalizeSchedulerScheduleForRepetition(schedule string) string {
-	trimmed := strings.ToLower(strings.TrimSpace(schedule))
-	switch trimmed {
-	case "@hourly", "hourly", "0 * * * *":
-		return "@every 1h"
-	case "@daily", "daily", "0 0 * * *":
-		return "@every 24h"
-	default:
-		return trimmed
-	}
-}
-
-func looksLaneTaskID(value string) bool {
-	if value == "" {
-		return false
-	}
-	seenLetter := false
-	seenDigit := false
-	for _, r := range value {
-		if r >= 'a' && r <= 'z' {
-			if seenDigit {
-				return false
-			}
-			seenLetter = true
-			continue
-		}
-		if r >= '0' && r <= '9' {
-			if !seenLetter {
-				return false
-			}
-			seenDigit = true
-			continue
-		}
-		return false
-	}
-	return seenLetter && seenDigit
-}
-
-func extractPathFromToolArgs(args []byte) string {
-	payload, ok := parseToolArgs(args)
-	if !ok {
-		return ""
-	}
-	return firstTrimmedStringFromMap(payload, "path", "file", "target", "filename")
-}
-
-// Delegation state methods
-
-func (s *runState) computeDelegationTrigger(promptTokens, contextWindow int, snapshot StateSnapshot) *DelegationTrigger {
-	if s.delegationCooldown > 0 {
-		s.delegationCooldown--
-		return nil
-	}
-
-	score := ComputeComplexity(s, promptTokens, contextWindow)
-	trigger := ShouldTriggerDelegation(score, s, snapshot)
-
-	if trigger != nil {
-		slog.Debug("delegation: trigger fired", "level", score.Level, "mode", trigger.Mode, "triggers", score.Triggers, "score", score)
-		trigger.Subtasks = DecomposeTask(s.out.Prompt, score, snapshot)
-		slog.Debug("delegation: task decomposed", "subtask_count", len(trigger.Subtasks))
-	}
-
-	return trigger
-}
-
-func (s *runState) isToolAllowedInDelegationMode(toolName string) bool {
-	if s.delegationMode == "" || s.delegationMode == DelegationModePromptOnly {
-		return true
-	}
-
-	allowed := map[string]bool{
-		"agent.list": true,
-		"agent.run":  true,
-	}
-	return allowed[toolName]
-}
-
-func (s *runState) rewriteToDelegation(call ToolCallRequest) ToolCallRequest {
-	slog.Debug("delegation: rewriting tool call to agent.run", "from_tool", call.Name, "rewrite_count", s.toolRewriteCount+1, "max_rewrites", maxToolRewriteBudget)
-	message := fmt.Sprintf("Delegation rewrite: the parent run attempted `%s` with args %s but delegation mode only allows agent.run. Complete the underlying user-facing objective using the best available approach. Do not repeat the same blocked tool path unchanged. Report what you did, what you verified, and any remaining blocker.", call.Name, string(call.Arguments))
-	newArgs, _ := json.Marshal(map[string]any{
-		"agent_id":      "default",
-		"task_id":       "auto-delegated-" + call.ID,
-		"message":       message,
-		"thinking_mode": "never",
-	})
-	return ToolCallRequest{
-		ID:        call.ID,
-		Name:      "agent.run",
-		Arguments: newArgs,
-	}
-}
-
-func (s *runState) getLastToolName() string {
-	if len(s.out.ToolCalls) == 0 {
-		return ""
-	}
-	return s.out.ToolCalls[len(s.out.ToolCalls)-1].Request.Name
-}
-
-func (s *runState) getRecentErrorTypes() []string {
-	errors := make([]string, 0)
-	for i := len(s.toolResults) - 1; i >= 0 && len(errors) < 3; i-- {
-		if strings.TrimSpace(s.toolResults[i].Error) != "" {
-			errors = append(errors, s.toolResults[i].Error)
-		}
-	}
-	return errors
-}
-
-func (s *runState) getLastModelOutput() string {
-	return s.lastModelOutput
-}
-
-func (s *runState) setLastModelOutput(output string) {
-	s.lastModelOutput = output
-	s.recentIntents = append(s.recentIntents, output)
-	if len(s.recentIntents) > 3 {
-		s.recentIntents = s.recentIntents[1:]
-	}
-}
-
-func (s *runState) appendPlannedDelegationEvents(ctx context.Context, plan DecompositionPlan) {
-	for _, task := range plan.Tasks {
-		parentRunID := strings.TrimSpace(s.runID)
-		if parentRunID == "" {
-			parentRunID = strings.TrimSpace(s.parentRunID)
-		}
-		s.recordDelegationEvent(ctx, DelegationEvent{
-			Timestamp:      time.Now().UTC(),
-			TaskID:         task.TaskID,
-			ParentRunID:    parentRunID,
-			FromAgentID:    strings.TrimSpace(s.agentID),
-			TriggerReason:  strings.TrimSpace(plan.TriggerReason),
-			SelectedRole:   strings.TrimSpace(task.AssignedRole),
-			Confidence:     task.Confidence,
-			TaskAssignment: strings.TrimSpace(task.Description),
-			Rationale:      strings.TrimSpace(task.Rationale),
-			Outcome:        "planned",
-		})
-	}
-}
-
-func (s *runState) appendDelegationEvent(event DelegationEvent) {
-	if event.Timestamp.IsZero() {
-		event.Timestamp = time.Now().UTC()
-	}
-	event.TriggerReason = strings.TrimSpace(event.TriggerReason)
-	event.SelectedRole = strings.TrimSpace(event.SelectedRole)
-	event.TaskAssignment = strings.TrimSpace(event.TaskAssignment)
-	event.Rationale = strings.TrimSpace(event.Rationale)
-	event.Outcome = strings.TrimSpace(event.Outcome)
-	event.MessageID = strings.TrimSpace(event.MessageID)
-	event.RelatedRunID = strings.TrimSpace(event.RelatedRunID)
-	event.ParentRunID = strings.TrimSpace(event.ParentRunID)
-	event.FromAgentID = strings.TrimSpace(event.FromAgentID)
-	event.ToAgentID = strings.TrimSpace(event.ToAgentID)
-	s.out.DelegationEvents = append(s.out.DelegationEvents, event)
-}
-
-func (s *runState) recordDelegationEvent(ctx context.Context, event DelegationEvent) {
-	s.appendDelegationEvent(event)
-
-	payload := map[string]any{
-		"task_id":           strings.TrimSpace(event.TaskID),
-		"message_id":        strings.TrimSpace(event.MessageID),
-		"related_run_id":    strings.TrimSpace(event.RelatedRunID),
-		"parent_run_id":     strings.TrimSpace(event.ParentRunID),
-		"from_agent_id":     strings.TrimSpace(event.FromAgentID),
-		"to_agent_id":       strings.TrimSpace(event.ToAgentID),
-		"trigger_reason":    strings.TrimSpace(event.TriggerReason),
-		"selected_role":     strings.TrimSpace(event.SelectedRole),
-		"confidence":        event.Confidence,
-		"task_assignment":   strings.TrimSpace(event.TaskAssignment),
-		"role_rationale":    strings.TrimSpace(event.Rationale),
-		"outcome":           strings.TrimSpace(event.Outcome),
-		"event_timestamp":   event.Timestamp.UTC().Format(time.RFC3339Nano),
-		"delegation_active": s.delegationActive,
-	}
-
-	summary := fmt.Sprintf("Delegation task %s assigned to %s (%s).",
-		firstN(strings.TrimSpace(event.TaskID), 48),
-		firstN(strings.TrimSpace(event.SelectedRole), 48),
-		firstN(strings.TrimSpace(event.Outcome), 24),
-	)
-	s.emitDelegationTriggerDecision(ctx, payload, summary)
-}
+		if s.noProgressIterations >= repeatedNoProgressLoopCapTr
